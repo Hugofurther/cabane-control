@@ -35,6 +35,18 @@
 #include <TM1637Display.h>
 #include <EEPROM.h>
 
+// ===== Display presence & pins =====
+#define HAS_TM1637 0   // Set to 1 when the 7-seg display is connected
+
+#if HAS_TM1637
+  #include <TM1637Display.h>
+  // Move TM1637 off the W5500 reset pin to avoid conflicts.
+  // Wiring: CLK → A1, DIO → A2
+  const uint8_t CLK_PIN = A1;   // TM1637 Clock (safe pin)
+  const uint8_t DIO_PIN = A2;   // TM1637 Data  (safe pin)
+  TM1637Display display(CLK_PIN, DIO_PIN);
+#endif
+
 // ------------------- Station ID selection system --------------------
 const uint8_t CLK_PIN = 8;           // TM1637 Clock
 const uint8_t DIO_PIN = 9;           // TM1637 Data
@@ -58,9 +70,10 @@ void saveStationID(uint8_t id) {
 }
 
 void showStationID() {
-  uint8_t segments[4] = {0, 0, 0, 0};
-  display.clear();
-  display.showNumberDec(STATION_ID);
+  #if HAS_TM1637
+    display.clear();
+    display.showNumberDec(STATION_ID);
+  #endif
 }
 
 void checkButton() {
@@ -124,6 +137,9 @@ void setup(){
   Serial.begin(115200);
   while(!Serial){}; Serial.println(F("\n[BOOT] Station starting..."));
   #endif
+
+  pinMode(LED_BUILTIN, OUTPUT); // Add on
+  digitalWrite(LED_BUILTIN, LOW); // Add on
 
   pinMode(BTN_PIN, INPUT_PULLUP);
   display.setBrightness(0x0F);
@@ -207,5 +223,14 @@ void loop(){
     #if DEBUG_SERIAL
     Serial.println(F("[TX ] Heartbeat sent"));
     #endif
+
+    // --- Heartbeat visual pulse (TM1637 optional) + onboard LED ---
+    #if HAS_TM1637
+      display.showNumberDecEx(STATION_ID, 0b01000000); // brief DP/dot pulse
+    #endif
+    digitalWrite(LED_BUILTIN, HIGH);                  // Nano onboard LED ON
+    delay(150);                                       // Visible blink (~0.15 s)
+    showStationID();                                  // Restores display (no-op if HAS_TM1637=0)
+    digitalWrite(LED_BUILTIN, LOW);                   // LED OFF
   }
 }
