@@ -156,6 +156,9 @@ void setup(){
   Ethernet.begin(mac, ip);
   Udp.begin(UDP_PORT);
 
+  // --- Seed random number generator for heartbeat jitter ---
+  randomSeed(analogRead(A3));  // any unused floating analog pin works
+
   delay(500);
   EthernetLinkStatus linkStatus = Ethernet.linkStatus();
   if (linkStatus != LinkON) {
@@ -213,24 +216,32 @@ void loop(){
     }
   }
 
-  if(now - tHeartbeat >= HEARTBEAT_MS){
-    tHeartbeat = now;
+  if (now - tHeartbeat >= HEARTBEAT_MS) {
+    // Add small random jitter (±50 ms)
+    int16_t jitter = random(-50, 51);   // Random offset in milliseconds
+    tHeartbeat = now + jitter;          // Schedule next send slightly offset
+
     uint8_t hb[4];
-    hb[0]=0xAB; hb[1]=STATION_ID; hb[2]=0x00; hb[3]=xorChecksum(hb,3);
+    hb[0] = 0xAB;
+    hb[1] = STATION_ID;
+    hb[2] = 0x00;
+    hb[3] = xorChecksum(hb, 3);
+
     Udp.beginPacket(ipMain, UDP_PORT);
     Udp.write(hb, 4);
     Udp.endPacket();
+
     #if DEBUG_SERIAL
     Serial.println(F("[TX ] Heartbeat sent"));
     #endif
 
     // --- Heartbeat visual pulse (TM1637 optional) + onboard LED ---
     #if HAS_TM1637
-      display.showNumberDecEx(STATION_ID, 0b01000000); // brief DP/dot pulse
+      display.showNumberDecEx(STATION_ID, 0b01000000);
     #endif
-    digitalWrite(LED_BUILTIN, HIGH);                  // Nano onboard LED ON
-    delay(150);                                       // Visible blink (~0.15 s)
-    showStationID();                                  // Restores display (no-op if HAS_TM1637=0)
-    digitalWrite(LED_BUILTIN, LOW);                   // LED OFF
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(150);
+    showStationID();
+    digitalWrite(LED_BUILTIN, LOW);
   }
 }
