@@ -174,6 +174,8 @@ uint32_t lastHeartbeatMs[NUM_STATIONS + 1] = {0};
 bool stationOffline[NUM_STATIONS + 1] = {false, false, false, false, false, false};
 // Station enable flags
 bool stationEnabled[NUM_STATIONS + 1] = {false, true, true, true, true, true};
+// Station feedback bits (true = output ON at station)
+bool stationFeedback[NUM_STATIONS + 1][8] = {false}; // up to 8 outputs per station
 
 // Long-press detection
 const uint32_t LONGPRESS_MS = 5000; // 30000 30 seconds
@@ -279,9 +281,9 @@ void setup(){
   for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
     uint8_t val = EEPROM.read(EEPROM_STATION_BASE + i);
     if (val == 0 || val == 1) {
-      setStationEnabled(i + 1, val); // station index starts at 1
+      stationEnabled[i+1] = val; // station index starts at 1
     } else {
-      setStationEnabled(i + 1, true); // default to enabled if uninitialized
+      stationEnabled[i+1] = true; // default to enabled if uninitialized
     }
   }
 
@@ -376,16 +378,28 @@ void loop(){
       else                 owner = ST5;  // 19–20
 
       if(!stationEnabled[owner]){
+        // Disabled → both off
         digitalWrite(LED_A[pair], LOW);
         digitalWrite(LED_B[pair], LOW);
       }
       else if(stationOffline[owner]){
+        // Offline → alternate blink A/B
         digitalWrite(LED_A[pair], blinkPhase ? HIGH : LOW);
         digitalWrite(LED_B[pair], blinkPhase ? LOW : HIGH);
       }
       else{
-        digitalWrite(LED_A[pair], stableState[pair] ? HIGH : LOW);
-        digitalWrite(LED_B[pair], stableState[pair] ? LOW : HIGH);
+        // Online → show true feedback bits
+        uint8_t bitIndex;
+        if      (owner==ST1) bitIndex = pair;
+        else if (owner==ST2) bitIndex = pair-8;
+        else if (owner==ST3) bitIndex = pair-12;
+        else if (owner==ST4) bitIndex = pair-16;
+        else                 bitIndex = pair-19;
+
+        bool relayOn = stationFeedback[owner][bitIndex];
+        // Green = relayOn, Red = !relayOn
+        digitalWrite(LED_A[pair], relayOn ? HIGH : LOW);
+        digitalWrite(LED_B[pair], relayOn ? LOW  : HIGH);
       }
     }
   }
@@ -424,22 +438,44 @@ void loop(){
     }
   }
 
-  // 7) Handle inbound heartbeats
+  // 7) Handle inbound heartbeats / feedback
   int sz = Udp.parsePacket();
-  if(sz>0){
+  if (sz > 0) {
     uint8_t buf[16];
-    int n = Udp.read(buf,sizeof(buf));
-    if(n>=4 && buf[0]==0xAB){
-      uint8_t id=buf[1], st=buf[2], cks=buf[3];
-      if((buf[0]^buf[1]^buf[2])==cks && id>=1 && id<=NUM_STATIONS && st==0x00){
-        lastHeartbeatMs[id]=now;
+    int n = Udp.read(buf, sizeof(buf));
+
+    // Heartbeat: [AB, id, status, cks]
+    if (n >= 4 && buf[0] == 0xAB) {
+      uint8_t id = buf[1], st = buf[2], cks = buf[3];
+      if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id >= 1 && id <= NUM_STATIONS && st == 0x00) {
+        lastHeartbeatMs[id] = now;
         #if DEBUG_SERIAL
         Serial.print(F("[HB ] Station ")); Serial.print(id); Serial.println(F(" OK"));
         #endif
-      }
-      else{
+      } else {
         #if DEBUG_SERIAL
         Serial.println(F("[HB ] Invalid heartbeat"));
+        #endif
+      }
+    }
+
+    // Feedback: [AC, id, bits, status, cks]  <-- adjust if your station format differs
+    else if (n >= 5 && buf[0] == 0xAC) {
+      uint8_t id   = buf[1];
+      uint8_t bits = buf[2];
+      uint8_t cks  = buf[4];
+      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id >= 1 && id <= NUM_STATIONS) {
+        for (uint8_t i = 0; i < 8; i++) {
+          stationFeedback[id][i] = (bits & (1 << i)) != 0;
+        }
+        lastHeartbeatMs[id] = now;
+        #if DEBUG_SERIAL
+        Serial.print(F("[FB ] Station ")); Serial.print(id);
+        Serial.print(F(" bits: ")); Serial.println(bits, BIN);
+        #endif
+      } else {
+        #if DEBUG_SERIAL
+        Serial.println(F("[FB ] Invalid feedback"));
         #endif
       }
     }
