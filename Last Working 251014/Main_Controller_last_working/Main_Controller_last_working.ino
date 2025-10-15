@@ -136,7 +136,7 @@ bool     stationOffline[4]  = {false,true,true,true};
 bool     stationEnabled[4]  = {false,true,true,true};
 
 // Long-press detection
-const uint32_t LONGPRESS_MS = 60000; // 60 seconds
+const uint32_t LONGPRESS_MS = 5000; // 30000 30 seconds
 uint32_t pressStart[4] = {0,0,0,0};
 bool     pressActive[4] = {false,false,false,false};
 
