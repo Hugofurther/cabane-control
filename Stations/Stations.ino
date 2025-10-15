@@ -35,6 +35,23 @@
 #include <TM1637Display.h>
 #include <EEPROM.h>
 
+// ---------------- PIN DEFINITIONS ----------------
+
+// Station-cycle button
+const uint8_t BTN_PIN = A0;   // pushbutton input
+
+// Relay outputs (4)
+const uint8_t OUT_COUNT = 4;
+const uint8_t OUT_PINS[OUT_COUNT] = {2, 3, 4, 5};
+
+// Status inputs (4)
+const uint8_t IN_COUNT = 4;
+const uint8_t IN_PINS[IN_COUNT] = {6, 7, 8, A1};
+
+// Random seed (floating analog)
+const uint8_t SEED_PIN = A3;
+
+// TM1637 display
 // ===== Display presence & pins =====
 #define HAS_TM1637 0   // Set to 1 when the 7-seg display is connected
 
@@ -42,17 +59,13 @@
   #include <TM1637Display.h>
   // Move TM1637 off the W5500 reset pin to avoid conflicts.
   // Wiring: CLK → A1, DIO → A2
-  const uint8_t CLK_PIN = A1;   // TM1637 Clock (safe pin)
-  const uint8_t DIO_PIN = A2;   // TM1637 Data  (safe pin)
+  const uint8_t CLK_PIN = A4;   // TM1637 Clock (safe pin)
+  const uint8_t DIO_PIN = A5;   // TM1637 Data  (safe pin)
   TM1637Display display(CLK_PIN, DIO_PIN);
 #endif
 
 // ------------------- Station ID selection system --------------------
-const uint8_t CLK_PIN = 8;           // TM1637 Clock
-const uint8_t DIO_PIN = 9;           // TM1637 Data
-const uint8_t BTN_PIN = A0;          // Pushbutton to cycle station number
 
-TM1637Display display(CLK_PIN, DIO_PIN);
 uint8_t STATION_ID = 1;              // Default if EEPROM empty
 IPAddress ipMain(192,168,1,10);      // Main controller IP
 
@@ -105,9 +118,6 @@ const uint16_t HEARTBEAT_MS=500;
 const uint16_t CMD_WATCHDOG_MS=1000;
 uint32_t tHeartbeat=0, lastCmdMs=0;
 
-const uint8_t OUT_COUNT=6;
-const uint8_t OUT_PINS[6]={2,3,4,5,6,7};
-
 // -------------------------- Utilities --------------------------------
 void ethernetResetPulse(){
   pinMode(ETH_RST, OUTPUT);
@@ -142,11 +152,23 @@ void setup(){
   digitalWrite(LED_BUILTIN, LOW); // Add on
 
   pinMode(BTN_PIN, INPUT_PULLUP);
-  display.setBrightness(0x0F);
+
+  for (uint8_t i = 0; i < OUT_COUNT; i++)
+    pinMode(OUT_PINS[i], OUTPUT);
+
+  for (uint8_t i = 0; i < IN_COUNT; i++)
+    pinMode(IN_PINS[i], INPUT_PULLUP);
+
+  // --- Seed random number generator for heartbeat jitter ---
+  randomSeed(analogRead(SEED_PIN)); // any unused floating analog pin works
+
+  // Display settings
+  #if HAS_TM1637
+    display.setBrightness(0x0F);
+  #endif
+
   loadStationID();
   showStationID();
-
-  for(uint8_t i=0;i<OUT_COUNT;i++) pinMode(OUT_PINS[i], OUTPUT);
 
   // Compute IP dynamically from Station ID
   ip = IPAddress(192,168,1,10 + STATION_ID);
@@ -155,9 +177,6 @@ void setup(){
   ethernetResetPulse();
   Ethernet.begin(mac, ip);
   Udp.begin(UDP_PORT);
-
-  // --- Seed random number generator for heartbeat jitter ---
-  randomSeed(analogRead(A3));  // any unused floating analog pin works
 
   delay(500);
   EthernetLinkStatus linkStatus = Ethernet.linkStatus();
