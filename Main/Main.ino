@@ -1,65 +1,133 @@
 /*
-  Main_Controller_Binary_Detailed.ino (Updated for mixed input types)
-  ======================================================================
-  BOARD:   Arduino Mega 2560
-  ETHERNET: W5500 module (not a shield), connected via hardware SPI
-            - MISO = D50  (also on ICSP pin 1)
-            - MOSI = D51  (also on ICSP pin 4)
-            - SCK  = D52  (also on ICSP pin 3)
-            - CS   = D10  (selectable; we use 10)
-            - RST  = D9   (recommended; pulsed at startup for clean reset)
-
+===========================================================
+  Main_Controller_Binary_Detailed.ino
+  ----------------------------------------------------------
   PURPOSE:
-    • Read 15 debounced panel inputs (active-low hardware → logical HIGH in code)
-    • Drive 28 LEDs organized as 14 ON/OFF pairs (mutually exclusive per pair)
-    • Send addressed 5-byte binary frames to Station 1/2/3 every 100 ms
-    • Receive 4-byte heartbeats from stations every ~500 ms
-    • If a station is silent > 2 s, blink that station’s LED pairs in ALTERNATE mode
-      (A ↔ B) every 500 ms until heartbeat resumes
+    Acts as the central control unit for up to 5 remote
+    Station Controllers (Station 1–5). Each station has its
+    own switches (inputs) and paired LEDs (outputs) that 
+    visually represent real-time relay and feedback status.
 
-  WHY BINARY FRAMES (vs JSON)?
-    - Tiny, fixed size, deterministic timing (5 bytes vs ~40–60 bytes)
-    - Zero text parsing overhead (no ArduinoJson dependency here)
-    - Ideal for 100 ms control period on small MCUs
+  ----------------------------------------------------------
+  OVERVIEW:
+    • Reads local switch states for 5 stations.
+    • Sends binary status packets to each Station Controller.
+    • Receives feedback packets (or heartbeat) confirming
+      station connectivity and output relay states.
+    • Displays station states on paired Green/Red LEDs.
+    • Supports LED signaling for:
+        - Boot defaults from EEPROM
+        - Network down (Ethernet unplugged)
+        - Station offline
+        - Station disabled
+        - Active feedback state (relay energized / idle)
+    • Includes EEPROM persistence for station enable/disable.
+      - Saved only when changed.
+      - Restored on boot to retain station states.
+    • Supports long-press detection on switches for toggling
+      station enable/disable or other actions.
+    • Includes heartbeat back-off system to prevent flooding.
 
-  FRAME DEFINITIONS (LSB-first bitfields)
-  ----------------------------------------------------------------------
-  MAIN → STATION  (5 bytes total)
-    [0] 0xAA        Header (sync/tag)
-    [1] stationId   1, 2, or 3
-    [2] cmd         0x01 = SET_OUTPUTS
-    [3] bitfield    LSB-first outputs (bit0 → OUT_PINS[0], bit1 → OUT_PINS[1], ...)
-    [4] checksum    XOR of bytes [0..3]
+  ----------------------------------------------------------
+  HARDWARE OVERVIEW:
+    • Controller: Arduino Mega 2560
+    • Ethernet: W5500 module (SPI)
+    • EEPROM: internal (1KB)
+    • Pins:
+        - 21 input switches (station command inputs)
+        - 42 output pins for paired LEDs (Green/Red)
+        - Total 5 stations:
+            ▪ Station 1: 5 inputs, 10 LED outputs
+            ▪ Station 2: 4 inputs, 8 LED outputs
+            ▪ Station 3: 4 inputs, 8 LED outputs
+            ▪ Station 4: 3 inputs, 6 LED outputs
+            ▪ Station 5: 2 inputs, 4 LED outputs
+    • Total: 21 inputs, 42 LED outputs (63 digital pins)
+      → Note: Arduino Mega supports only up to pin 69;
+        expansion via I²C/SPI GPIO extender required later.
 
-  STATION → MAIN  heartbeat (4 bytes total)
-    [0] 0xAB        Header
-    [1] stationId   1, 2, or 3
-    [2] status      0x00 = OK   (future: other codes)
-    [3] checksum    XOR of bytes [0..2]
+  ----------------------------------------------------------
+  LED BEHAVIOR SUMMARY:
+    • On boot:
+        - If EEPROM uninitialized → all stations ENABLED by default.
+    • If Ethernet cable unplugged:
+        - All station LEDs blink RED at 250 ms (BLINK_INTERVAL_MS).
+    • If station offline (no heartbeat):
+        - LEDs alternate RED/GREEN at 250 ms per station.
+    • If station disabled:
+        - All LEDs for that station OFF.
+    • When connected & online:
+        - Green LED ON when station feedback bit = 1 (relay active).
+        - Red LED ON when feedback bit = 0 (relay inactive).
+      (Switches never directly control LEDs; all LED states are
+       driven by feedback from the Station Controllers.)
 
-  LED OWNERSHIP
-    Pairs 0..5  → Station 1
-    Pairs 6..9  → Station 2
-    Pairs 10..13→ Station 3
+  ----------------------------------------------------------
+  COMMUNICATION PROTOCOL:
+    • UDP messages between Main and Station Controllers.
+    • Outgoing binary packet example:
+        [0xAA, stationID, stateBits, checksum]
+    • Incoming heartbeat packet:
+        [0xAB, stationID, status, checksum]
+    • Incoming feedback packet:
+        [0xAC, stationID, bits, status, checksum]
+      → Bits correspond to station’s 8 output relays.
+    • Heartbeats keep link active and verify station health.
+    • Timeouts mark stations as offline if missed > 2000ms.
 
-  SAFETY PHILOSOPHY
-    - If MAIN is down, STATIONS keep last state (no forced toggles)
-    - If STATION is down, MAIN indicates fault by alternate-blinking its pairs
+  ----------------------------------------------------------
+  EEPROM BEHAVIOR:
+    • On boot:
+        - Reads 1 byte per station.
+        - 0 = Disabled, 1 = Enabled.
+        - If value invalid → defaults to Enabled.
+    • During operation:
+        - Writes only on change (using EEPROM.update()).
 
-  ======================================================================
-  This version adds explicit support for push-button inputs with EXTERNAL
-  10 kΩ pull-down resistors. These specific pins are configured as INPUT
-  (floating when open) instead of INPUT_PULLUP.
+  ----------------------------------------------------------
+  LONG PRESS HANDLING:
+    • Detects long press per station.
+    • Can be used to enable/disable stations manually.
+    • Constants:
+        - LONGPRESS_MS = 5000 ms (5 seconds)
+    • pressStart[] / pressActive[] arrays track timing per station.
 
-  The remaining switch inputs continue using INPUT_PULLUP (internal 20–50 kΩ).
-  The debounce and logic inversion routines automatically handle both types.
+  ----------------------------------------------------------
+  HEARTBEAT BACK-OFF:
+    • Randomized back-off timer for heartbeats.
+    • Prevents simultaneous flooding of UDP packets.
+    • Uses station-based random intervals.
+    • randomSeed() placed on Station Controller (since all A-pins
+      are used on the Main Controller).
 
-  CHANGES:
-    - Added constant arrays:
-        const uint8_t PULLDOWN_PINS[] = {37,4,8,11};
-        const uint8_t PULLDOWN_COUNT = sizeof(PULLDOWN_PINS)/sizeof(PULLDOWN_PINS[0]);
-    - In setup(): inputs are first set to INPUT_PULLUP, then the PULLDOWN_PINS
-      are reconfigured to plain INPUT for external resistor operation.
+  ----------------------------------------------------------
+  STATUS OVERVIEW:
+    - stationEnabled[] → whether station is allowed to run.
+    - stationFeedback[][] → current relay states from feedback.
+    - lastHeartbeatMs[] → last heartbeat timestamp per station.
+    - pressStart[] / pressActive[] → long press timers.
+    - stationButtonIndex[] → maps switch index per station to IN_PINS.
+    - LED_A[] / LED_B[] → paired LED pins (Green/Red).
+    - IN_PINS[] → all switch input pins.
+    - UDP/IP config → static or DHCP-based (defined elsewhere).
+
+  ----------------------------------------------------------
+  KNOWN LIMITATIONS:
+    • Mega digital pins 70–88 referenced for future expansion
+      but not physically present.
+      → I²C GPIO expanders (MCP23017) or LED drivers recommended.
+    • Station 4 & 5 hardware defined for future wiring.
+    • SPI bus reserved for Ethernet W5500 (no LED driver sharing).
+    • Some feedback logic (0xAC) must exist in Station firmware.
+
+  ----------------------------------------------------------
+  AUTHOR’S INTENT:
+    This sketch is built for diagnostic clarity — every major
+    process (I/O read, packet send, packet receive, feedback,
+    EEPROM, LED logic) is kept explicit for easy debugging
+    and later refactoring once expansion hardware is added.
+
+===========================================================
 */
 
 // -------------------------------------------------------------------
@@ -177,8 +245,9 @@ bool stationEnabled[NUM_STATIONS + 1] = {false, true, true, true, true, true};
 // Station feedback bits (true = output ON at station)
 bool stationFeedback[NUM_STATIONS + 1][8] = {false}; // up to 8 outputs per station
 
-// Long-press detection
+// Long-press detection parameters
 const uint32_t LONGPRESS_MS = 5000; // 30000 30 seconds
+// Track per-station long-press start times and active states
 uint32_t pressStart[NUM_STATIONS + 1] = {0};
 bool     pressActive[NUM_STATIONS + 1] = {false};
 
