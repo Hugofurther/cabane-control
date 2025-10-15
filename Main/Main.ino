@@ -181,6 +181,15 @@ uint32_t pressStart[NUM_STATIONS + 1] = {0};
 bool     pressActive[NUM_STATIONS + 1] = {false};
 
 // ----------------------------- UTILS ----------------------------------
+void setStationEnabled(uint8_t station, bool enabled) {
+  if (station < 1 || station > EEPROM_STATION_COUNT) return;
+  if (stationEnabled[station] != enabled) {
+    stationEnabled[station] = enabled;
+    // write only when state changes (wear-protected)
+    EEPROM.update(EEPROM_STATION_BASE + (station - 1), enabled ? 1 : 0);
+  }
+}
+
 void ethernetResetPulse(){
   pinMode(ETH_RESET,OUTPUT);
   digitalWrite(ETH_RESET,LOW);
@@ -270,9 +279,9 @@ void setup(){
   for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
     uint8_t val = EEPROM.read(EEPROM_STATION_BASE + i);
     if (val == 0 || val == 1) {
-      stationEnabled[i + 1] = val;  // station index starts at 1
+      setStationEnabled(i + 1, val); // station index starts at 1
     } else {
-      stationEnabled[i + 1] = true; // default to enabled if uninitialized
+      setStationEnabled(i + 1, true); // default to enabled if uninitialized
     }
   }
 
@@ -328,7 +337,7 @@ void loop(){
       pressActive[id] = false;
     }
     else if(pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS)){
-      stationEnabled[id] = !stationEnabled[id];
+      setStationEnabled(id, !stationEnabled[id]);
       pressActive[id] = false;
       #if DEBUG_SERIAL
       Serial.print(F("[TOGGLE] Station "));Serial.print(id);
