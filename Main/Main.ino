@@ -81,6 +81,8 @@ IPAddress ipMain(192,168,1,10);  // This Mega
 IPAddress ipS1  (192,168,1,11);  // Station 1
 IPAddress ipS2  (192,168,1,12);  // Station 2
 IPAddress ipS3  (192,168,1,13);  // Station 3
+IPAddress ipS4  (192,168,1,14);  // Station 4
+IPAddress ipS5  (192,168,1,15);  // Station 5
 
 const uint16_t UDP_PORT = 8888;  // UDP port for all nodes
 
@@ -91,54 +93,87 @@ const uint8_t ETH_CS    = 10;    // Chip Select
 const uint8_t ETH_RESET = 9;     // Reset pin to W5500
 
 // ----------------------------- I/O MAP ------------------------------
-const uint8_t IN_PINS[15] = {
-  22,23,24,25,26,27,28,   // Station 1 inputs (7)
-  29,30,31,32,            // Station 2 inputs (4)
-  33,34,35,36             // Station 3 inputs (4)
+#define NUM_STATIONS   5
+#define NUM_INPUTS     21    // switches
+#define NUM_LED_PAIRS  21    // pairs of A/B LEDs
+
+// ===== Input Switch Pins =====
+// (One per switch, total 21)
+const uint8_t IN_PINS[NUM_INPUTS] = {
+  // Station 1 (8)
+  22,23,24,25,26,27,28,29,
+  // Station 2 (4)
+  46,47,48,49,
+  // Station 3 (4)
+  62,63,64,65,
+  // Station 4 (3)
+  74,75,76,
+  // Station 5 (2)
+  83,84
 };
 
 // ADDITION — push-button inputs using EXTERNAL 10kΩ PULL-DOWNs
-const uint8_t PULLDOWN_PINS[] = {};
-const uint8_t PULLDOWN_COUNT = sizeof(PULLDOWN_PINS) / sizeof(PULLDOWN_PINS[0]);
+// const uint8_t PULLDOWN_PINS[] = {};
+// const uint8_t PULLDOWN_COUNT = sizeof(PULLDOWN_PINS) / sizeof(PULLDOWN_PINS[0]);
 
-// 14 LED pairs (28 pins).  SPI pins removed from LED use.
-const uint8_t LED_A[14] = {
-  40,42,44,46,48,38,      // Pairs 0..5 (Station 1)
-  68,54,56,58,            // Pairs 6..9 (Station 2)
-  60,62,64,66             // Pairs 10..13 (Station 3)
+// ===== LED Output Pins =====
+// (21 pairs → 42 pins total)
+
+const uint8_t LED_A[NUM_LED_PAIRS] = {
+  // Station 1
+  30,31,32,33,34,35,36,37,
+  // Station 2
+  54,55,56,57,
+  // Station 3
+  66,67,68,69,
+  // Station 4
+  77,78,79,
+  // Station 5
+  85,86
 };
-const uint8_t LED_B[14] = {
-  41,43,45,47,49,39,
-  69,55,57,59,
-  61,63,65,67
+
+const uint8_t LED_B[NUM_LED_PAIRS] = {
+  // Station 1
+  38,39,40,41,42,43,44,45,
+  // Station 2
+  58,59,60,61,
+  // Station 3
+  70,71,72,73,
+  // Station 4
+  80,81,82,
+  // Station 5
+  87,88
 };
 
 // ----------------------------- TIMING --------------------------------
 const uint16_t DEBOUNCE_MS           = 25;
-const uint16_t SEND_INTERVAL_MS      = 100;
+const uint16_t SEND_INTERVAL_MS      = 50;
 const uint16_t HEARTBEAT_TIMEOUT_MS  = 2000;
 const uint16_t BLINK_INTERVAL_MS     = 250;
 
-uint32_t lastChangeMs[15] = {0};
-uint8_t  stableState[15]  = {0};
-uint8_t  lastRaw[15]      = {0};
+uint32_t lastChangeMs[NUM_INPUTS] = {0};
+uint8_t  stableState[NUM_INPUTS]  = {0};
+uint8_t  lastRaw[NUM_INPUTS]      = {0};
 
 uint32_t tSend  = 0;
 uint32_t tBlink = 0;
 bool     blinkPhase = false;
 
 // Heartbeat state
-enum { ST1=1, ST2=2, ST3=3 };
-uint32_t lastHeartbeatMs[4] = {0,0,0,0};
-bool     stationOffline[4]  = {false,true,true,true};
+// ===== Station IDs =====
+enum { ST1 = 1, ST2, ST3, ST4, ST5 };
 
+// ===== Station Runtime State =====
+uint32_t lastHeartbeatMs[NUM_STATIONS + 1] = {0};
+// Show all "online" at startup until proven otherwise
+bool stationOffline[NUM_STATIONS + 1] = {false, false, false, false, false, false};
 // Station enable flags
-bool     stationEnabled[4]  = {false,true,true,true};
+bool stationEnabled[NUM_STATIONS + 1] = {false, true, true, true, true, true};
 
 // Long-press detection
 const uint32_t LONGPRESS_MS = 5000; // 30000 30 seconds
-uint32_t pressStart[4] = {0,0,0,0};
-bool     pressActive[4] = {false,false,false,false};
+uint32_t pressStart[NUM_STATIONS + 1] = {0};
+bool     pressActive[NUM_STATIONS + 1] = {false};
 
 // ----------------------------- UTILS ----------------------------------
 void ethernetResetPulse(){
@@ -206,18 +241,18 @@ void setup(){
   Serial.println(F("\n[BOOT] Main_Controller_Binary_Detailed starting..."));
   #endif
 
-  for(uint8_t i=0;i<15;i++){
+  for(uint8_t i=0;i<NUM_INPUTS;i++){
     pinMode(IN_PINS[i], INPUT_PULLUP);
     lastRaw[i] = digitalRead(IN_PINS[i]);
     stableState[i] = !lastRaw[i];
   }
 
-  for(uint8_t i=0;i<PULLDOWN_COUNT;i++){
-    uint8_t pin = PULLDOWN_PINS[i];
-    pinMode(pin, INPUT);
-  }
+  // for(uint8_t i=0;i<PULLDOWN_COUNT;i++){
+  //   uint8_t pin = PULLDOWN_PINS[i];
+  //   pinMode(pin, INPUT);
+  // }
 
-  for(uint8_t k=0;k<14;k++){
+  for(uint8_t k=0;k<NUM_LED_PAIRS;k++){
     pinMode(LED_A[k],OUTPUT);
     pinMode(LED_B[k],OUTPUT);
     digitalWrite(LED_A[k],LOW);
@@ -235,7 +270,7 @@ void loop(){
   uint32_t now = millis();
 
   // 1) Debounce
-  for(uint8_t i=0;i<15;i++){
+  for(uint8_t i=0;i<NUM_INPUTS;i++){
     uint8_t r = digitalRead(IN_PINS[i]);
     if(r!=lastRaw[i]){
       lastChangeMs[i]=now;
@@ -247,8 +282,16 @@ void loop(){
   }
 
   // 2) Long-press detection for station enable/disable
-  const uint8_t stationButtonIndex[4] = {255, 0, 7, 11}; // IN_PINS index
-  for(uint8_t id=1; id<=3; id++){
+  const uint8_t stationButtonIndex[NUM_STATIONS + 1] = {
+    255,  // [0] unused
+    0,    // Station 1 button → IN_PINS[0]
+    8,    // Station 2 button → IN_PINS[8]
+    12,   // Station 3 button → IN_PINS[12]
+    16,   // Station 4 button → IN_PINS[16]
+    19    // Station 5 button → IN_PINS[19]
+  };
+
+  for(uint8_t id=1; id<=NUM_STATIONS; id++){
     uint8_t idx = stationButtonIndex[id];
     bool pressed = stableState[idx];
     if(pressed && !pressActive[id]){
@@ -275,7 +318,7 @@ void loop(){
   }
 
   // 4) Heartbeat timeout
-  for(uint8_t id=1; id<=3; id++)
+  for(uint8_t id=1; id<=NUM_STATIONS; id++)
     stationOffline[id] = (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS);
 
   // 5) LED + Ethernet logic (Option A + C)
@@ -284,13 +327,19 @@ void loop(){
 
   if(linkDown){
     // Cable unplugged: all LEDs blink red
-    for(uint8_t pair=0; pair<14; pair++){
+    for(uint8_t pair=0; pair<NUM_LED_PAIRS; pair++){
       digitalWrite(LED_A[pair], LOW);
       digitalWrite(LED_B[pair], blinkPhase ? HIGH : LOW);
     }
   } else {
-    for(uint8_t pair=0; pair<14; pair++){
-      uint8_t owner = (pair<6)?ST1:(pair<10?ST2:ST3);
+    for(uint8_t pair=0; pair<NUM_LED_PAIRS; pair++){
+      uint8_t owner;
+      if      (pair < 8)   owner = ST1;  // 0–7
+      else if (pair < 12)  owner = ST2;  // 8–11
+      else if (pair < 16)  owner = ST3;  // 12–15
+      else if (pair < 19)  owner = ST4;  // 16–18
+      else                 owner = ST5;  // 19–20
+
       if(!stationEnabled[owner]){
         digitalWrite(LED_A[pair], LOW);
         digitalWrite(LED_B[pair], LOW);
@@ -306,23 +355,37 @@ void loop(){
     }
   }
 
-  // 6) Send frames (only if link up + station enabled + online)
-  if(!linkDown && now - tSend >= SEND_INTERVAL_MS){
+  // 6) Send frames periodically (every SEND_INTERVAL_MS)
+  if (now - tSend >= SEND_INTERVAL_MS) {
     tSend = now;
-
-    if(stationEnabled[ST1] && !stationOffline[ST1]){
-      bool s1[6]; for(uint8_t i=0;i<6;i++) s1[i]=stableState[i];
-      sendSetFrame(ipS1, ST1, packBitsLSB(s1,6));
+    // --- Station 1 ---
+    if (stationEnabled[ST1] && !stationOffline[ST1]) {
+      bool s1[8]; for (uint8_t i=0;i<8;i++) s1[i] = stableState[i];
+      sendSetFrame(ipS1, ST1, packBitsLSB(s1,8));
     }
 
-    if(stationEnabled[ST2] && !stationOffline[ST2]){
-      bool s2[4]; for(uint8_t i=0;i<4;i++) s2[i]=stableState[7+i];
+    // --- Station 2 ---
+    if (stationEnabled[ST2] && !stationOffline[ST2]) {
+      bool s2[4]; for (uint8_t i=0;i<4;i++) s2[i] = stableState[8+i];
       sendSetFrame(ipS2, ST2, packBitsLSB(s2,4));
     }
 
-    if(stationEnabled[ST3] && !stationOffline[ST3]){
-      bool s3[4]; for(uint8_t i=0;i<4;i++) s3[i]=stableState[11+i];
+    // --- Station 3 ---
+    if (stationEnabled[ST3] && !stationOffline[ST3]) {
+      bool s3[4]; for (uint8_t i=0;i<4;i++) s3[i] = stableState[12+i];
       sendSetFrame(ipS3, ST3, packBitsLSB(s3,4));
+    }
+
+    // --- Station 4 ---
+    if (stationEnabled[ST4] && !stationOffline[ST4]) {
+      bool s4[3]; for (uint8_t i=0;i<3;i++) s4[i] = stableState[16+i];
+      sendSetFrame(ipS4, ST4, packBitsLSB(s4,3));
+    }
+
+    // --- Station 5 ---
+    if (stationEnabled[ST5] && !stationOffline[ST5]) {
+      bool s5[2]; for (uint8_t i=0;i<2;i++) s5[i] = stableState[19+i];
+      sendSetFrame(ipS5, ST5, packBitsLSB(s5,2));
     }
   }
 
@@ -333,7 +396,7 @@ void loop(){
     int n = Udp.read(buf,sizeof(buf));
     if(n>=4 && buf[0]==0xAB){
       uint8_t id=buf[1], st=buf[2], cks=buf[3];
-      if((buf[0]^buf[1]^buf[2])==cks && id>=1 && id<=3 && st==0x00){
+      if((buf[0]^buf[1]^buf[2])==cks && id>=1 && id<=NUM_STATIONS && st==0x00){
         lastHeartbeatMs[id]=now;
         #if DEBUG_SERIAL
         Serial.print(F("[HB ] Station ")); Serial.print(id); Serial.println(F(" OK"));
