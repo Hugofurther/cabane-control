@@ -72,6 +72,11 @@
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
+#include <EEPROM.h>
+
+// --- EEPROM addresses ---
+const uint8_t EEPROM_STATION_BASE = 0;   // start address
+const uint8_t EEPROM_STATION_COUNT = 5;  // 5 stations total
 
 // ----------------------------- NETWORK ------------------------------
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0x10 };
@@ -241,6 +246,7 @@ void setup(){
   Serial.println(F("\n[BOOT] Main_Controller_Binary_Detailed starting..."));
   #endif
 
+  // --- INPUT SETUP ---
   for(uint8_t i=0;i<NUM_INPUTS;i++){
     pinMode(IN_PINS[i], INPUT_PULLUP);
     lastRaw[i] = digitalRead(IN_PINS[i]);
@@ -252,6 +258,7 @@ void setup(){
   //   pinMode(pin, INPUT);
   // }
 
+  // --- OUTPUT SETUP ---
   for(uint8_t k=0;k<NUM_LED_PAIRS;k++){
     pinMode(LED_A[k],OUTPUT);
     pinMode(LED_B[k],OUTPUT);
@@ -259,9 +266,28 @@ void setup(){
     digitalWrite(LED_B[k],HIGH);
   }
 
+  // --- Load Station Enable/Disable State from EEPROM ---
+  for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
+    uint8_t val = EEPROM.read(EEPROM_STATION_BASE + i);
+    if (val == 0 || val == 1) {
+      stationEnabled[i + 1] = val;  // station index starts at 1
+    } else {
+      stationEnabled[i + 1] = true; // default to enabled if uninitialized
+    }
+  }
+
+  #if DEBUG_SERIAL
+  for (uint8_t i = 1; i <= EEPROM_STATION_COUNT; i++) {
+    Serial.print(F("[EEPROM] Station "));
+    Serial.print(i);
+    Serial.print(F(" = "));
+    Serial.println(stationEnabled[i] ? F("ENABLED") : F("DISABLED"));
+  }
+  #endif
+
+  // --- Ethernet Initialization ---
   pinMode(53, OUTPUT);
   digitalWrite(53, HIGH);
-
   initEthernet();
 }
 
