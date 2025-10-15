@@ -140,6 +140,27 @@ void setup(){
   Ethernet.begin(mac, ip);
   Udp.begin(UDP_PORT);
 
+  delay(500);
+  EthernetLinkStatus linkStatus = Ethernet.linkStatus();
+  if (linkStatus != LinkON) {
+    #if DEBUG_SERIAL
+    Serial.println(F("[NET] Link not detected, retrying init..."));
+    #endif
+    delay(1000);
+    ethernetResetPulse();
+    Ethernet.begin(mac, ip);
+    Udp.begin(UDP_PORT);
+    delay(500);
+    linkStatus = Ethernet.linkStatus();
+  }
+
+  #if DEBUG_SERIAL
+  if (linkStatus == LinkON)
+    Serial.println(F("[NET] Ethernet link OK"));
+  else
+    Serial.println(F("[NET] Link still down after retry"));
+  #endif
+
   uint32_t now = millis();
   lastCmdMs  = now;
   tHeartbeat = now;
