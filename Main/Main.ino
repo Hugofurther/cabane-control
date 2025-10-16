@@ -191,10 +191,10 @@ const uint8_t IN_PINS[NUM_INPUTS] = {
 
 // ===== LED Output Pins =====
 // (21 pairs → 42 pins total)
-
+// RED LIGHTS
 const uint8_t LED_A[NUM_LED_PAIRS] = {
   // Station 1
-  30,31,32,33,34,35,36,37,
+  40,31,32,33,34,35,36,37,
   // Station 2
   54,55,56,57,
   // Station 3
@@ -205,9 +205,10 @@ const uint8_t LED_A[NUM_LED_PAIRS] = {
   85,86
 };
 
+// GREEN LIGHTS
 const uint8_t LED_B[NUM_LED_PAIRS] = {
   // Station 1
-  38,39,40,41,42,43,44,45,
+  41,38,39,30,42,43,44,45,
   // Station 2
   58,59,60,61,
   // Station 3
@@ -217,6 +218,34 @@ const uint8_t LED_B[NUM_LED_PAIRS] = {
   // Station 5
   87,88
 };
+
+// // RED LIGHTS
+// const uint8_t LED_A[NUM_LED_PAIRS] = {
+//   // Station 1
+//   30,31,32,33,34,35,36,37,
+//   // Station 2
+//   54,55,56,57,
+//   // Station 3
+//   66,67,68,69,
+//   // Station 4
+//   77,78,79,
+//   // Station 5
+//   85,86
+// };
+
+// // GREEN LIGHTS
+// const uint8_t LED_B[NUM_LED_PAIRS] = {
+//   // Station 1
+//   38,39,40,41,42,43,44,45,
+//   // Station 2
+//   58,59,60,61,
+//   // Station 3
+//   70,71,72,73,
+//   // Station 4
+//   80,81,82,
+//   // Station 5
+//   87,88
+// };
 
 // ----------------------------- TIMING --------------------------------
 const uint16_t DEBOUNCE_MS           = 25;

@@ -64,6 +64,8 @@ const uint8_t SEED_PIN = A3;
   TM1637Display display(CLK_PIN, DIO_PIN);
 #endif
 
+uint8_t lastFeedbackBits = 0;
+
 // ------------------- Station ID selection system --------------------
 
 uint8_t STATION_ID = 1;              // Default if EEPROM empty
@@ -254,6 +256,33 @@ void loop(){
     Serial.println(F("[TX ] Heartbeat sent"));
     #endif
 
+    uint8_t feedbackBits = 0;
+    for (uint8_t i = 0; i < IN_COUNT; i++) {
+      bool active = digitalRead(IN_PINS[i]) == HIGH;  // adjust if active LOW
+      if (active) feedbackBits |= (1 << i);
+    }
+
+    // if something changed since last send, transmit now
+    if (feedbackBits != lastFeedbackBits) {
+      lastFeedbackBits = feedbackBits;
+
+      uint8_t fb[5];
+      fb[0] = 0xAC;
+      fb[1] = STATION_ID;
+      fb[2] = feedbackBits;
+      fb[3] = 0x00;
+      fb[4] = fb[0] ^ fb[1] ^ fb[2] ^ fb[3];
+
+      Udp.beginPacket(ipMain, UDP_PORT);
+      Udp.write(fb, 5);
+      Udp.endPacket();
+
+      #if DEBUG_SERIAL
+      Serial.print(F("[FB-CHG] Immediate feedback bits: "));
+      Serial.println(feedbackBits, BIN);
+      #endif
+    }
+
     // --- Heartbeat visual pulse (TM1637 optional) + onboard LED ---
     #if HAS_TM1637
       display.showNumberDecEx(STATION_ID, 0b01000000);
@@ -262,5 +291,14 @@ void loop(){
     delay(150);
     showStationID();
     digitalWrite(LED_BUILTIN, LOW);
+
+    
+
+
   }
+  #if DEBUG_SERIAL
+    Serial.print(F("\ndigitalRead(A0)"));
+    Serial.println(digitalRead(A0));
+    delay(300);
+  #endif
 }
