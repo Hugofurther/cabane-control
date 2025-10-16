@@ -37,32 +37,46 @@
 
 // ---------------- PIN DEFINITIONS ----------------
 
-// Station-cycle button
-const uint8_t BTN_PIN = A0;   // pushbutton input
+// --- Dual-use: seed analog + Ethernet reset ---
+const uint8_t SEED_PIN = A0;   // Read once for random seed, then reused as Ethernet reset
 
-// Relay outputs (4)
-const uint8_t OUT_COUNT = 4;
-const uint8_t OUT_PINS[OUT_COUNT] = {2, 3, 4, 5};
+// --- Pushbutton (Cycle Station) ---
+const uint8_t BTN_PIN = A7;    // Analog-only button (10 kΩ pull-up to +5 V, button → GND)
 
-// Status inputs (4)
-const uint8_t IN_COUNT = 4;
-const uint8_t IN_PINS[IN_COUNT] = {6, 7, 8, A1};
+// --- Extra analog input (optional) ---
+const uint8_t EXTRA_INPUT = A6; // Analog input with 10 kΩ pull-up, threshold <200 = pressed
 
-// Random seed (floating analog)
-const uint8_t SEED_PIN = A3;
+// --- Relay Control outputs (6) ---
+const uint8_t OUT_COUNT = 6;
+const uint8_t OUT_PINS[OUT_COUNT] = {2, 3, 4, 5, 6, 7};
 
-// TM1637 display
-// ===== Display presence & pins =====
-#define HAS_TM1637 0   // Set to 1 when the 7-seg display is connected
+// --- Feedback inputs (7) ---
+#if DEBUG_SERIAL
+  // Keep D0, D1 free for Serial debugging
+  const uint8_t IN_COUNT = 5;
+  const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5};
+#else
+  // Use D0, D1 as inputs when not debugging
+  const uint8_t IN_COUNT = 7;
+  const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5, 0, 1};
+#endif
+
+// --- TM1637 Display ---
+#define HAS_TM1637 0 // Set to 1 when the 7-seg display is connected
 
 #if HAS_TM1637
   #include <TM1637Display.h>
-  // Move TM1637 off the W5500 reset pin to avoid conflicts.
-  // Wiring: CLK → A1, DIO → A2
-  const uint8_t CLK_PIN = A4;   // TM1637 Clock (safe pin)
-  const uint8_t DIO_PIN = A5;   // TM1637 Data  (safe pin)
+  const uint8_t CLK_PIN = 8;
+  const uint8_t DIO_PIN = 9;
   TM1637Display display(CLK_PIN, DIO_PIN);
 #endif
+
+// --- W5500 Ethernet ---
+const uint8_t ETH_CS  = 10;
+const uint8_t ETH_RST = A0;   // Same pin as SEED_PIN
+// SPI: D11 (MOSI), D12 (MISO), D13 (SCK)
+
+// ------------------- Refresh Switch state faster --------------------
 
 uint8_t lastFeedbackBits = 0;
 
@@ -91,21 +105,57 @@ void showStationID() {
   #endif
 }
 
+void vegasMode() {
+  #if HAS_TM1637
+    display.setBrightness(0x0F);
+    // Show colon and countdown from 9 to 0
+    for (int n = 9; n >= 0; n--) {
+      display.showNumberDecEx(n * 1111, 0b01000000, true); // show colon + number
+      delay(150);
+    }
+    display.showNumberDec(0, false);
+    delay(300);
+    display.clear();
+  #endif
+}
+
 void checkButton() {
   static uint32_t lastPress = 0;
-  static bool lastState = HIGH;
-  bool state = digitalRead(BTN_PIN);
-  if (lastState == HIGH && state == LOW && millis() - lastPress > 300) {
+  static bool pressed = false;
+
+  // --- Startup lockout to prevent accidental cycling ---
+  static bool startupLock = true;
+  static uint32_t startupTime = millis();
+  if (startupLock && millis() - startupTime < 3000) return; // ignore for 3 sec
+  startupLock = false;
+
+  int val = analogRead(BTN_PIN);
+  bool isPressed = (val < 200);  // threshold for A7 (pull-up to +5V)
+
+  if (!pressed && isPressed && millis() - lastPress > 300) {
     lastPress = millis();
+    pressed = true;
+
     STATION_ID++;
     if (STATION_ID > 9) STATION_ID = 1;
     saveStationID(STATION_ID);
     showStationID();
+
     #if DEBUG_SERIAL
-    Serial.print(F("[BTN] Station ID set to ")); Serial.println(STATION_ID);
+      Serial.print(F("[BTN] Station ID set to ")); Serial.println(STATION_ID);
     #endif
+  } 
+  else if (!isPressed) {
+    pressed = false;
   }
-  lastState = state;
+}
+
+bool readAnalogFeedbackA6() {
+  // Read the analog voltage (10-bit: 0–1023)
+  int val = analogRead(A6);
+  // Pull-up wiring → pressed/ON ≈ 0, released/OFF ≈ 1023
+  // Threshold chosen for noise immunity
+  return (val < 200);   // true = ON / HIGH signal
 }
 
 // ------------------- Ethernet configuration --------------------
@@ -133,11 +183,13 @@ uint8_t xorChecksum(const uint8_t* data, uint8_t len){
   uint8_t c=0; for(uint8_t i=0;i<len;i++) c ^= data[i]; return c;
 }
 
+
 void applyBitfieldLSB(uint8_t bits){
-  for(uint8_t i=0;i<OUT_COUNT;i++){
-    bool on = (bits & (1u<<i)) != 0;
+  for(uint8_t i=0; i<OUT_COUNT; i++) {
+    bool on = (bits & (1u << i)); // Revesre state of relays ?? -> bool on = (bits & (1u<<i)) != 0;
     digitalWrite(OUT_PINS[i], on ? HIGH : LOW);
   }
+
   #if DEBUG_SERIAL
   Serial.print(F("[OUT] bits=")); Serial.println(bits, BIN);
   #endif
@@ -150,8 +202,10 @@ void setup(){
   while(!Serial){}; Serial.println(F("\n[BOOT] Station starting..."));
   #endif
 
-  pinMode(LED_BUILTIN, OUTPUT); // Add on
-  digitalWrite(LED_BUILTIN, LOW); // Add on
+  // --- Random seed and Ethernet reset pin reuse ---
+  randomSeed(analogRead(SEED_PIN) ^ micros());
+  pinMode(ETH_RST, OUTPUT);
+  digitalWrite(ETH_RST, HIGH);  // keep high after reset pulse
 
   pinMode(BTN_PIN, INPUT_PULLUP);
 
@@ -161,12 +215,10 @@ void setup(){
   for (uint8_t i = 0; i < IN_COUNT; i++)
     pinMode(IN_PINS[i], INPUT_PULLUP);
 
-  // --- Seed random number generator for heartbeat jitter ---
-  randomSeed(analogRead(SEED_PIN)); // any unused floating analog pin works
-
   // Display settings
   #if HAS_TM1637
     display.setBrightness(0x0F);
+    vegasMode();          // Run the TM1637 test sequence
   #endif
 
   loadStationID();
@@ -258,8 +310,13 @@ void loop(){
 
     uint8_t feedbackBits = 0;
     for (uint8_t i = 0; i < IN_COUNT; i++) {
-      bool active = digitalRead(IN_PINS[i]) == HIGH;  // adjust if active LOW
+      bool active = digitalRead(IN_PINS[i]) == HIGH;
       if (active) feedbackBits |= (1 << i);
+    }
+
+    // --- Add analog input A6 as next bit ---
+    if (readAnalogFeedbackA6()) {
+      feedbackBits |= (1 << IN_COUNT);
     }
 
     // if something changed since last send, transmit now
@@ -278,8 +335,14 @@ void loop(){
       Udp.endPacket();
 
       #if DEBUG_SERIAL
-      Serial.print(F("[FB-CHG] Immediate feedback bits: "));
-      Serial.println(feedbackBits, BIN);
+        Serial.print(F("[FB-CHG] Immediate feedback bits: "));
+        Serial.println(feedbackBits, BIN);
+
+        // Optional: show A6 analog status too
+        Serial.print(F("[FB] A6="));
+        Serial.print(readAnalogFeedbackA6());
+        Serial.print(F(" bits: "));
+        Serial.println(feedbackBits, BIN);
       #endif
     }
 
@@ -287,10 +350,7 @@ void loop(){
     #if HAS_TM1637
       display.showNumberDecEx(STATION_ID, 0b01000000);
     #endif
-    digitalWrite(LED_BUILTIN, HIGH);
-    delay(150);
     showStationID();
-    digitalWrite(LED_BUILTIN, LOW);
 
     
 
