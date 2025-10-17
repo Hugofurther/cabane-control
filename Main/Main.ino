@@ -3,14 +3,14 @@
   Main_Controller_Binary_Detailed.ino
   ----------------------------------------------------------
   PURPOSE:
-    Acts as the central control unit for up to 5 remote
-    Station Controllers (Station 1–5). Each station has its
+    Acts as the central control unit for up to 6 remote
+    Station Controllers (Station 0–5). Each station has its
     own switches (inputs) and paired LEDs (outputs) that 
     visually represent real-time relay and feedback status.
 
   ----------------------------------------------------------
   OVERVIEW:
-    • Reads local switch states for 5 stations.
+    • Reads local switch states for 6 stations.
     • Sends binary status packets to each Station Controller.
     • Receives feedback packets (or heartbeat) confirming
       station connectivity and output relay states.
@@ -36,15 +36,16 @@
     • Pins:
         - 21 input switches (station command inputs)
         - 42 output pins for paired LEDs (Green/Red)
-        - Total 5 stations:
-            ▪ Station 1: 5 inputs, 10 LED outputs
+        • Total 6 stations:
+            ▪ Station 0: 2 inputs, 4 LED outputs
+            ▪ Station 1: 6 inputs, 12 LED outputs
             ▪ Station 2: 4 inputs, 8 LED outputs
             ▪ Station 3: 4 inputs, 8 LED outputs
             ▪ Station 4: 3 inputs, 6 LED outputs
             ▪ Station 5: 2 inputs, 4 LED outputs
     • Total: 21 inputs, 42 LED outputs (63 digital pins)
       → Note: Arduino Mega supports only up to pin 69;
-        expansion via I²C/SPI GPIO extender required later.
+        Currently uses onboard pins only (no I/O expander)
 
   ----------------------------------------------------------
   LED BEHAVIOR SUMMARY:
@@ -66,7 +67,7 @@
   COMMUNICATION PROTOCOL:
     • UDP messages between Main and Station Controllers.
     • Outgoing binary packet example:
-        [0xAA, stationID, stateBits, checksum]
+        [0xAA, stationID, 0x01, stateBits, checksum]
     • Incoming heartbeat packet:
         [0xAB, stationID, status, checksum]
     • Incoming feedback packet:
@@ -103,6 +104,8 @@
   ----------------------------------------------------------
   STATUS OVERVIEW:
     - stationEnabled[] → whether station is allowed to run.
+    - “stationFeedback[station][bit] → relay ON/OFF feedback from each station (bit 0 = first output).”
+    - “Overrides: Station 0 A3 forces main inputs 4, 5, 11, 16 ON; Station 4 A4 forces input 19 ON.”
     - stationFeedback[][] → current relay states from feedback.
     - lastHeartbeatMs[] → last heartbeat timestamp per station.
     - pressStart[] / pressActive[] → long press timers.
@@ -135,117 +138,116 @@
 // parsed frames, checksums, and state changes over USB Serial Monitor.
 // Keep FALSE in production for deterministic timing.
 // -------------------------------------------------------------------
+#define FIRMWARE_VERSION "v1.2.0 (2025-10-16)"
 #define DEBUG_SERIAL true
+#define ENABLE_OVERRIDE true
+
+// --------------------------------------------------------------
+// Vegas Mode Configuration
+// --------------------------------------------------------------
+const bool ENABLE_VEGAS_MODE = true;   // Set false to skip startup LED test
+const uint16_t VEGAS_DELAY_MS = 60;    // Speed between LEDs (adjust to taste)
+const uint8_t VEGAS_FLASHES = 2;       // Number of red/green blinks per station
 
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <EEPROM.h>
 
+
 // --- EEPROM addresses ---
 const uint8_t EEPROM_STATION_BASE = 0;   // start address
-const uint8_t EEPROM_STATION_COUNT = 5;  // 5 stations total
+const uint8_t EEPROM_STATION_COUNT = 6;  // 6 stations total
 
 // ----------------------------- NETWORK ------------------------------
 byte mac[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0x10 };
 
 // Fixed IPs per design
-IPAddress ipMain(192,168,1,10);  // This Mega
-IPAddress ipS1  (192,168,1,11);  // Station 1
-IPAddress ipS2  (192,168,1,12);  // Station 2
-IPAddress ipS3  (192,168,1,13);  // Station 3
-IPAddress ipS4  (192,168,1,14);  // Station 4
-IPAddress ipS5  (192,168,1,15);  // Station 5
+IPAddress ipMain(192,168,1,1);  // This Mega
+IPAddress ipS0(192,168,1,10);   // Station 0
+IPAddress ipS1(192,168,1,11);   // Station 1
+IPAddress ipS2(192,168,1,12);   // Station 2
+IPAddress ipS3(192,168,1,13);   // Station 3
+IPAddress ipS4(192,168,1,14);   // Station 4
+IPAddress ipS5(192,168,1,15);   // Station 5
 
 const uint16_t UDP_PORT = 8888;  // UDP port for all nodes
 
 EthernetUDP Udp;                 // Single socket for RX/TX
 
 // W5500 control pins on MEGA
-const uint8_t ETH_CS    = 10;    // Chip Select
-const uint8_t ETH_RESET = 9;     // Reset pin to W5500
+const uint8_t ETH_CS    = 22;    // Chip Select
+const uint8_t ETH_RESET = 23;     // Reset pin to W5500
 
 // ----------------------------- I/O MAP ------------------------------
-#define NUM_STATIONS   5
+#define NUM_STATIONS   6
 #define NUM_INPUTS     21    // switches
 #define NUM_LED_PAIRS  21    // pairs of A/B LEDs
 
-// ===== Input Switch Pins =====
-// (One per switch, total 21)
-const uint8_t IN_PINS[NUM_INPUTS] = {
-  // Station 1 (8)
-  22,23,24,25,26,27,28,29,
-  // Station 2 (4)
-  46,47,48,49,
-  // Station 3 (4)
-  62,63,64,65,
-  // Station 4 (3)
-  74,75,76,
-  // Station 5 (2)
-  83,84
+// ===== Input Switch Pins (21 total) =====
+// Using D2–D21 + D1 (if DEBUG off)
+#if DEBUG_SERIAL
+  const uint8_t IN_PINS[NUM_INPUTS] = {
+    // Station 0 (2)
+    2, 3,
+    // Station 1 (6)
+    4, 5, 6, 7, 8, 9,
+    // Station 2 (4)
+    10, 11, 12, 13,
+    // Station 3 (4)
+    14, 15, 16, 17,
+    // Station 4 (3)
+    18, 19, 20,
+    // Station 5 (2)
+    21
+  };
+#else
+    const uint8_t IN_PINS[NUM_INPUTS] = {
+      // Station 0 (2)
+      2, 3,
+      // Station 1 (6)
+      4, 5, 6, 7, 8, 9,
+      // Station 2 (4)
+      10, 11, 12, 13,
+      // Station 3 (4)
+      14, 15, 16, 17,
+      // Station 4 (3)
+      18, 19, 20,
+      // Station 5 (2)
+      21,1
+    };
+#endif
+
+
+
+// ===== LED Output Pins (21 pairs = 42 pins) =====
+// Each pair = RED (LED_A) + GREEN (LED_B)
+//
+//   • RED  → LED_A[] = even-numbered pins (D24, D26, D28, … D68)
+//   • GREEN → LED_B[] = odd-numbered pins  (D25, D27, D29, … D69)
+//
+// Relay Logic (displayed via feedback):
+//   • GREEN = Relay active (energized) → current flowing
+//   • RED   = Relay inactive (open)    → no current flow
+//
+// This even/odd pairing keeps wiring logical and symmetrical:
+//   D24/D25, D26/D27, D28/D29, … D68/D69
+//
+// Example LED behavior:
+//   - relayOn == true  → GREEN ON  (LED_B HIGH, LED_A LOW)
+//   - relayOn == false → RED ON    (LED_A HIGH, LED_B LOW)
+
+const uint8_t LED_A[NUM_LED_PAIRS] = {  // 🔴 RED LEDs
+  24, 26, 28, 30, 32, 34, 36,
+  38, 40, 42, 44, 46, 48, 54,
+  56, 58, 60, 62, 64, 66, 68
 };
 
-// ADDITION — push-button inputs using EXTERNAL 10kΩ PULL-DOWNs
-// const uint8_t PULLDOWN_PINS[] = {};
-// const uint8_t PULLDOWN_COUNT = sizeof(PULLDOWN_PINS) / sizeof(PULLDOWN_PINS[0]);
-
-// ===== LED Output Pins =====
-// (21 pairs → 42 pins total)
-// RED LIGHTS
-const uint8_t LED_A[NUM_LED_PAIRS] = {
-  // Station 1
-  40,31,32,33,34,35,36,37,
-  // Station 2
-  54,55,56,57,
-  // Station 3
-  66,67,68,69,
-  // Station 4
-  77,78,79,
-  // Station 5
-  85,86
+const uint8_t LED_B[NUM_LED_PAIRS] = {  // 🟢 GREEN LEDs
+  25, 27, 29, 31, 33, 35, 37,
+  39, 41, 43, 45, 47, 49, 55,
+  57, 59, 61, 63, 65, 67, 69
 };
-
-// GREEN LIGHTS
-const uint8_t LED_B[NUM_LED_PAIRS] = {
-  // Station 1
-  41,38,39,30,42,43,44,45,
-  // Station 2
-  58,59,60,61,
-  // Station 3
-  70,71,72,73,
-  // Station 4
-  80,81,82,
-  // Station 5
-  87,88
-};
-
-// // RED LIGHTS
-// const uint8_t LED_A[NUM_LED_PAIRS] = {
-//   // Station 1
-//   30,31,32,33,34,35,36,37,
-//   // Station 2
-//   54,55,56,57,
-//   // Station 3
-//   66,67,68,69,
-//   // Station 4
-//   77,78,79,
-//   // Station 5
-//   85,86
-// };
-
-// // GREEN LIGHTS
-// const uint8_t LED_B[NUM_LED_PAIRS] = {
-//   // Station 1
-//   38,39,40,41,42,43,44,45,
-//   // Station 2
-//   58,59,60,61,
-//   // Station 3
-//   70,71,72,73,
-//   // Station 4
-//   80,81,82,
-//   // Station 5
-//   87,88
-// };
 
 // ----------------------------- TIMING --------------------------------
 const uint16_t DEBOUNCE_MS           = 25;
@@ -263,31 +265,49 @@ bool     blinkPhase = false;
 
 // Heartbeat state
 // ===== Station IDs =====
-enum { ST1 = 1, ST2, ST3, ST4, ST5 };
+enum { ST0 = 0, ST1, ST2, ST3, ST4, ST5 };
 
 // ===== Station Runtime State =====
-uint32_t lastHeartbeatMs[NUM_STATIONS + 1] = {0};
+uint32_t lastHeartbeatMs[NUM_STATIONS] = {0};
 // Show all "online" at startup until proven otherwise
-bool stationOffline[NUM_STATIONS + 1] = {false, false, false, false, false, false};
+bool stationOffline[NUM_STATIONS] = {false, false, false, false, false, false};
 // Station enable flags
-bool stationEnabled[NUM_STATIONS + 1] = {false, true, true, true, true, true};
+bool stationEnabled[NUM_STATIONS] = {false, true, true, true, true, true};
 // Station feedback bits (true = output ON at station)
-bool stationFeedback[NUM_STATIONS + 1][8] = {false}; // up to 8 outputs per station
+bool stationFeedback[NUM_STATIONS][8] = {false}; // up to 8 outputs per station
 
 // Long-press detection parameters
 const uint32_t LONGPRESS_MS = 5000; // 30000 30 seconds
 // Track per-station long-press start times and active states
-uint32_t pressStart[NUM_STATIONS + 1] = {0};
-bool     pressActive[NUM_STATIONS + 1] = {false};
+uint32_t pressStart[NUM_STATIONS] = {0};
+bool     pressActive[NUM_STATIONS] = {false};
+
+// ----------------------------- BUTTON MAPPING -----------------------------
+// Maps each station to the index of its main control button in IN_PINS[]
+const uint8_t stationButtonIndex[NUM_STATIONS] = {
+  0,    // Station 0 → IN_PINS[0]
+  1,    // Station 1 → IN_PINS[1]
+  8,    // Station 2 → IN_PINS[8]
+  12,   // Station 3 → IN_PINS[12]
+  16,   // Station 4 → IN_PINS[16]
+  19    // Station 5 → IN_PINS[19]
+};
 
 // ----------------------------- UTILS ----------------------------------
 void setStationEnabled(uint8_t station, bool enabled) {
-  if (station < 1 || station > EEPROM_STATION_COUNT) return;
+  if (station >= EEPROM_STATION_COUNT) return;
   if (stationEnabled[station] != enabled) {
     stationEnabled[station] = enabled;
     // write only when state changes (wear-protected)
-    EEPROM.update(EEPROM_STATION_BASE + (station - 1), enabled ? 1 : 0);
+    EEPROM.update(EEPROM_STATION_BASE + station, enabled ? 1 : 0);
   }
+
+  #if DEBUG_SERIAL
+    Serial.print(F("[EEPROM] Updated Station "));
+    Serial.print(station);
+    Serial.print(F(" -> "));
+    Serial.println(enabled ? F("ENABLED") : F("DISABLED"));
+  #endif
 }
 
 void ethernetResetPulse(){
@@ -311,7 +331,8 @@ void initEthernet() {
   EthernetLinkStatus linkStatus = Ethernet.linkStatus();
   if (linkStatus != LinkON) {
     #if DEBUG_SERIAL
-    Serial.println(F("[NET] Link not detected, retrying init..."));
+      Serial.println(F("[NET] Link not detected, retrying init..."));
+      Serial.println(Ethernet.localIP());
     #endif
     delay(1000);
     ethernetResetPulse();
@@ -322,10 +343,10 @@ void initEthernet() {
   }
 
   #if DEBUG_SERIAL
-  if (linkStatus == LinkON)
-    Serial.println(F("[NET] Ethernet link OK"));
-  else
-    Serial.println(F("[NET] Link still down after retry"));
+    if (linkStatus == LinkON)
+      Serial.println(F("[NET] Ethernet link OK"));
+    else
+      Serial.println(F("[NET] Link still down after retry"));
   #endif
 }
 
@@ -347,12 +368,123 @@ void sendSetFrame(IPAddress dst,uint8_t id,uint8_t bits){
   #endif
 }
 
+// --------------------------------------------------------------
+// 🎰 Vegas Mode LED Test Sequence
+// --------------------------------------------------------------
+void runVegasMode() {
+  if (!ENABLE_VEGAS_MODE) return;
+
+  #if DEBUG_SERIAL
+    Serial.println(F("[VEGAS] Starting LED diagnostic sequence..."));
+  #endif
+
+  // --- 1️⃣ Sweep all RED LEDs ---
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++) {
+    digitalWrite(LED_A[i], HIGH);   // RED ON
+    delay(VEGAS_DELAY_MS);
+    digitalWrite(LED_A[i], LOW);
+  }
+
+  delay(200);
+
+  // --- 2️⃣ Sweep all GREEN LEDs ---
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++) {
+    digitalWrite(LED_B[i], HIGH);   // GREEN ON
+    delay(VEGAS_DELAY_MS);
+    digitalWrite(LED_B[i], LOW);
+  }
+
+  delay(200);
+
+  // --- 3️⃣ Station-by-station red/green flash ---
+  uint8_t startIndex = 0;
+  const uint8_t stationPairCount[NUM_STATIONS] = {2, 6, 4, 4, 3, 2};  // pairs per station
+
+  for (uint8_t st = 0; st < NUM_STATIONS; st++) {
+    for (uint8_t f = 0; f < VEGAS_FLASHES; f++) {
+      for (uint8_t j = 0; j < stationPairCount[st]; j++) {
+        uint8_t idx = startIndex + j;
+        digitalWrite(LED_A[idx], HIGH);
+        digitalWrite(LED_B[idx], LOW);
+      }
+      delay(200);
+      for (uint8_t j = 0; j < stationPairCount[st]; j++) {
+        uint8_t idx = startIndex + j;
+        digitalWrite(LED_A[idx], LOW);
+        digitalWrite(LED_B[idx], HIGH);
+      }
+      delay(200);
+    }
+    // turn off all LEDs for this station before next
+    for (uint8_t j = 0; j < stationPairCount[st]; j++) {
+      uint8_t idx = startIndex + j;
+      digitalWrite(LED_A[idx], LOW);
+      digitalWrite(LED_B[idx], LOW);
+    }
+    startIndex += stationPairCount[st];
+  }
+
+  delay(200);
+
+  // --- 4️⃣ Global RED/GREEN flashes ---
+  for (uint8_t f = 0; f < VEGAS_FLASHES; f++) {
+    // all RED
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++) {
+      digitalWrite(LED_A[i], HIGH);
+      digitalWrite(LED_B[i], LOW);
+    }
+    delay(300);
+    // all GREEN
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++) {
+      digitalWrite(LED_A[i], LOW);
+      digitalWrite(LED_B[i], HIGH);
+    }
+    delay(300);
+  }
+
+  // --- turn everything off ---
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++) {
+    digitalWrite(LED_A[i], LOW);
+    digitalWrite(LED_B[i], LOW);
+  }
+
+  #if DEBUG_SERIAL
+    Serial.println(F("[VEGAS] LED test complete."));
+  #endif
+}
+
+// --- Load Station Enable/Disable State from EEPROM ---
+void loadStationEnableState() {
+  for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
+    uint8_t val = EEPROM.read(EEPROM_STATION_BASE + i);
+    if (val == 0 || val == 1)
+      stationEnabled[i] = val;
+    else
+      stationEnabled[i] = true;
+  }
+
+  #if DEBUG_SERIAL
+  Serial.println(F("[EEPROM] Loaded station enable states:"));
+  for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
+    Serial.print(F("  Station "));
+    Serial.print(i);
+    Serial.print(F(": "));
+    Serial.println(stationEnabled[i] ? F("ENABLED") : F("DISABLED"));
+  }
+  #endif
+}
+
 // ----------------------------- SETUP ----------------------------------
 void setup(){
   #if DEBUG_SERIAL
-  Serial.begin(115200);
-  while(!Serial){}
-  Serial.println(F("\n[BOOT] Main_Controller_Binary_Detailed starting..."));
+    Serial.begin(115200);
+    while(!Serial){}
+    Serial.println();
+    Serial.println(F("================================================"));
+    Serial.println(F(" Main Controller Firmware"));
+    Serial.print(F(" Version: ")); Serial.println(FIRMWARE_VERSION);
+    Serial.println(F("================================================"));
+    Serial.println(F("[BOOT] Main_Controller_Binary_Detailed starting..."));
   #endif
 
   // --- INPUT SETUP ---
@@ -362,11 +494,6 @@ void setup(){
     stableState[i] = !lastRaw[i];
   }
 
-  // for(uint8_t i=0;i<PULLDOWN_COUNT;i++){
-  //   uint8_t pin = PULLDOWN_PINS[i];
-  //   pinMode(pin, INPUT);
-  // }
-
   // --- OUTPUT SETUP ---
   for(uint8_t k=0;k<NUM_LED_PAIRS;k++){
     pinMode(LED_A[k],OUTPUT);
@@ -375,23 +502,29 @@ void setup(){
     digitalWrite(LED_B[k],HIGH);
   }
 
-  // --- Load Station Enable/Disable State from EEPROM ---
-  for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
-    uint8_t val = EEPROM.read(EEPROM_STATION_BASE + i);
-    if (val == 0 || val == 1) {
-      stationEnabled[i+1] = val; // station index starts at 1
-    } else {
-      stationEnabled[i+1] = true; // default to enabled if uninitialized
-    }
+  // 🎰 Run startup LED diagnostic once after initialization
+  if (ENABLE_VEGAS_MODE) {
+    uint32_t t0 = millis();
+    runVegasMode();
+    uint32_t elapsed = millis() - t0;
+    #if DEBUG_SERIAL
+      Serial.print(F("[VEGAS] Duration: "));
+      Serial.print(elapsed);
+      Serial.println(F(" ms"));
+      Serial.println(F("------------------------------------------------"));
+    #endif
   }
 
+  // --- Load Station Enable/Disable State from EEPROM ---
+  loadStationEnableState();
+
   #if DEBUG_SERIAL
-  for (uint8_t i = 1; i <= EEPROM_STATION_COUNT; i++) {
-    Serial.print(F("[EEPROM] Station "));
-    Serial.print(i);
-    Serial.print(F(" = "));
-    Serial.println(stationEnabled[i] ? F("ENABLED") : F("DISABLED"));
-  }
+  for (uint8_t i = 0; i < EEPROM_STATION_COUNT; i++) {
+      Serial.print(F("[EEPROM] Station "));
+      Serial.print(i);
+      Serial.print(F(" = "));
+      Serial.println(stationEnabled[i] ? F("ENABLED") : F("DISABLED"));
+    }
   #endif
 
   // --- Ethernet Initialization ---
@@ -417,16 +550,8 @@ void loop(){
   }
 
   // 2) Long-press detection for station enable/disable
-  const uint8_t stationButtonIndex[NUM_STATIONS + 1] = {
-    255,  // [0] unused
-    0,    // Station 1 button → IN_PINS[0]
-    8,    // Station 2 button → IN_PINS[8]
-    12,   // Station 3 button → IN_PINS[12]
-    16,   // Station 4 button → IN_PINS[16]
-    19    // Station 5 button → IN_PINS[19]
-  };
 
-  for(uint8_t id=1; id<=NUM_STATIONS; id++){
+  for(uint8_t id=0; id<NUM_STATIONS; id++){
     uint8_t idx = stationButtonIndex[id];
     bool pressed = stableState[idx];
     if(pressed && !pressActive[id]){
@@ -453,23 +578,24 @@ void loop(){
   }
 
   // 4) Heartbeat timeout
-  for(uint8_t id=1; id<=NUM_STATIONS; id++)
+  for(uint8_t id=0; id<NUM_STATIONS; id++)
     stationOffline[id] = (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS);
 
-  // 5) LED + Ethernet logic (Option A + C)
+  // 5) LED + Ethernet logic
   EthernetLinkStatus linkStatus = Ethernet.linkStatus();
   bool linkDown = (linkStatus != LinkON);
 
   if(linkDown){
-    // Cable unplugged: all LEDs blink red
+    // Cable unplugged: all LEDs blink RED
     for(uint8_t pair=0; pair<NUM_LED_PAIRS; pair++){
-      digitalWrite(LED_A[pair], LOW);
-      digitalWrite(LED_B[pair], blinkPhase ? HIGH : LOW);
+      digitalWrite(LED_B[pair], LOW);                    // turn off green
+      digitalWrite(LED_A[pair], blinkPhase ? HIGH : LOW); // blink red
     }
   } else {
     for(uint8_t pair=0; pair<NUM_LED_PAIRS; pair++){
       uint8_t owner;
-      if      (pair < 8)   owner = ST1;  // 0–7
+      if      (pair < 2)   owner = ST0;  // 0–1
+      else if (pair < 8)   owner = ST1;  // 2–7
       else if (pair < 12)  owner = ST2;  // 8–11
       else if (pair < 16)  owner = ST3;  // 12–15
       else if (pair < 19)  owner = ST4;  // 16–18
@@ -488,7 +614,8 @@ void loop(){
       else{
         // Online → show true feedback bits
         uint8_t bitIndex;
-        if      (owner==ST1) bitIndex = pair;
+        if      (owner==ST0) bitIndex = pair;
+        else if (owner==ST1) bitIndex = pair-2;
         else if (owner==ST2) bitIndex = pair-8;
         else if (owner==ST3) bitIndex = pair-12;
         else if (owner==ST4) bitIndex = pair-16;
@@ -496,8 +623,8 @@ void loop(){
 
         bool relayOn = stationFeedback[owner][bitIndex];
         // Green = relayOn, Red = !relayOn
-        digitalWrite(LED_A[pair], relayOn ? HIGH : LOW);
-        digitalWrite(LED_B[pair], relayOn ? LOW  : HIGH);
+        digitalWrite(LED_A[pair], relayOn ? HIGH : LOW);   // RED
+        digitalWrite(LED_B[pair], relayOn ? LOW  : HIGH);  // GREEN
       }
     }
   }
@@ -505,10 +632,15 @@ void loop(){
   // 6) Send frames periodically (every SEND_INTERVAL_MS)
   if (now - tSend >= SEND_INTERVAL_MS) {
     tSend = now;
+    // --- Station 0 ---
+    if (stationEnabled[ST0] && !stationOffline[ST0]) {
+      bool s0[2]; for (uint8_t i=0;i<2;i++) s0[i] = stableState[i];
+      sendSetFrame(ipS0, ST0, packBitsLSB(s0,2));
+    }
     // --- Station 1 ---
     if (stationEnabled[ST1] && !stationOffline[ST1]) {
-      bool s1[8]; for (uint8_t i=0;i<8;i++) s1[i] = stableState[i];
-      sendSetFrame(ipS1, ST1, packBitsLSB(s1,8));
+      bool s1[6]; for (uint8_t i=0;i<6;i++) s1[i] = stableState[i];
+      sendSetFrame(ipS1, ST1, packBitsLSB(s1,6));
     }
 
     // --- Station 2 ---
@@ -545,7 +677,7 @@ void loop(){
     // Heartbeat: [AB, id, status, cks]
     if (n >= 4 && buf[0] == 0xAB) {
       uint8_t id = buf[1], st = buf[2], cks = buf[3];
-      if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id >= 1 && id <= NUM_STATIONS && st == 0x00) {
+      if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS && st == 0x00) {
         lastHeartbeatMs[id] = now;
         #if DEBUG_SERIAL
         Serial.print(F("[HB ] Station ")); Serial.print(id); Serial.println(F(" OK"));
@@ -562,11 +694,12 @@ void loop(){
       uint8_t id   = buf[1];
       uint8_t bits = buf[2];
       uint8_t cks  = buf[4];
-      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id >= 1 && id <= NUM_STATIONS) {
+      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS) {
         for (uint8_t i = 0; i < 8; i++) {
           stationFeedback[id][i] = (bits & (1 << i)) != 0;
         }
         lastHeartbeatMs[id] = now;
+
         #if DEBUG_SERIAL
         Serial.print(F("[FB ] Station ")); Serial.print(id);
         Serial.print(F(" bits: ")); Serial.println(bits, BIN);
@@ -577,5 +710,55 @@ void loop(){
         #endif
       }
     }
+
   }
+
+  // ---------------------------
+  // 8) Override logic (always runs)
+  // ---------------------------
+  #if ENABLE_OVERRIDE
+    // --------------------------------------------------------------
+    // ------------------- Thermostat Override ----------------------
+    // --------------------------------------------------------------
+    // 🔄 Logical Override from Station 0 (A3) and Station 4 (A4)
+    // --------------------------------------------------------------
+    // If Station 0 feedback on A3 (index 2) is active → force ON inputs 4,5,11,16
+    // If Station 4 feedback on A4 (index 3) is active → force ON input 19
+    // When override feedbacks go LOW → restore physical switch control
+    // --------------------------------------------------------------
+
+    bool override_ST0 = stationFeedback[ST0][2]; // Station 0 A3
+    bool override_ST4 = stationFeedback[ST4][3]; // Station 4 A4
+
+    // --- Station 0 → overrides Station 1/2/3 switch inputs ---
+    if (override_ST0) {
+      stableState[4]  = 1; // Station 1 switch
+      stableState[5]  = 1; // Station 1 switch
+      stableState[11] = 1; // Station 2 switch
+      stableState[16] = 1; // Station 3 switch
+    } else {
+      // restore real switch values
+      stableState[4]  = !digitalRead(IN_PINS[4]);
+      stableState[5]  = !digitalRead(IN_PINS[5]);
+      stableState[11] = !digitalRead(IN_PINS[11]);
+      stableState[16] = !digitalRead(IN_PINS[16]);
+    }
+
+    // --- Station 4 → overrides Station 4 switch input ---
+    if (override_ST4) {
+      stableState[19] = 1; // Station 4 switch
+    } else {
+      stableState[19] = !digitalRead(IN_PINS[19]);
+    }
+
+    #if DEBUG_SERIAL
+      if (override_ST0 || override_ST4) {
+        Serial.print(F("[OVERRIDE] ST0_A3="));
+        Serial.print(override_ST0);
+        Serial.print(F(" ST4_A4="));
+        Serial.print(override_ST4);
+        Serial.print(F(" | Affected inputs: 4,5,11,16,19\n"));
+      }
+    #endif
+  #endif
 }

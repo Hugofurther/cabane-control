@@ -2,37 +2,48 @@
   Station_Generic_Binary_TM1637.ino
   ======================================================================
   BOARD:   Arduino Nano
-  ETHERNET: W5500 module via SPI (not a shield)
+  ETHERNET: W5500 module (not Ethernet shield), SPI wiring:
             - MOSI = D11
             - MISO = D12
             - SCK  = D13
             - CS   = D10
-            - RST  = D9
-
+            - RST  = D9 or A0 (shared reset/seed)
   PURPOSE:
-    • Receive addressed 5-byte command frames from MAIN:
-        [0]=0xAA, [1]=stationId, [2]=0x01 (SET), [3]=bitfield, [4]=XOR
-      → Apply LSB-first bitfield to outputs (bit0 → OUT_PINS[0], ...)
-    • Maintain last outputs if MAIN is silent (watchdog is passive)
-    • Send 4-byte heartbeat to MAIN every 500 ms:
-        [0]=0xAB, [1]=stationId, [2]=0x00 (OK), [3]=XOR
-    • Pushbutton + TM1637 LED display allow selecting Station ID (1–9)
-      which is stored in EEPROM for persistence.
-
-  WATCHDOG PHILOSOPHY:
-    - We *do not* force a safe/off state on timeout; we keep last known state.
-      (This matches your requested behavior; can be changed later if needed.)
-
-  DEBUG:
-    - Toggle DEBUG_SERIAL to see decoded frames and checksums over Serial.
+    • Receive 5-byte command frames from MAIN:
+        [0]=0xAA, [1]=stationId (0–5), [2]=0x01 (SET),
+        [3]=bitfield (LSB→OUT0), [4]=XOR checksum.
+    • Maintain last outputs if MAIN is silent.
+    • Send heartbeat every 500 ms: [0xAB,id,0x00,cks].
+    • Send feedback frame when input changes:
+        [0xAC,id,bits,0x00,cks].
+    • TM1637 (optional) + pushbutton (A7) let you select
+      station ID (0–5) stored in EEPROM.
+  WATCHDOG:
+    Keeps last known state (no auto-off).
 */
-
+#define FIRMWARE_VERSION "v1.2.1 FINAL (2025-10-16)"
 #define DEBUG_SERIAL true
+#define HAS_TM1637 0          // Set to true when a display is connected
+const bool ENABLE_VEGAS_MODE = true; // Set false to skip startup LED test
+
+#if HAS_TM1637
+  #include <TM1637Display.h>
+  const uint8_t CLK_PIN = 8;
+  const uint8_t DIO_PIN = 9;
+  TM1637Display display(CLK_PIN, DIO_PIN);
+
+  // Segments for E, r, and blank (bits: 0b0GFEDCBA)
+  const uint8_t SEG_E = 0b01111001;
+  const uint8_t SEG_r = 0b01010000;
+  const uint8_t SEG_BLANK = 0x00;
+
+  // Pre-build "ERRx" template (last char replaced with station number)
+  uint8_t errDisplay[4] = {SEG_E, SEG_r, SEG_r, 0};
+#endif
 
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
-#include <TM1637Display.h>
 #include <EEPROM.h>
 
 // ---------------- PIN DEFINITIONS ----------------
@@ -61,61 +72,35 @@ const uint8_t OUT_PINS[OUT_COUNT] = {2, 3, 4, 5, 6, 7};
   const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5, 0, 1};
 #endif
 
-// --- TM1637 Display ---
-#define HAS_TM1637 0 // Set to 1 when the 7-seg display is connected
-
-#if HAS_TM1637
-  #include <TM1637Display.h>
-  const uint8_t CLK_PIN = 8;
-  const uint8_t DIO_PIN = 9;
-  TM1637Display display(CLK_PIN, DIO_PIN);
-#endif
 
 // --- W5500 Ethernet ---
 const uint8_t ETH_CS  = 10;
 const uint8_t ETH_RST = A0;   // Same pin as SEED_PIN
 // SPI: D11 (MOSI), D12 (MISO), D13 (SCK)
 
-// ------------------- Refresh Switch state faster --------------------
+// ------------------- Feedback tracking state --------------------
 
 uint8_t lastFeedbackBits = 0;
 
 // ------------------- Station ID selection system --------------------
 
-uint8_t STATION_ID = 1;              // Default if EEPROM empty
-IPAddress ipMain(192,168,1,10);      // Main controller IP
+uint8_t STATION_ID = 0;              // Default if EEPROM empty
+IPAddress ipMain(192,168,1,1);      // Main controller IP
 
 void loadStationID() {
   uint8_t id = EEPROM.read(0);
-  if (id < 1 || id > 9) id = 1;
+  if (id > 5) id = 0;   // only allow 0–5
   STATION_ID = id;
 }
 
 void saveStationID(uint8_t id) {
-  uint8_t current = EEPROM.read(0);
-  if (current != id) {
-    EEPROM.write(0, id);
-  }
+  if (EEPROM.read(0) != id) EEPROM.update(0, id);
 }
 
 void showStationID() {
   #if HAS_TM1637
     display.clear();
     display.showNumberDec(STATION_ID);
-  #endif
-}
-
-void vegasMode() {
-  #if HAS_TM1637
-    display.setBrightness(0x0F);
-    // Show colon and countdown from 9 to 0
-    for (int n = 9; n >= 0; n--) {
-      display.showNumberDecEx(n * 1111, 0b01000000, true); // show colon + number
-      delay(150);
-    }
-    display.showNumberDec(0, false);
-    delay(300);
-    display.clear();
   #endif
 }
 
@@ -137,12 +122,13 @@ void checkButton() {
     pressed = true;
 
     STATION_ID++;
-    if (STATION_ID > 9) STATION_ID = 1;
+    if (STATION_ID > 5) STATION_ID = 0;
     saveStationID(STATION_ID);
     showStationID();
 
     #if DEBUG_SERIAL
-      Serial.print(F("[BTN] Station ID set to ")); Serial.println(STATION_ID);
+      Serial.print(F("[BTN] Station ID set to "));
+      Serial.println(STATION_ID);
     #endif
   } 
   else if (!isPressed) {
@@ -158,13 +144,25 @@ bool readAnalogFeedbackA6() {
   return (val < 200);   // true = ON / HIGH signal
 }
 
+void vegasMode() {
+  #if HAS_TM1637
+    display.setBrightness(0x0F);
+    // Show colon and countdown from 9 to 0
+    for (int n = 9; n >= 0; n--) {
+      display.showNumberDecEx(n * 1111, 0b01000000, true); // show colon + number
+      delay(250);
+    }
+    display.showNumberDec(0, false);
+    delay(300);
+    display.clear();
+  #endif
+}
+
 // ------------------- Ethernet configuration --------------------
-byte mac[] = {0xDE,0xAD,0xBE,0xEF,0x02,0x11};
 IPAddress ip(192,168,1,11); // Placeholder, will be recomputed
 
 const uint16_t UDP_PORT = 8888;
 EthernetUDP Udp;
-const uint8_t ETH_CS=10, ETH_RST=9;
 
 const uint16_t HEARTBEAT_MS=500;
 const uint16_t CMD_WATCHDOG_MS=1000;
@@ -186,8 +184,10 @@ uint8_t xorChecksum(const uint8_t* data, uint8_t len){
 
 void applyBitfieldLSB(uint8_t bits){
   for(uint8_t i=0; i<OUT_COUNT; i++) {
-    bool on = (bits & (1u << i)); // Revesre state of relays ?? -> bool on = (bits & (1u<<i)) != 0;
+    bool on = (bits & (1u << i));
     digitalWrite(OUT_PINS[i], on ? HIGH : LOW);
+    // NOTE: If your relay modules are active-LOW, uncomment this line instead:
+    // digitalWrite(OUT_PINS[i], on ? LOW : HIGH);
   }
 
   #if DEBUG_SERIAL
@@ -199,6 +199,8 @@ void applyBitfieldLSB(uint8_t bits){
 void setup(){
   #if DEBUG_SERIAL
   Serial.begin(115200);
+  Serial.print(F("[BOOT] Firmware Version: "));
+  Serial.println(FIRMWARE_VERSION);
   while(!Serial){}; Serial.println(F("\n[BOOT] Station starting..."));
   #endif
 
@@ -207,10 +209,15 @@ void setup(){
   pinMode(ETH_RST, OUTPUT);
   digitalWrite(ETH_RST, HIGH);  // keep high after reset pulse
 
-  pinMode(BTN_PIN, INPUT_PULLUP);
+  // A7 is analog-only on Nano; internal pull-up cannot be enabled.
+  // Use external 10k pull-up to +5V (as you wired).
+  // pinMode(BTN_PIN, INPUT_PULLUP); // no effect on A7
+  pinMode(BTN_PIN, INPUT); // NOTE: A7 is analog-only; pinMode() has no effect. Button read via analogRead(A7).
 
-  for (uint8_t i = 0; i < OUT_COUNT; i++)
+  for (uint8_t i = 0; i < OUT_COUNT; i++) {
     pinMode(OUT_PINS[i], OUTPUT);
+    digitalWrite(OUT_PINS[i], LOW);
+  }
 
   for (uint8_t i = 0; i < IN_COUNT; i++)
     pinMode(IN_PINS[i], INPUT_PULLUP);
@@ -218,18 +225,22 @@ void setup(){
   // Display settings
   #if HAS_TM1637
     display.setBrightness(0x0F);
-    vegasMode();          // Run the TM1637 test sequence
+    if (ENABLE_VEGAS_MODE){
+      vegasMode();          // Run the TM1637 test sequence
+    }
   #endif
 
-  loadStationID();
+  byte mac[] = {0xDE,0xAD,0xBE,0xEF,0x02,0x10};
+  loadStationID();           // ensure STATION_ID is valid first
   showStationID();
-
-  // Compute IP dynamically from Station ID
-  ip = IPAddress(192,168,1,10 + STATION_ID);
-
+  ip = IPAddress(192,168,1,10 + STATION_ID); // Compute IP dynamically from Station ID
+  mac[5] = 0x10 + STATION_ID; // make last byte unique
+  
   Ethernet.init(ETH_CS);
   ethernetResetPulse();
   Ethernet.begin(mac, ip);
+  delay(100);
+
   Udp.begin(UDP_PORT);
 
   delay(500);
@@ -241,6 +252,7 @@ void setup(){
     delay(1000);
     ethernetResetPulse();
     Ethernet.begin(mac, ip);
+    delay(100);
     Udp.begin(UDP_PORT);
     delay(500);
     linkStatus = Ethernet.linkStatus();
@@ -282,17 +294,23 @@ void loop(){
       Serial.print(F(" data=")); Serial.print(dat,BIN);
       Serial.print(F(" ok=")); Serial.println(ok?"Y":"N");
       #endif
-      if(ok){
+
+      if (ok) {
         applyBitfieldLSB(dat);
-        lastCmdMs = now;
+        lastCmdMs = now;  // ✅ reset timer so watchdog doesn’t trigger
+
+        #if HAS_TM1637
+          // ✅ Clear ERR and show station ID normally again
+          display.showNumberDec(STATION_ID);
+        #endif
       }
     }
   }
 
   if (now - tHeartbeat >= HEARTBEAT_MS) {
     // Add small random jitter (±50 ms)
-    int16_t jitter = random(-50, 51);   // Random offset in milliseconds
-    tHeartbeat = now + jitter;          // Schedule next send slightly offset
+    int16_t jitter = random(-50, 51);   // Random offset in milliseconds     
+    tHeartbeat = now + HEARTBEAT_MS + jitter; // Schedule next send slightly offset
 
     uint8_t hb[4];
     hb[0] = 0xAB;
@@ -351,14 +369,41 @@ void loop(){
       display.showNumberDecEx(STATION_ID, 0b01000000);
     #endif
     showStationID();
-
-    
-
-
   }
-  #if DEBUG_SERIAL
-    Serial.print(F("\ndigitalRead(A0)"));
-    Serial.println(digitalRead(A0));
-    delay(300);
-  #endif
+
+  // ---------------- Command Watchdog (Passive mode with ERR display) ----------------
+  if ((uint32_t)(now - lastCmdMs) > CMD_WATCHDOG_MS) {
+    #if DEBUG_SERIAL
+      Serial.println(F("[WDG] No command received — showing ERR on display."));
+    #endif
+
+    #if HAS_TM1637
+      // Update last digit with current station number
+      errDisplay[3] = display.encodeDigit(STATION_ID);
+
+      // Flashing effect every ~400 ms
+      static bool flash = false;
+      static uint32_t lastFlash = 0;
+      if (now - lastFlash > 400) {
+        flash = !flash;
+        lastFlash = now;
+      }
+
+      // Apply flashing ERR + static station number
+      if (flash) {
+        display.setSegments(errDisplay);
+      } else {
+        uint8_t blank[4] = {SEG_BLANK, SEG_BLANK, SEG_BLANK, errDisplay[3]};
+        display.setSegments(blank);
+      }
+    #endif
+  }
+
+  // #if DEBUG_SERIAL
+  //   Diagnostic only: reads pins (A7)
+  //   Safe to remove in final build
+  //   Serial.print(F("[DIAG] A7="));
+  //   Serial.println(digitalRead(A7));
+  //   delay(300);
+  // #endif
 }
