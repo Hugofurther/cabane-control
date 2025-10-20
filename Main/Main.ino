@@ -176,6 +176,7 @@ Adafruit_MCP23X17 mcp;           // ✅ new class name
 // -------------------------------------------------------------------
 // Forward declarations for helper functions (defined later)
 // -------------------------------------------------------------------
+void setStationEnabled(uint8_t station, bool enabled);
 void digitalWriteAll(const uint8_t* pins, uint8_t count, bool state);
 void readMcpA();
 void readMcpB();
@@ -633,7 +634,31 @@ void loop(){
 
   wdt_reset();
 
+  // timing & link tracking
   uint32_t now = millis();
+  static uint32_t lastLinkCheck = 0;
+  static bool linkDown = false;
+
+  // LED feedback reuse
+  uint8_t pair = 0, owner = 0, bitIndex = 0;
+  bool relayOn = false;
+
+  // Vacuum logic reuse
+  bool vacSwitch = false, vacSignal = false, alarmActive = false;
+  bool anyVacuumAlarm = false, vacuumAlarm = false;
+
+  // UDP communication reuse
+  int sz = 0, n = 0;
+  uint8_t buf[16];
+  uint8_t id = 0, bits = 0, cks = 0, st = 0;
+
+  // Thermostat logic reuse
+  bool thermoEnable1 = false, thermoEnable2 = false;
+  bool thermoSignal1 = false, thermoSignal2 = false;
+
+  // ============================================
+  // MAIN LOOP LOGIC STARTS HERE
+  // ============================================
 
   // 1) Debounce
   // ----------------- 1) Read all inputs -----------------
@@ -669,7 +694,7 @@ void loop(){
 
   // 2) Long-press detection for station enable/disable
 
-  for(uint8_t id=0; id<NUM_STATIONS; id++){
+  for(id=0; id<NUM_STATIONS; id++){
     uint8_t idx = stationButtonIndex[id];
     bool pressed = stableState[idx];
     if(pressed && !pressActive[id]){
@@ -695,14 +720,11 @@ void loop(){
   }
 
   // 4) Heartbeat timeout
-  for(uint8_t id=0; id<NUM_STATIONS; id++){
+  for(id=0; id<NUM_STATIONS; id++){
     stationOffline[id] = (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS);
   }
 
   // 5) LED + Ethernet logic
-  static uint32_t lastLinkCheck = 0;
-  static bool linkDown = false;
-
   if (now - lastLinkCheck >= 250) {  // check every 250 ms
     lastLinkCheck = now;
     linkDown = (Ethernet.linkStatus() != LinkON);
@@ -713,7 +735,7 @@ void loop(){
     digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);              // greens off
     digitalWriteAll(LED_A, NUM_LED_PAIRS, blinkPhase);       // reds blink
   } else {
-    for (uint8_t pair = 0; pair < NUM_LED_PAIRS; pair++) {
+    for (pair = 0; pair < NUM_LED_PAIRS; pair++) {
       uint8_t owner = LED_OWNER[pair];
       if (owner >= NUM_STATIONS) continue;  // skip reserved LED pairs
 
@@ -727,7 +749,6 @@ void loop(){
       }
       else {
         // Online → show true feedback bits
-        uint8_t bitIndex;
         switch (owner) {
           case ST0: bitIndex = pair;     break;
           case ST1: bitIndex = pair - 2; break;
@@ -736,33 +757,33 @@ void loop(){
           case ST4: bitIndex = pair - 16; break;
           case ST5: bitIndex = pair - 19; break;
         }
-        bool relayOn = (stationFeedback[owner] >> bitIndex) & 1;
+        relayOn = (stationFeedback[owner] >> bitIndex) & 1;
         LED_PAIR(pair, relayOn ? HIGH : LOW, relayOn ? LOW : HIGH);
       }
     }
   }  // ✅ end else (linkDown)
   
   // ----------------VACUUM VISUAL LOGIC ----------------
-  bool anyVacuumAlarm = false;  // will drive the buzzer LED behavior
+  anyVacuumAlarm = false;  // will drive the buzzer LED behavior
 
-  for (uint8_t st = 0; st < 4; st++) {
+  for (st = 0; st < 4; st++) {
     const VacuumMap &v = VACUUMS[st];
 
     // --- Determine if any vacuum switch for this station is ON ---
-    bool vacSwitch = false;
+    vacSwitch = false;
     for (uint8_t s = 0; s < 2; s++) {
       uint8_t idx = v.switchIndex[s];
       if (idx != 255 && stableState[idx]) vacSwitch = true;
     }
 
     // --- Determine vacuum signal state (LOW = fault) ---
-    bool vacSignal = false;
+    vacSignal = false;
     for (uint8_t b = 0; b < 2; b++) {
       uint8_t bit = v.bitIndex[b];
       if (bit != 255 && ((stationFeedback[v.stationID] >> bit) & 1)) vacSignal = true;
     }
 
-    bool alarmActive = (vacSwitch && !vacSignal);
+    alarmActive = (vacSwitch && !vacSignal);
     if (alarmActive) anyVacuumAlarm = true;
 
     // --- Update LED pairs ---
@@ -780,7 +801,7 @@ void loop(){
         }
       } else {
         // Normal state: red if signal LOW, green if HIGH
-        bool relayOn = vacSignal;
+        relayOn = vacSignal;
         LED_PAIR(led, relayOn ? LOW : HIGH, relayOn ? HIGH : LOW);
       }
     }
@@ -842,14 +863,13 @@ void loop(){
   }
 
   // 7) Handle inbound heartbeats / feedback
-  int sz = Udp.parsePacket();
+  sz = Udp.parsePacket();
   if (sz > 0) {
-    uint8_t buf[16];
-    int n = Udp.read(buf, sizeof(buf));
+    n = Udp.read(buf, sizeof(buf));
 
     // Heartbeat: [AB, id, status, cks]
     if (n >= 4 && buf[0] == 0xAB) {
-      uint8_t id = buf[1], st = buf[2], cks = buf[3];
+      id = buf[1], st = buf[2], cks = buf[3];
       if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS && st == 0x00) {
         lastHeartbeatMs[id] = now;
         #if DEBUG_SERIAL
@@ -864,16 +884,16 @@ void loop(){
 
     // 8) Feedback: [AC, id, bits, status, cks]  <-- adjust if your station format differs
     else if (n >= 5 && buf[0] == 0xAC) {
-      uint8_t id   = buf[1];
-      uint8_t bits = buf[2];
-      uint8_t cks  = buf[4];
+      id   = buf[1];
+      bits = buf[2];
+      cks  = buf[4];
       if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS) {
         stationFeedback[id] = bits;  // each bit represents relay state
         lastHeartbeatMs[id] = now;
 
         // --- BUZZER VACUUM DETECTION LOGIC (with cooldown) ---
         if (id >= 1 && id <= 4) { // Stations 1–4 only
-          bool vacuumAlarm = !((stationFeedback[id] >> 0) & 1); // bit0 = vacuum
+          vacuumAlarm = !((stationFeedback[id] >> 0) & 1); // bit0 = vacuum
           if (vacuumAlarm) {
             uint16_t cooldown = STATION_BEEP[id - 1].baseDur * STATION_BEEP[id - 1].count * 2;
             if (now - lastQueuedMs[id] >= cooldown) {
@@ -917,12 +937,12 @@ void loop(){
     // ============================================================
 
     // --- Enable switches (active-high logical via stableState[]) ---
-    bool thermoEnable1 = stableState[IDX_THERM1_EN]; // Station 0 thermostat enable
-    bool thermoEnable2 = stableState[IDX_THERM2_EN]; // Station 4 thermostat enable
+    thermoEnable1 = stableState[IDX_THERM1_EN]; // Station 0 thermostat enable
+    thermoEnable2 = stableState[IDX_THERM2_EN]; // Station 4 thermostat enable
 
     // --- Debounced thermostat signals ---
-    bool thermoSignal1 = readThermoDebounced(0, A3, now);  // Station 0 sends on A3
-    bool thermoSignal2 = readThermoDebounced(1, A4, now);  // Station 4 sends on A4
+    thermoSignal1 = readThermoDebounced(0, A3, now);  // Station 0 sends on A3
+    thermoSignal2 = readThermoDebounced(1, A4, now);  // Station 4 sends on A4
 
     // --- LED pairs behavior ---
     // OFF when switch OFF; when ON => RED if signal LOW, GREEN if signal HIGH
