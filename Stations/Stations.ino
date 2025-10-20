@@ -23,7 +23,7 @@
 */
 #define FIRMWARE_VERSION "v1.2.1 FINAL (2025-10-16)"
 #define DEBUG_SERIAL true
-#define HAS_TM1637 0          // Set to true when a display is connected
+#define HAS_TM1637 1          // Set to true when a display is connected
 const bool ENABLE_VEGAS_MODE = true; // Set false to skip startup LED test
 
 #if HAS_TM1637
@@ -33,12 +33,12 @@ const bool ENABLE_VEGAS_MODE = true; // Set false to skip startup LED test
   TM1637Display display(CLK_PIN, DIO_PIN);
 
   // Segments for E, r, and blank (bits: 0b0GFEDCBA)
-  const uint8_t SEG_E = 0b01111001;
-  const uint8_t SEG_r = 0b01010000;
-  const uint8_t SEG_BLANK = 0x00;
+  const uint8_t SEGMENT_E = 0b01111001;
+  const uint8_t SEGMENT_r = 0b01010000;
+  const uint8_t SEGMENT_BLANK = 0x00;
 
   // Pre-build "ERRx" template (last char replaced with station number)
-  uint8_t errDisplay[4] = {SEG_E, SEG_r, SEG_r, 0};
+  uint8_t errDisplay[4] = {SEGMENT_E, SEGMENT_r, SEGMENT_r, 0};
 #endif
 
 #include <SPI.h>
@@ -117,7 +117,7 @@ void checkButton() {
   int val = analogRead(BTN_PIN);
   bool isPressed = (val < 200);  // threshold for A7 (pull-up to +5V)
 
-  if (!pressed && isPressed && millis() - lastPress > 300) {
+  if (!pressed && isPressed && millis() - lastPress > 150) {
     lastPress = millis();
     pressed = true;
 
@@ -393,7 +393,7 @@ void loop(){
       if (flash) {
         display.setSegments(errDisplay);
       } else {
-        uint8_t blank[4] = {SEG_BLANK, SEG_BLANK, SEG_BLANK, errDisplay[3]};
+        uint8_t blank[4] = {SEGMENT_BLANK, SEGMENT_BLANK, SEGMENT_BLANK, errDisplay[3]};
         display.setSegments(blank);
       }
     #endif
