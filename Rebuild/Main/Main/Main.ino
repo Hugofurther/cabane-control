@@ -3,18 +3,6 @@
 // ---------------- GLOBAL SETTINGS ----------------
 #define THERMOSTAT_ENABLED true // master enable for thermostat system
 
-// -------------------------------------------------------------------
-// Forward declarations for helper functions (defined later)
-// -------------------------------------------------------------------
-void setStationEnabled(uint8_t station, bool enabled);
-
-void readMcpA();
-void readMcpB();
-bool readThermoDebounced(uint8_t index, uint8_t pin, uint32_t now);
-void loadStationStatesFromEEPROM();
-void updateBuzzer(uint32_t now);
-void runVegasMode();
-
 // --- LED pairs ---
 #define NUM_LED_PAIRS 24
 

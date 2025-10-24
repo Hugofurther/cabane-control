@@ -166,13 +166,42 @@ uint32_t pressStart[NUM_STATIONS] = {0};
 
 // Map each station to the input index in stableState[]
 const uint8_t stationButtonIndex[NUM_STATIONS] = {
-    0,  // Station 0 → first input
-    1,  // Station 1 → second input
+    2,  // Station 0 → first input
+    3,  // Station 1 → second input
     8,  // Station 2
     12, // Station 3
     16, // Station 4
     19  // Station 5
 };
+
+// ============================================================
+// 🌡️ THERMOSTAT SYSTEM CONFIG
+// ============================================================
+
+// Global on/off toggle for thermostat feature
+#define ENABLE_THERMOSTAT true // Set to false to disable feature entirely
+
+// Thermostat switch input indices (stableState[])
+const uint8_t TH_SWITCH_IDX[2] = {22, 23}; // MCP-B6, MCP-B7
+
+// LED pair indices
+const uint8_t TH_LED_PAIR[2] = {22, 23};
+
+// Station/feedback mapping
+const uint8_t TH_FEEDBACK_STATION[2] = {0, 4}; // Thermostat 1 → Station 0, Thermostat 2 → Station 4
+const uint8_t TH_FEEDBACK_BIT[2] = {0, 3};     // Bit positions in stationFeedback[station]
+
+// Override switch indices (multiple allowed)
+const uint8_t TH1_OVERRIDE_IDX[] = {0, 9, 14}; // Thermostat 1
+const uint8_t TH2_OVERRIDE_IDX[] = {17};       // Thermostat 2
+const uint8_t *TH_OVERRIDE_IDX[2] = {TH1_OVERRIDE_IDX, TH2_OVERRIDE_IDX};
+const uint8_t TH_OVERRIDE_COUNT[2] = {
+    sizeof(TH1_OVERRIDE_IDX) / sizeof(TH1_OVERRIDE_IDX[0]),
+    sizeof(TH2_OVERRIDE_IDX) / sizeof(TH2_OVERRIDE_IDX[0])};
+
+// Global Variables
+bool thermostatEnabled[2] = {false, false}; // From switches 22, 23
+bool thermostatActive[2] = {false, false};  // Based on feedback A1, A4
 
 // ============================================================
 // 🧠 RUNTIME VARIABLES
@@ -448,7 +477,7 @@ void updateEthernetAndLEDs(uint32_t now)
     lastLinkCheck = now;
     linkDown = (Ethernet.linkStatus() != LinkON);
 
-    DBG(1,
+    DBG(4,
         Serial.print(F("[LINK] "));
         Serial.println(linkDown ? F("DOWN") : F("OK")));
   }
@@ -720,17 +749,17 @@ void sendAllStations()
     IPAddress ip;      // Station IP
   };
 
-  // Map each station’s input range and IP
+  // ---------------- Station mapping table ----------------
   const StationConfig stations[NUM_STATIONS] = {
-      {0, 0, 2, ipS0},  // Station 0: indices 0–1, 2 inputs, ipAddress ipS0
-      {1, 2, 6, ipS1},  // Station 1: indices 2–7, 6 inputs, ipAddress ipS0
-      {2, 8, 4, ipS2},  // Station 2: indices 8–11, 4 inputs, ipAddress ipS0
-      {3, 12, 4, ipS3}, // Station 3: indices 12–15, 4 inputs, ipAddress ipS0
-      {4, 16, 3, ipS4}, // Station 4: indices 16–18, 3 inputs, ipAddress ipS0
-      {5, 19, 2, ipS5}  // Station 5: indices 19–20, 2 inputs, ipAddress ipS0
+      {0, 0, 2, ipS0},  // Station 0: indices 0–1
+      {1, 2, 6, ipS1},  // Station 1: indices 2–7
+      {2, 8, 4, ipS2},  // Station 2: indices 8–11
+      {3, 12, 4, ipS3}, // Station 3: indices 12–15
+      {4, 16, 3, ipS4}, // Station 4: indices 16–18
+      {5, 19, 2, ipS5}  // Station 5: indices 19–20
   };
 
-  // Iterate over all stations
+  // ---------------- Iterate over all stations -------------
   for (uint8_t i = 0; i < NUM_STATIONS; i++)
   {
     const StationConfig &st = stations[i];
@@ -739,32 +768,52 @@ void sendAllStations()
     if (!stationEnabled[st.id] || stationOffline[st.id])
       continue;
 
-    // Pack relevant bits from stableState[]
     bool stateBits[8] = {0};
+
+    // ============================================================
+    // 🧩 Per-switch scan and thermostat override logic
+    // ============================================================
     for (uint8_t j = 0; j < st.numInputs; j++)
     {
-      stateBits[j] = stableState[st.startIdx + j];
+      uint8_t idx = st.startIdx + j; // Map local index → global input index
+      bool val = stableState[idx];   // Current state from stableState[]
+
+      // 🌡️ Thermostat override block
+      for (uint8_t t = 0; t < 2; t++)
+      {
+        if (ENABLE_THERMOSTAT && thermostatEnabled[t] && thermostatActive[t])
+        {
+          for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
+          {
+            if (idx == TH_OVERRIDE_IDX[t][k])
+            {
+              val = true; // forced ON (LOW) -> Inverted
+              break;
+            }
+          }
+        }
+      }
+
+      stateBits[j] = val; // Save the final (possibly overridden) state
     }
 
+    // ============================================================
+    // 📨 Pack bits and send to station
+    // ============================================================
     uint8_t packedBits = packBitsLSB(stateBits, st.numInputs);
 
     // TEMP DEBUG
     DBG(4,
-      Serial.print(F("[DBG-IN] Station "));
-      Serial.print(st.id);
-      Serial.print(F(" raw bits: "));
-      for (uint8_t j = 0; j < st.numInputs; j++)
-      {
-        Serial.print(stableState[st.startIdx + j]);
-      }
-      Serial.println();
-    );
-    // TEMP DEBUG END
+        Serial.print(F("[DBG-IN] Station "));
+        Serial.print(st.id);
+        Serial.print(F(" raw bits: "));
+        for (uint8_t j = 0; j < st.numInputs; j++)
+            Serial.print(stateBits[j]);
+        Serial.println(););
+    // TEMP DEBUG - END
 
-    // Transmit 5-byte UDP frame
     sendSetFrame(st.ip, st.id, packedBits);
 
-    // Optional debug output
     DBG(3,
         Serial.print(F("[TX] Sent → Station "));
         Serial.print(st.id);
@@ -907,6 +956,95 @@ void handleStationEnableLongPress(uint32_t now)
 #endif
 
       // Optional: visual or audible feedback can go here (LED blink, beep, etc.)
+    }
+  }
+}
+
+// ============================================================
+// 🌡️ THERMOSTAT LOGIC
+// ============================================================
+
+void updateThermostatStatus()
+{
+#if DEBUG_SERIAL
+  static bool prevEnabled[2] = {false, false}; // for debug
+  static bool prevActive[2] = {false, false};  // for debug
+#endif
+
+  if (!ENABLE_THERMOSTAT)
+  {
+    // turn both LEDs OFF
+    LED_PAIR(TH_LED_PAIR[0], LOW, LOW);
+    LED_PAIR(TH_LED_PAIR[1], LOW, LOW);
+    return;
+  }
+
+  for (uint8_t i = 0; i < 2; i++)
+  {
+    // Read switch: active when LOW
+    thermostatEnabled[i] = stableState[TH_SWITCH_IDX[i]];
+
+    // Read station feedback: bit LOW = thermostat ON
+    bool bitLow = ((stationFeedback[TH_FEEDBACK_STATION[i]] & (1 << TH_FEEDBACK_BIT[i])) == 0);
+    thermostatActive[i] = bitLow;
+
+// -------------------------------------------------------------------
+// 🧩 DETECT CHANGES AND REPORT
+// -------------------------------------------------------------------
+#if DEBUG_SERIAL
+    if (thermostatEnabled[i] != prevEnabled[i])
+    {
+      Serial.println();
+      Serial.println("THERMOSTAT THERMOSTAT THERMOSTAT THERMOSTAT");
+
+      Serial.print("stableState[TH_SWITCH_IDX[");
+      Serial.print(i);
+      Serial.print("]: ");
+      Serial.println(stableState[TH_SWITCH_IDX[i]]);
+
+      Serial.print("thermostatEnabled[");
+      Serial.print(i);
+      Serial.print("]: ");
+      Serial.println(thermostatEnabled[i]);
+
+      Serial.print(F("[TH] Thermostat "));
+      Serial.print(i + 1);
+      Serial.print(F(" ENABLED → "));
+      Serial.println(thermostatEnabled[i] ? F("ON") : F("OFF"));
+      Serial.println();
+      prevEnabled[i] = thermostatEnabled[i];
+    }
+
+    if (thermostatActive[i] != prevActive[i])
+    {
+      Serial.println();
+      Serial.print("thermostatActive[");
+      Serial.print(i);
+      Serial.print("]: ");
+      Serial.println(thermostatActive[i]);
+
+      Serial.print(F("[TH] Thermostat "));
+      Serial.print(i + 1);
+      Serial.print(F(" ACTIVE → "));
+      Serial.println(thermostatActive[i] ? F("ON") : F("OFF"));
+      Serial.println();
+      prevActive[i] = thermostatActive[i];
+    }
+#endif
+
+    // -------------------------------------------------------------------
+    // LED logic: RED = off, GREEN = on
+    // -------------------------------------------------------------------
+    if (thermostatEnabled[i])
+    {
+      if (thermostatActive[i])
+        LED_PAIR(TH_LED_PAIR[i], LOW, HIGH); // GREEN
+      else
+        LED_PAIR(TH_LED_PAIR[i], HIGH, LOW); // RED
+    }
+    else
+    {
+      LED_PAIR(TH_LED_PAIR[i], LOW, LOW); // OFF
     }
   }
 }
@@ -1186,6 +1324,23 @@ void loop()
     stableState[i] = !digitalRead(PHYS_SW_PINS[i]); // active-low
   }
 
+  // 🔁 Refresh MCP23017 inputs each cycle
+  if (mcpIntA_Flag)
+  {
+    readMcpA();
+  }
+  if (mcpIntB_Flag)
+  {
+    readMcpB();
+  }
+
+  // Update stableState from MCP port snapshots
+  for (uint8_t b = 0; b < 8; b++)
+  {
+    stableState[8 + b] = ((mcpStateA & (1 << b)) == 0);
+    stableState[16 + b] = ((mcpStateB & (1 << b)) == 0);
+  }
+
   // 🔁 Blink-phase update (global for all blinking states)
   if (now - tBlink >= BLINK_INTERVAL_MS)
   {
@@ -1241,26 +1396,29 @@ void loop()
   // //   IPAddress rip = Udp.remoteIP();
   // // }
 
-  // DBG(2,
-  //     IPAddress rip = Udp.remoteIP();
-  //     Serial.print(F("[RX] size="));
-  //     Serial.print(pkt);
-  //     Serial.print(F(" from "));
-  //     Serial.println(rip);
+  DBG(2,
+      // IPAddress rip = Udp.remoteIP();
+      // Serial.print(F("[RX] size="));
+      // Serial.print(pkt);
+      // Serial.print(F(" from "));
+      // Serial.println(rip);
 
-  //     // Simple diagnostic printout
-  //     uint8_t mcpA = mcp.readGPIO(0);
-  //     uint8_t mcpB = mcp.readGPIO(1);
-  //     Serial.print(F("MCP A: "));
-  //     Serial.print(mcpA, BIN);
-  //     Serial.print(F("  MCP B: "));
-  //     Serial.println(mcpB, BIN););
+      // Simple diagnostic printout
+      uint8_t mcpA = mcp.readGPIO(0);
+      uint8_t mcpB = mcp.readGPIO(1);
+      Serial.print(F("MCP A: "));
+      Serial.print(mcpA, BIN);
+      Serial.print(F("  MCP B: "));
+      Serial.println(mcpB, BIN););
 
   // 2️⃣ Process incoming packets
   processHeartbeatAndFeedback(now);
 
   // Long press for station enable / disable
   handleStationEnableLongPress(now);
+
+  // Thermostat
+  updateThermostatStatus();
 
   // 3️⃣ Update station online/offline
   updateHeartbeatStatus(now);
