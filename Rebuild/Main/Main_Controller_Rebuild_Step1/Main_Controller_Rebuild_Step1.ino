@@ -729,7 +729,38 @@ void updateHeartbeatStatus(uint32_t now)
     {
       stationOffline[id] = false;
     }
+
+    // Detect stations that just came online
+    static bool wasOffline[NUM_STATIONS] = {true};
+    for (uint8_t id = 0; id < NUM_STATIONS; id++)
+    {
+      bool nowOffline = (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS);
+      if (wasOffline[id] && !nowOffline)
+      {
+        // Station transitioned from OFFLINE → ONLINE
+        Serial.print(F("[REQ] Requesting feedback from station "));
+        Serial.println(id);
+        sendFeedbackRequest(id);
+      }
+      wasOffline[id] = nowOffline;
+    }
   }
+}
+
+// Request feedback status from station when a station gets detected.
+void sendFeedbackRequest(uint8_t id)
+{
+  uint8_t buf[5];
+  buf[0] = 0xAD; // new "Request Feedback" frame
+  buf[1] = id;
+  buf[2] = 0x00;
+  buf[3] = 0x00;
+  buf[4] = xorChecksum(buf, 4);
+
+  IPAddress ipStation(192, 168, 1, 10 + id);
+  Udp.beginPacket(ipStation, UDP_PORT);
+  Udp.write(buf, 5);
+  Udp.endPacket();
 }
 
 // ============================================================

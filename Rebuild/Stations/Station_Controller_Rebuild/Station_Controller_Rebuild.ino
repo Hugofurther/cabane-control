@@ -1,12 +1,11 @@
 // -------------------- SYSTEM DEFINES --------------------
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
 #define HAS_TM1637 1        // Set to true when a display is connected
-#define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED 
+#define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED
 
 // ============================================================
 // 🧩 SECTION: FORWARD DECLARATIONS (tell compiler these exist later)
 // ============================================================
-
 
 // ============================================================
 // 🧩 SECTION: INCLUDE LIBRARIES
@@ -31,9 +30,9 @@ TM1637Display display(CLK_PIN, DIO_PIN);
 
 // Limit how often serial debug lines are printed
 // ---------------- DEBUG CONFIG ----------------
-#define DEBUG_LEVEL 3                                   // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
+#define DEBUG_LEVEL 3                                     // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 const uint16_t DBG_THROTTLE_MS[4] = {0, 500, 1000, 3000}; // Minimum delay between same-level prints
-uint32_t dbgLastPrint[4] = {0, 0, 0, 0};                // timestamp to throttle serial prints
+uint32_t dbgLastPrint[4] = {0, 0, 0, 0};                  // timestamp to throttle serial prints
 
 #define DBG(level, x)                                           \
   do                                                            \
@@ -100,13 +99,16 @@ EthernetUDP Udp;
 EthernetLinkStatus linkStatus;
 static bool linkIsUp = true;
 
-
 // -------------------- TIMING --------------------
 
 const uint16_t HEARTBEAT_MS = 500;
 const uint16_t CMD_WATCHDOG_MS = 1000;
 uint32_t tHeartbeat = 0;
 uint32_t lastCmdMs = 0;
+
+// --- Feedback transmit state tracking ---
+bool firstFeedbackSent = false; // Have we sent at least one feedback since last link-up?
+bool lastLinkState = false;     // Was Ethernet.linkStatus() == LinkON last heartbeat?
 
 // -------------------- DISPLAY SEGMENTS --------------------
 #if HAS_TM1637
@@ -126,7 +128,6 @@ const uint8_t SEGMENT_K = 0b01110101;
 
 // Pre-build "LInk" template (last char replaced with station number)
 uint8_t linkDisplay[4] = {SEGMENT_L, SEGMENT_I, SEGMENT_n, SEGMENT_K};
-
 
 #endif
 
@@ -157,7 +158,6 @@ bool readAnalogFeedbackA6()
   return (val < 200); // true = ON / HIGH signal
 }
 
-
 // ============================================================
 // 🖥 SECTION: DISPLAY CONTROL
 // ============================================================
@@ -168,14 +168,14 @@ enum DisplayMode
   DISP_LINK,   // show "LInk" blinking
   DISP_NETCFG, // 🚀 new: blinking number during network reconfig
   DISP_VEGAS   // startup LED test animation
-  
+
 };
 
 DisplayMode displayMode = DISP_NORMAL;
 bool displayFlash = false; // blink toggle for ERR
 uint32_t lastDisplayBlinkMs = 0;
 const uint16_t DISPLAY_BLINK_MS = 1000; // 1s blink interval
-const uint16_t NETCFG_BLINK_MS   = 250;   // ⚡ fast blink for network reconfig
+const uint16_t NETCFG_BLINK_MS = 250;   // ⚡ fast blink for network reconfig
 
 // Track if we have Ethernet link & valid commands
 bool ethernetLinkOK = false;
@@ -184,30 +184,32 @@ bool lastCmdRecent = true;
 // --- Unified Display Function ---
 void updateDisplay(uint32_t now)
 {
-  // TEST TEST TEST TEST 
+  // TEST TEST TEST TEST
   static DisplayMode lastMode = DISP_NORMAL;
-  if (lastMode != displayMode) {
+  if (lastMode != displayMode)
+  {
     Serial.print(F("[DISP] Mode change: "));
     Serial.println(displayMode);
     lastMode = displayMode;
   }
-  // TEST TEST TEST TEST 
+  // TEST TEST TEST TEST
 #if HAS_TM1637
   // Blink timer
   uint16_t blinkInterval = DISPLAY_BLINK_MS;
   if (displayMode == DISP_NETCFG)
-    blinkInterval = NETCFG_BLINK_MS;  // ⚡ faster during network config
+    blinkInterval = NETCFG_BLINK_MS; // ⚡ faster during network config
 
-  if (now - lastDisplayBlinkMs >= blinkInterval) {
+  if (now - lastDisplayBlinkMs >= blinkInterval)
+  {
     lastDisplayBlinkMs = now;
     displayFlash = !displayFlash;
   }
 
-
   if (displayMode == DISP_NETCFG)
     blinkInterval = NETCFG_BLINK_MS; // faster during network reconfig
 
-  if (now - lastDisplayBlinkMs >= blinkInterval) {
+  if (now - lastDisplayBlinkMs >= blinkInterval)
+  {
     lastDisplayBlinkMs = now;
     displayFlash = !displayFlash;
   }
@@ -228,18 +230,22 @@ void updateDisplay(uint32_t now)
     display.showNumberDecEx(STATION_ID, colonFlash ? 0b01000000 : 0x00, true);
     break;
 
-  case DISP_NETCFG: {
-    // TEST TEST TEST TEST 
+  case DISP_NETCFG:
+  {
+    // TEST TEST TEST TEST
     Serial.println(F("[DISP] Switched to NETCFG mode"));
     delay(1000);
-    // TEST TEST TEST TEST 
+    // TEST TEST TEST TEST
 
     // 🚀 Network reconfiguration visual feedback
     // Blink the station number rapidly with the colon alternating
-    if (displayFlash) {
-      display.showNumberDecEx(STATION_ID, 0b01000000, true);  // show number + colon
-    } else {
-      display.clear();                                         // blank screen
+    if (displayFlash)
+    {
+      display.showNumberDecEx(STATION_ID, 0b01000000, true); // show number + colon
+    }
+    else
+    {
+      display.clear(); // blank screen
     }
     break;
   }
@@ -262,9 +268,12 @@ void updateDisplay(uint32_t now)
 
   case DISP_LINK:
     // Blink "LInK" slowly every second
-    if (displayFlash) {
+    if (displayFlash)
+    {
       display.setSegments(linkDisplay);
-    } else {
+    }
+    else
+    {
       uint8_t blank[4] = {0, 0, 0, 0};
       display.setSegments(blank);
     }
@@ -280,11 +289,12 @@ void updateDisplay(uint32_t now)
 // ============================================================
 // 🌐 SECTION: NETWORK RECONFIGURATION
 // ============================================================
-void reconfigureNetwork(bool fullReset = false) {
+void reconfigureNetwork(bool fullReset = false)
+{
 
-
-  if (fullReset) {
-    ethernetResetPulse();  // ✅ Only if we want a full clean restart
+  if (fullReset)
+  {
+    ethernetResetPulse(); // ✅ Only if we want a full clean restart
     delay(200);
   }
 
@@ -295,38 +305,38 @@ void reconfigureNetwork(bool fullReset = false) {
   Udp.begin(UDP_PORT);
 
 #if DEBUG_SERIAL
-    Serial.println(F("[NET] Network reconfigured"));
-    Serial.print(F("IP: "));
-    Serial.println(ip);
-    Serial.print(F("MAC: ...:"));
-    Serial.println(mac[5], HEX);
+  Serial.println(F("[NET] Network reconfigured"));
+  Serial.print(F("IP: "));
+  Serial.println(ip);
+  Serial.print(F("MAC: ...:"));
+  Serial.println(mac[5], HEX);
 #endif
 
   // Wait for link to come back up
   uint32_t start = millis();
-  while (Ethernet.linkStatus() != LinkON && millis() - start < 5000) {
+  while (Ethernet.linkStatus() != LinkON && millis() - start < 5000)
+  {
     delay(250);
-    #if DEBUG_SERIAL
+#if DEBUG_SERIAL
     Serial.print(F("."));
-    #endif
+#endif
   }
 
-  #if DEBUG_SERIAL
-    if (Ethernet.linkStatus() == LinkON)
-      Serial.println(F("\n[NET] Link restored"));
-    else
-      Serial.println(F("\n[NET] Link still down (timeout)"));
-  #endif
+#if DEBUG_SERIAL
+  if (Ethernet.linkStatus() == LinkON)
+    Serial.println(F("\n[NET] Link restored"));
+  else
+    Serial.println(F("\n[NET] Link still down (timeout)"));
+#endif
 
-  #if HAS_TM1637
-    // back to normal mode when link is up
-    if (Ethernet.linkStatus() == LinkON)
-      displayMode = DISP_NORMAL;
-    else
-      displayMode = DISP_LINK;
-  #endif
+#if HAS_TM1637
+  // back to normal mode when link is up
+  if (Ethernet.linkStatus() == LinkON)
+    displayMode = DISP_NORMAL;
+  else
+    displayMode = DISP_LINK;
+#endif
 }
-
 
 // ============================================================
 // 🖥 SECTION: Button & Display System / EEPROM Station ID Handlers
@@ -353,12 +363,14 @@ void showStationID()
   display.showNumberDec(STATION_ID, false); // no colon, steady number
 }
 
-void showStationID_Left() {
+void showStationID_Left()
+{
   display.clear();
   display.showNumberDecEx(STATION_ID, 0, false, 1, 0); // one digit at pos 0 (leftmost)
 }
 
-void showStationID_Right() {
+void showStationID_Right()
+{
   display.clear();
   display.showNumberDecEx(STATION_ID, 0, false, 1, 3); // one digit at pos 3 (rightmost)
 }
@@ -387,7 +399,7 @@ void checkButton()
     STATION_ID++;
     if (STATION_ID > 5)
       STATION_ID = 0;
-    saveStationID(STATION_ID); 
+    saveStationID(STATION_ID);
 
 #if HAS_TM1637
     // ✅ Show new number immediately, left-aligned
@@ -407,7 +419,7 @@ void checkButton()
 #if HAS_TM1637
     // ✅ After network is ready, show right-aligned confirmation
     showStationID_Right();
-    delay(500);  // brief visual pause
+    delay(500); // brief visual pause
     displayMode = DISP_NORMAL;
 #endif
 
@@ -437,7 +449,6 @@ void vegasMode()
 #endif
 }
 
-
 // ============================================================
 // ƒ SECTION: Other Functions
 // ============================================================
@@ -453,10 +464,9 @@ void applyBitfieldLSB(uint8_t bits)
     // digitalWrite(OUT_PINS[i], on ? LOW : HIGH);
   }
 
-DBG(4,
-  Serial.print(F("[OUT] bits="));
-  Serial.println(bits, BIN);
-);
+  DBG(4,
+      Serial.print(F("[OUT] bits="));
+      Serial.println(bits, BIN););
 }
 
 // -------------------------- Setup -----------------------------------
@@ -569,24 +579,27 @@ void loop()
   // 🧩 Ethernet link supervision
   // -------------------------------------------------------------
   EthernetLinkStatus current = Ethernet.linkStatus();
-  if (current != LinkON && linkIsUp) {
+  if (current != LinkON && linkIsUp)
+  {
     linkIsUp = false;
-    #if HAS_TM1637
+    firstFeedbackSent = false; // ✅ Force resend next time link is restored
+#if HAS_TM1637
     displayMode = DISP_LINK;
-    #endif
-    #if DEBUG_SERIAL
-      Serial.println(F("[NET] Link DOWN — showing LInK"));
-    #endif
-  } 
-  else if (current == LinkON && !linkIsUp) {
+#endif
+#if DEBUG_SERIAL
+    Serial.println(F("[NET] Link DOWN — showing LInK"));
+#endif
+  }
+  else if (current == LinkON && !linkIsUp)
+  {
     linkIsUp = true;
-    #if HAS_TM1637
+#if HAS_TM1637
     displayMode = DISP_NORMAL;
-    #endif
-    #if DEBUG_SERIAL
-      Serial.println(F("[NET] Link restored — returning to normal display"));
-    #endif
-  }  
+#endif
+#if DEBUG_SERIAL
+    Serial.println(F("[NET] Link restored — returning to normal display"));
+#endif
+  }
 
   // 3️⃣ Parse UDP packets (only if link is up
   // ============================================================
@@ -616,8 +629,7 @@ void loop()
           Serial.print(F(" cks="));
           Serial.print(cks, HEX);
           Serial.print(F(" ok="));
-          Serial.println(ok ? "Y" : "N");
-      );
+          Serial.println(ok ? "Y" : "N"););
 
       if (ok)
       {
@@ -625,12 +637,29 @@ void loop()
         lastCmdMs = now; // ✅ reset timer so watchdog doesn’t trigger
         lastCmdRecent = true;
 
-        #if HAS_TM1637
+#if HAS_TM1637
         displayMode = DISP_NORMAL;
-        #endif
+#endif
       }
-    } else {
-      DBG(1, Serial.println(F("[RX←MAIN] ❌ Invalid command or checksum mismatch"))); 
+    }
+
+    // === 🧩 NEW: Feedback-request handler (0xAD) ===
+    else if (n >= 5 && buf[0] == 0xAD)
+    {
+      uint8_t id = buf[1];
+      if (id == STATION_ID || id == 255) // 255 = broadcast to all
+      {
+        Serial.print(F("[RX←MAIN] Feedback request received for station "));
+        Serial.println(id == 255 ? STATION_ID : id);
+
+        // Force immediate feedback resend
+        firstFeedbackSent = false;
+      }
+    }
+
+    else
+    {
+      DBG(1, Serial.println(F("[RX←MAIN] ❌ Invalid command or checksum mismatch")));
     }
   }
 
@@ -655,112 +684,39 @@ void loop()
     Udp.write(hb, 4);
     Udp.endPacket();
 
-    DBG(4,
-      Serial.print(F("[TX→MAIN] HB "));
-      for (uint8_t i = 0; i < 4; i++) {
+    DBG(4, Serial.print(F("[TX→MAIN] HB ")); for (uint8_t i = 0; i < 4; i++) {
         if (hb[i] < 0x10) Serial.print('0');
         Serial.print(hb[i], HEX);
-        Serial.print(' ');
-      }
-      Serial.print(F(" | Station ")); Serial.println(STATION_ID);
-    );
-
-    // DBG(4,
-    //     Serial.println(F("[TX ] Heartbeat sent")););
-
-    // uint8_t feedbackBits = 0;
-    // for (uint8_t i = 0; i < IN_COUNT; i++)
-    // {
-    //   // Serial.print(F("IN_COUNT: "));
-    //   // Serial.print(IN_COUNT);
-    //   // Serial.print(F(" - i: "));
-    //   // Serial.print(i);
-    //   // Hybrid check
-    //   bool active = false;
-    //   if (IN_PINS[i] == A6) {
-    //     active = analogRead(A6) < 200; // pressed/low threshold
-    //   } else {
-    //     active = (digitalRead(IN_PINS[i]) == LOW);
-    //   }
-      
-    //   if (active)
-    //     feedbackBits |= (1 << i);
-
-    //   // DBG(1,
-
-    //   // Optional debug print:
-    //   // DBG(3,
-    //   // Serial.print(F(" - [FB-IN] A"));
-    //   // Serial.print(IN_PINS[i] - A0);
-    //   // Serial.print(F("="));
-    //   // Serial.print(active ? "1 " : "0 ");
-    //   // );
-    // }
-    // // #if DEBUG_SERIAL
-    // // Serial.println();
-    // // #endif
-
-    // // --- Add analog input A6 as next bit ---
-    // if (readAnalogFeedbackA6())
-    // {
-    //   feedbackBits |= (1 << IN_COUNT);
-    // }
-
-    // // if something changed since last send, transmit now
-    // if (feedbackBits != lastFeedbackBits)
-    // {
-    //   lastFeedbackBits = feedbackBits;
-
-    //   // 🧠 Invert all bits (1→0, 0→1)
-    //   uint8_t invertedBits = ~feedbackBits;
-
-    //   uint8_t fb[5];
-    //   fb[0] = 0xAC;
-    //   fb[1] = STATION_ID;
-    //   fb[2] = invertedBits;
-    //   fb[3] = 0x00;
-    //   fb[4] = fb[0] ^ fb[1] ^ fb[2] ^ fb[3];
-
-    //   Udp.beginPacket(ipMain, UDP_PORT);
-    //   Udp.write(fb, 5);
-    //   Udp.endPacket();
-
-    //   DBG(1,
-    //       Serial.print(F("[FB-CHG] Immediate feedback bits: "));
-    //       Serial.print(invertedBits, BIN);
-
-    //       // Optional: show A6 analog status too
-    //       Serial.print(F(" - [FB] A6="));
-    //       Serial.print(readAnalogFeedbackA6());
-    //       Serial.print(F(" bits: "));
-    //       Serial.println(invertedBits, BIN););
-    // }
+        Serial.print(' '); } Serial.print(F(" | Station ")); Serial.println(STATION_ID););
 
     // ============================================================
     // 📤 FEEDBACK TRANSMISSION — On change OR when becoming online
     // ============================================================
 
     uint8_t feedbackBits = 0;
-    for (uint8_t i = 0; i < IN_COUNT; i++) {
+    for (uint8_t i = 0; i < IN_COUNT; i++)
+    {
       bool active = false;
-      if (IN_PINS[i] == A6) {
-        active = (analogRead(A6) < 200);          // analog threshold
-      } else {
+      if (IN_PINS[i] == A6)
+      {
+        active = (analogRead(A6) < 200); // analog threshold
+      }
+      else
+      {
         active = (digitalRead(IN_PINS[i]) == LOW); // active-low logic
       }
-      if (active) feedbackBits |= (1 << i);
+      if (active)
+        feedbackBits |= (1 << i);
     }
 
-    // ---- NEW LOGIC ----
-    static bool firstFeedbackSent = false;
-    static bool lastLinkState = false;
-
+    // ---- FEEDBACK SEND DECISION ----
     bool changed = (feedbackBits != lastFeedbackBits);
     bool linkNow = (Ethernet.linkStatus() == LinkON);
     bool becameOnline = (linkNow && !lastLinkState);
-    bool force = !firstFeedbackSent || becameOnline;
+    bool force = (!firstFeedbackSent) || becameOnline;
 
-    if (changed || force) {
+    if (changed || force)
+    {
       lastFeedbackBits = feedbackBits;
 
       // 🧠 Invert all bits (1→0, 0→1)
@@ -779,28 +735,53 @@ void loop()
 
       firstFeedbackSent = true;
       DBG(1,
-        Serial.print(F("[FB] Sent bits="));
-        Serial.println(invertedBits, BIN);
-      );
+          Serial.print(F("[FB] Sent bits="));
+          Serial.println(invertedBits, BIN););
     }
 
     lastLinkState = linkNow;
   }
 
-
-
-
   // 5️⃣ Watchdog (only if link is up)
   // ----- Command Watchdog (Passive mode with ERR display) ----
   if (linkIsUp && (uint32_t)(now - lastCmdMs) > CMD_WATCHDOG_MS)
   {
-    DBG(1,
-        Serial.println(F("[WDG] No command received — showing ERR on display."));
-    );
-    lastCmdRecent = false;
-    #if HAS_TM1637
-    displayMode = DISP_ERROR; // switch to error blink
-    #endif
+    // We only want to do the "we lost the main" transition once per outage.
+    if (lastCmdRecent)
+    {
+      lastCmdRecent = false;
+
+      // 🔄 Force a full feedback resend on next heartbeat
+      // (Main likely rebooted / lost state, so we re-announce ourselves)
+      firstFeedbackSent = false;
+
+      DBG(1,
+          Serial.println(F("[WDG] Main not commanding. Forcing next feedback as FULL RESYNC.")););
+    }
+
+#if HAS_TM1637
+    displayMode = DISP_ERROR; // switch to blinking "Err"
+#endif
+  }
+  else
+  {
+    // If we're getting commands on time, keep flag true
+    if ((uint32_t)(now - lastCmdMs) <= CMD_WATCHDOG_MS)
+    {
+      lastCmdRecent = true;
+#if HAS_TM1637
+      // only drop back to normal if link is actually good
+      if (linkIsUp)
+        displayMode = DISP_NORMAL;
+#endif
+    }
+
+    //     DBG(1,
+    //         Serial.println(F("[WDG] No command received — showing ERR on display.")););
+    //     lastCmdRecent = false;
+    // #if HAS_TM1637
+    //     displayMode = DISP_ERROR; // switch to error blink
+    // #endif
   }
 
   // --- Update Display Once per loop ---
