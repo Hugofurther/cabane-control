@@ -91,6 +91,14 @@ IPAddress ipS5(192, 168, 1, 15);  // Station 5
 #define NUM_LED_PAIRS 24
 #define TOTAL_INPUTS (NUM_INPUTS + 16) // 8 physical + 16 MCP
 
+// ============================================================
+// 🧩 Unified Debounce System (for all physical + MCP inputs)
+// ============================================================
+bool rawState[TOTAL_INPUTS] = {0};       // instantaneous reads
+bool stableState[TOTAL_INPUTS] = {0};    // debounced result
+uint32_t lastChange[TOTAL_INPUTS] = {0}; // last time each input changed
+const uint16_t DEBOUNCE_MS = 50;         // adjust as needed (30–80ms typical)
+
 // -------------------- PHYSICAL SWITCH INPUTS --------------------
 const uint8_t PHYS_SW_PINS[NUM_INPUTS] = {62, 63, 64, 65, 66, 67, 68, 69};
 
@@ -159,6 +167,7 @@ const uint32_t LONGPRESS_MS = 5000; // Hold 5s to toggle enable
 bool stationEnabled[NUM_STATIONS] = {true};
 bool stationOffline[NUM_STATIONS] = {false};
 uint8_t stationFeedback[NUM_STATIONS] = {0};
+bool firstHeartbeatSeen[NUM_STATIONS] = {false};
 
 // For long-press detection
 bool pressActive[NUM_STATIONS] = {false};
@@ -212,7 +221,6 @@ volatile bool mcpIntA_Flag = false;
 volatile bool mcpIntB_Flag = false;
 uint8_t mcpStateA = 0xFF; // bit = 1 means switch not pressed (pull-ups)
 uint8_t mcpStateB = 0xFF;
-uint8_t stableState[TOTAL_INPUTS] = {0}; // logical debounced values
 
 // ============================================================
 // 🕒 TIMING CONSTANTS
@@ -669,6 +677,15 @@ void processHeartbeatAndFeedback(uint32_t now)
       stationOffline[id] = false;
       heartbeatCount[id]++;
 
+      // 🆕 Request feedback once on first heartbeat
+      if (!firstHeartbeatSeen[id])
+      {
+        firstHeartbeatSeen[id] = true;
+        Serial.print(F("[SYNC] First heartbeat from station "));
+        Serial.println(id);
+        sendFeedbackRequest(id); // Ask this specific station for feedback
+      }
+
       DBG(3,
           Serial.print(F("[HB ] Station "));
           Serial.print(id);
@@ -724,6 +741,7 @@ void updateHeartbeatStatus(uint32_t now)
     if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
     {
       stationOffline[id] = true;
+      firstHeartbeatSeen[id] = false; // 🧩 Reset flag here
     }
     else
     {
@@ -738,8 +756,9 @@ void updateHeartbeatStatus(uint32_t now)
       if (wasOffline[id] && !nowOffline)
       {
         // Station transitioned from OFFLINE → ONLINE
-        Serial.print(F("[REQ] Requesting feedback from station "));
-        Serial.println(id);
+        DBG(1,
+            Serial.print(F("[REQ] Requesting feedback from station "));
+            Serial.println(id););
         sendFeedbackRequest(id);
       }
       wasOffline[id] = nowOffline;
@@ -747,20 +766,29 @@ void updateHeartbeatStatus(uint32_t now)
   }
 }
 
-// Request feedback status from station when a station gets detected.
+// -------------------------------------------------------------------
+// FUNCTION: sendFeedbackRequest()
+// PURPOSE : Request one or all stations to resend feedback frames.
+// -------------------------------------------------------------------
 void sendFeedbackRequest(uint8_t id)
 {
   uint8_t buf[5];
-  buf[0] = 0xAD; // new "Request Feedback" frame
-  buf[1] = id;
+  buf[0] = 0xAD;
+  buf[1] = id; // target ID, or 255 for broadcast
   buf[2] = 0x00;
   buf[3] = 0x00;
   buf[4] = xorChecksum(buf, 4);
 
-  IPAddress ipStation(192, 168, 1, 10 + id);
+  IPAddress ipStation = (id == 255)
+                            ? IPAddress(192, 168, 1, 255)
+                            : IPAddress(192, 168, 1, 10 + id);
+
   Udp.beginPacket(ipStation, UDP_PORT);
   Udp.write(buf, 5);
   Udp.endPacket();
+  DBG(1,
+      Serial.print(F("[REQ] Feedback request sent to "));
+      Serial.println(id == 255 ? F("ALL stations") : String(id)););
 }
 
 // ============================================================
@@ -809,6 +837,7 @@ void sendAllStations()
       uint8_t idx = st.startIdx + j; // Map local index → global input index
       bool val = stableState[idx];   // Current state from stableState[]
 
+#if ENABLE_THERMOSTAT
       // 🌡️ Thermostat override block
       for (uint8_t t = 0; t < 2; t++)
       {
@@ -824,6 +853,7 @@ void sendAllStations()
           }
         }
       }
+#endif
 
       stateBits[j] = val; // Save the final (possibly overridden) state
     }
@@ -1002,11 +1032,19 @@ void updateThermostatStatus()
   static bool prevActive[2] = {false, false};  // for debug
 #endif
 
+  // --- 🚫 Skip if feature disabled ---
   if (!ENABLE_THERMOSTAT)
   {
     // turn both LEDs OFF
     LED_PAIR(TH_LED_PAIR[0], LOW, LOW);
     LED_PAIR(TH_LED_PAIR[1], LOW, LOW);
+    return;
+  }
+
+  // --- 🚫 Skip LED updates if Ethernet link is DOWN ---
+  if (Ethernet.linkStatus() != LinkON)
+  {
+    // Let updateEthernetAndLEDs() control all LEDs (global RED blink)
     return;
   }
 
@@ -1349,28 +1387,73 @@ void loop()
   wdt_reset(); // Keep it alive every loop iteration
   uint32_t now = millis();
 
-  // 🔁 Refresh physical inputs
+  // ============================================================
+  // 🔁 Refresh and Debounce All Inputs (Physical + MCP)
+  // ============================================================
+
+  // --- 1️⃣ Physical inputs (0–7) ---
   for (uint8_t i = 0; i < NUM_INPUTS; i++)
   {
-    stableState[i] = !digitalRead(PHYS_SW_PINS[i]); // active-low
+    bool current = !digitalRead(PHYS_SW_PINS[i]); // active-low
+
+    if (current != rawState[i])
+    {
+      rawState[i] = current;
+      lastChange[i] = now;
+    }
+
+    if ((now - lastChange[i]) > DEBOUNCE_MS)
+    {
+      stableState[i] = rawState[i];
+    }
   }
 
-  // 🔁 Refresh MCP23017 inputs each cycle
+  // --- 2️⃣ MCP23017 inputs (8–23) ---
+  // Only read ports if interrupt flags triggered
   if (mcpIntA_Flag)
-  {
     readMcpA();
-  }
   if (mcpIntB_Flag)
-  {
     readMcpB();
-  }
 
-  // Update stableState from MCP port snapshots
   for (uint8_t b = 0; b < 8; b++)
   {
-    stableState[8 + b] = ((mcpStateA & (1 << b)) == 0);
-    stableState[16 + b] = ((mcpStateB & (1 << b)) == 0);
+    bool currentA = ((mcpStateA & (1 << b)) == 0);
+    bool currentB = ((mcpStateB & (1 << b)) == 0);
+
+    uint8_t idxA = 8 + b;
+    uint8_t idxB = 16 + b;
+
+    if (currentA != rawState[idxA])
+    {
+      rawState[idxA] = currentA;
+      lastChange[idxA] = now;
+    }
+
+    if (currentB != rawState[idxB])
+    {
+      rawState[idxB] = currentB;
+      lastChange[idxB] = now;
+    }
+
+    if ((now - lastChange[idxA]) > DEBOUNCE_MS)
+    {
+      stableState[idxA] = rawState[idxA];
+    }
+
+    if ((now - lastChange[idxB]) > DEBOUNCE_MS)
+    {
+      stableState[idxB] = rawState[idxB];
+    }
   }
+
+  // --- 🧠 Debug (optional) ---
+  // static uint32_t lastPrint = 0;
+  // if (now - lastPrint > 1000) {
+  //   lastPrint = now;
+  //   Serial.print(F("[DBG] Stable: "));
+  //   for (uint8_t i = 0; i < TOTAL_INPUTS; i++) Serial.print(stableState[i]);
+  //   Serial.println();
+  // }
 
   // 🔁 Blink-phase update (global for all blinking states)
   if (now - tBlink >= BLINK_INTERVAL_MS)
@@ -1378,47 +1461,6 @@ void loop()
     tBlink = now;
     blinkPhase = !blinkPhase;
   }
-
-  // TEST TEST TEST TEST TEST TEST
-  DBG(4, int packetSize = Udp.parsePacket(); if (packetSize > 0) {
-      IPAddress rip = Udp.remoteIP();
-      Serial.print(F("[RX] Packet from "));
-      Serial.print(rip);
-      Serial.print(F(" len="));
-      Serial.println(packetSize);
-
-      uint8_t buf[8];
-      int len = Udp.read(buf, sizeof(buf));
-      Serial.print(F(" Data: "));
-      for (int i = 0; i < len; i++) {
-        Serial.print(buf[i], HEX);
-        Serial.print(" ");
-      }
-      Serial.println();
-
-      if (len == 4 && buf[0] == 0xAB) {
-        uint8_t id = buf[1];
-        if (id < NUM_STATIONS && xorChecksum(buf, 3) == buf[3]) {
-          lastHeartbeatMs[id] = now;
-          stationOffline[id] = false;
-          DBG(2,
-            Serial.print(F("[HB] Station "));
-            Serial.print(id);
-            Serial.println(F(" OK"));
-          );
-        }
-      }
-
-      else if (len == 5 && buf[0] == 0xAC) {
-        uint8_t id = buf[1];
-        if (id < NUM_STATIONS && xorChecksum(buf, 4) == buf[4]) {
-          stationFeedback[id] = buf[2];
-          DBG(2, Serial.print("[FB] Station %u bits=%02X\n");
-          Serial.println(id, buf[2]); );
-        }
-      } });
-
-  // TEST TEST TEST TEST TEST TEST
 
   // // DBG(2,
   // int pkt = Udp.parsePacket();

@@ -1,14 +1,3 @@
-
-
-// ---------------- GLOBAL SETTINGS ----------------
-#define THERMOSTAT_ENABLED true // master enable for thermostat system
-
-// --- LED pairs ---
-#define NUM_LED_PAIRS 24
-
-#define LEDPAIR_THERM1 22
-#define LEDPAIR_THERM2 23
-
 // ============================================================
 // 🧩 SECTION: CONSTANTS & TIMING
 // ============================================================
@@ -94,66 +83,6 @@ void loop()
     stableState[i] = !r; // active-low
   }
 
-  // If MCP interrupt flags set, read ports to update remaining 16 inputs
-  // -------------------------------------------------------------------
-  // FUNCTION: readMcpA() / readMcpB()
-  // PURPOSE : Reads GPIO states from MCP23017 when interrupt occurs,
-  //           ensuring no change events are lost.
-  // -------------------------------------------------------------------
-  if (mcpIntA_Flag)
-    readMcpA();
-  if (mcpIntB_Flag)
-    readMcpB();
-
-  // Copy MCP bits into stableState[8..23]
-  for (uint8_t b = 0; b < 8; b++)
-  {
-    stableState[8 + b] = ((mcpStateA & (1 << b)) == 0); // active low
-    stableState[16 + b] = ((mcpStateB & (1 << b)) == 0);
-  }
-
-#if DEBUG_SERIAL
-  for (uint8_t i = 0; i < TOTAL_INPUTS; i++)
-  {
-    Serial.print(stableState[i]);
-    Serial.print(' ');
-  }
-  Serial.println();
-
-  Serial.print(F("MCP A: "));
-  Serial.print(~mcpStateA, BIN);
-  Serial.print(F("  MCP B: "));
-  Serial.println(~mcpStateB, BIN);
-#endif
-
-  // 2) Long-press detection for station enable/disable
-
-  for (id = 0; id < NUM_STATIONS; id++)
-  {
-    uint8_t idx = stationButtonIndex[id];
-    bool pressed = stableState[idx];
-    if (pressed && !pressActive[id])
-    {
-      pressActive[id] = true;
-      pressStart[id] = now;
-    }
-    else if (!pressed && pressActive[id])
-    {
-      pressActive[id] = false;
-    }
-    else if (pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS))
-    {
-      setStationEnabled(id, !stationEnabled[id]);
-      pressActive[id] = false;
-#if DEBUG_SERIAL
-      Serial.print(F("[TOGGLE] Station "));
-      Serial.print(id);
-      Serial.print(F(" -> "));
-      Serial.println(stationEnabled[id] ? F("ENABLED") : F("DISABLED"));
-#endif
-    }
-  }
-
   // 4) Heartbeat timeout
   for (id = 0; id < NUM_STATIONS; id++)
   {
@@ -237,64 +166,6 @@ void loop()
     LED_PAIR(LEDPAIR_BUZZER, LOW, HIGH);
   }
 
-  // 6) Send frames periodically (every SEND_INTERVAL_MS)
-  if (now - tSend >= SEND_INTERVAL_MS)
-  {
-    tSend = now;
-    // --- Station 0 ---
-    if (stationEnabled[ST0] && !stationOffline[ST0])
-    {
-      bool s0[2];
-      for (uint8_t i = 0; i < 2; i++)
-        s0[i] = stableState[i];
-      sendSetFrame(ipS0, ST0, packBitsLSB(s0, 2));
-    }
-    // --- Station 1 ---
-    if (stationEnabled[ST1] && !stationOffline[ST1])
-    {
-      bool s1[6];
-      for (uint8_t i = 0; i < 6; i++)
-        s1[i] = stableState[2 + i];
-      sendSetFrame(ipS1, ST1, packBitsLSB(s1, 6));
-    }
-
-    // --- Station 2 ---
-    if (stationEnabled[ST2] && !stationOffline[ST2])
-    {
-      bool s2[4];
-      for (uint8_t i = 0; i < 4; i++)
-        s2[i] = stableState[8 + i];
-      sendSetFrame(ipS2, ST2, packBitsLSB(s2, 4));
-    }
-
-    // --- Station 3 ---
-    if (stationEnabled[ST3] && !stationOffline[ST3])
-    {
-      bool s3[4];
-      for (uint8_t i = 0; i < 4; i++)
-        s3[i] = stableState[12 + i];
-      sendSetFrame(ipS3, ST3, packBitsLSB(s3, 4));
-    }
-
-    // --- Station 4 ---
-    if (stationEnabled[ST4] && !stationOffline[ST4])
-    {
-      bool s4[3];
-      for (uint8_t i = 0; i < 3; i++)
-        s4[i] = stableState[16 + i];
-      sendSetFrame(ipS4, ST4, packBitsLSB(s4, 3));
-    }
-
-    // --- Station 5 ---
-    if (stationEnabled[ST5] && !stationOffline[ST5])
-    {
-      bool s5[2];
-      for (uint8_t i = 0; i < 2; i++)
-        s5[i] = stableState[19 + i];
-      sendSetFrame(ipS5, ST5, packBitsLSB(s5, 2));
-    }
-  }
-
   // --- BUZZER VACUUM DETECTION LOGIC (with cooldown) ---
   if (id >= 1 && id <= 4)
   {                                                  // Stations 1–4 only
@@ -316,104 +187,8 @@ void loop()
     }
   }
 
-#if DEBUG_SERIAL
-  Serial.print(F("[FB ] Station "));
-  Serial.print(id);
-  Serial.print(F(" bits: "));
-  Serial.println(bits, BIN);
-#endif
+  updateBuzzer(now);
 }
-else
-{
-#if DEBUG_SERIAL
-  Serial.println(F("[FB ] Invalid feedback"));
-#endif
-}
-}
-}
-
-// ---------------------------
-// 8)Thermostat Override logic (always runs)
-// ---------------------------
-#if THERMOSTAT_ENABLED
-// ============================================================
-// 🧠 THERMOSTAT CONTROL SYSTEM
-// ------------------------------------------------------------
-// • Entire logic disabled if THERMOSTAT_ENABLED == false
-// • Each thermostat controlled by its own switch:
-//     → Station 0 thermostat switch index 22 (LED pair 22)
-//     → Station 4 thermostat switch index 24 (LED pair 23)
-// • Overrides selected main-controller switches when active.
-// ============================================================
-
-// --- Enable switches (active-high logical via stableState[]) ---
-thermoEnable1 = stableState[IDX_THERM1_EN]; // Station 0 thermostat enable
-thermoEnable2 = stableState[IDX_THERM2_EN]; // Station 4 thermostat enable
-
-// --- Debounced thermostat signals ---
-thermoSignal1 = readThermoDebounced(0, A3, now); // Station 0 sends on A3
-thermoSignal2 = readThermoDebounced(1, A4, now); // Station 4 sends on A4
-
-// --- LED pairs behavior ---
-// OFF when switch OFF; when ON => RED if signal LOW, GREEN if signal HIGH
-if (!thermoEnable1)
-{
-  LED_PAIR(LEDPAIR_THERM1, LOW, LOW);
-}
-else
-{
-  LED_PAIR(LEDPAIR_THERM1, thermoSignal1 ? LOW : HIGH, thermoSignal1 ? HIGH : LOW);
-}
-
-if (!thermoEnable2)
-{
-  LED_PAIR(LEDPAIR_THERM2, LOW, LOW);
-}
-else
-{
-  LED_PAIR(LEDPAIR_THERM2, thermoSignal2 ? LOW : HIGH, thermoSignal2 ? HIGH : LOW);
-}
-
-// --- Apply overrides only when enabled AND signal is HIGH ---
-// Station 0 thermostat (A3 HIGH) -> force indexes 2, 9, 14 HIGH
-if (thermoEnable1 && thermoSignal1)
-{
-  stableState[2] = 1;
-  stableState[9] = 1;
-  stableState[14] = 1;
-}
-
-// Station 4 thermostat (A4 HIGH) -> force index 17 HIGH
-if (thermoEnable2 && thermoSignal2)
-{
-  stableState[17] = 1;
-}
-
-#if DEBUG_SERIAL
-Serial.print(F("[THERMO] en1="));
-Serial.print(thermoEnable1);
-Serial.print(F(" sig1="));
-Serial.print(thermoSignal1);
-Serial.print(F(" | en2="));
-Serial.print(thermoEnable2);
-Serial.print(F(" sig2="));
-Serial.println(thermoSignal2);
-#endif
-#else
-// ============================================================
-// ❌ THERMOSTAT SYSTEM DISABLED
-// Turn off thermostat LEDs and prevent overrides.
-// ============================================================
-LED_PAIR(LEDPAIR_THERM1, LOW, LOW);
-LED_PAIR(LEDPAIR_THERM2, LOW, LOW);
-#endif
-
-updateBuzzer(now);
-}
-
-// ============================================================
-// 🔧 SECTION: HELPER FUNCTIONS
-// ============================================================
 
 // ============================================================
 // ✅ END OF FILE
