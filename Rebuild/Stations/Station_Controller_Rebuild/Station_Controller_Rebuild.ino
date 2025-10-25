@@ -26,7 +26,7 @@ TM1637Display display(CLK_PIN, DIO_PIN);
 // ============================================================
 // 🚧 SECTION: DEBUG CONFIG
 // ============================================================
-#define DEBUG_SERIAL true // for the else clauses
+#define DEBUG_SERIAL 1 // for the else clauses
 
 // Limit how often serial debug lines are printed
 // ---------------- DEBUG CONFIG ----------------
@@ -68,7 +68,7 @@ const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5};
 #else
 // Use D0, D1 as inputs when not debugging
 const uint8_t IN_COUNT = 7;
-const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5, 0, 1};
+const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5, 1, 0};
 #endif
 
 // --- Extra analog input (optional) ---

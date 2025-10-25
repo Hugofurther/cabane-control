@@ -130,15 +130,108 @@ enum
 
 // Map each LED pair index (0–23) to its owning station
 //  - Last pairs (21–23) are reserved (buzzer, thermostats, etc.)
-const uint8_t LED_OWNER[NUM_LED_PAIRS] = {
-    ST0, ST0,                     // 0–1  Station 0
-    ST1, ST1, ST1, ST1, ST1, ST1, // 2–7  Station 1
-    ST2, ST2, ST2, ST2,           // 8–11 Station 2
-    ST3, ST3, ST3, ST3,           // 12–15 Station 3
-    ST4, ST4, ST4,                // 16–18 Station 4
-    ST5, ST5,                     // 19–20 Station 5
-    255, 255, 255                 // 21–23 reserved / non-station LEDs
+// const uint8_t LED_OWNER[NUM_LED_PAIRS] = {
+//     ST0, ST0,                     // 0–1  Station 0
+//     ST1, ST1, ST1, ST1, ST1, ST1, // 2–7  Station 1
+//     ST2, ST2, ST2, ST2,           // 8–11 Station 2
+//     ST3, ST3, ST3, ST3,           // 12–15 Station 3
+//     ST4, ST4, ST4,                // 16–18 Station 4
+//     ST5, ST5,                     // 19–20 Station 5
+//     255, 255, 255                 // 21–23 reserved / non-station LEDs
+// };
+
+// -------------------------------------------
+// STATION-OFFLINE → LED pairs mapping
+// -------------------------------------------
+
+struct LedMap
+{
+  uint8_t ledPair;       // which LED pair (0–23)
+  uint8_t station;       // main feedback station
+  uint8_t bit;           // feedback bit index
+  int8_t offlineStation; // optional: station to monitor for offline blink (-1 if none)
+  bool isVacuum;         // ⬅️ true if this LED is a vacuum indicator
+  int8_t switchIndex;    // ⬅️ optional: matching switch index in stableState[]
 };
+
+const LedMap LED_MAP[] = {
+    // Station 1
+    {0, 1, 0, 0, 0, 0}, // pair 0: Station 1 A1, blink if ST0 offline - Transport Pump 1
+    {1, 1, 1, 1, 0, 1}, // pair 1: Station 1 A2, blink if ST1 offline - Transport Pump 2
+    {2, 1, 2, 1, 1, 2}, // pair 2: Station 1 A3, blink if ST1 offline - Vacuum 1
+    {3, 1, 2, 1, 1, 3}, // pair 3: Station 1 A3, blink if ST1 offline - Vacuum 2
+    {4, 1, 3, 1, 0, 4}, // pair 4: Station 1 A4, blink if ST1 offline - Vic T1
+    {5, 1, 4, 1, 0, 5}, // pair 5: Station 1 A5, blink if ST1 offline - Overture T2
+    {6, 1, 5, 1, 0, 6}, // pair 6: Station 1 A6, blink if ST1 offline - Vid T2
+    // #if !DEBUG_SERIAL
+    {7, 2, 0, 1, 0, 7}, // pair 7: Station 1 D1, blink if ST1 offline - VId st2 -> St1
+    // #endif
+    // Station 2
+    {8, 2, 0, 2, 0, 8},   // pair 8: Station 2 A1, blink if ST2 offline - Transport Pump
+    {9, 2, 1, 2, 1, 9},   // pair 9: Station 2 A2, blink if ST2 offline - Vacuum
+    {10, 2, 2, 2, 0, 10}, // pair 10: Station2 A3, blink if ST2 offline -  Vid ST1 -> ST2
+    {11, 2, 3, 2, 0, 11}, // pair 11: Station 2 A4, blink if ST2 offline - Vid ST3 -> ST2
+    // Station 3
+    {12, 3, 0, 3, 0, 12}, // pair 12: Station 3 A1, blink if ST3 offline - Transport Pump 1
+    {13, 3, 1, 3, 0, 13}, // pair 13: Station 3 A2, blink if ST3 offline - Transport Pump 2
+    {14, 3, 2, 3, 1, 14}, // pair 14: Station 3 A3, blink if ST3 offline - Vacuum
+    {15, 3, 3, 3, 0, 15}, // pair 15: Station 3 A4, blink if ST3 offline - Vid ST2 -> ST3
+    // Station 4
+    {16, 4, 1, 4, 0, 16}, // pair 16: Station 4 A2, blink if ST4 offline - Transport Pump
+    {17, 4, 2, 4, 1, 17}, // pair 17: Station 4 A3, blink if ST4 offline - Vacuum
+    {18, 4, 3, 4, 0, 18}, // pair 18: Station 4 A4, blink if ST4 offline - Vid ST4
+    // Station 5
+    {19, 5, 0, 5, 0, 19}, // pair 19: Station 5 A1, blink if ST5 offline - Transport Pump
+    {20, 5, 1, 5, 0, 20}, // pair 20: Station 5 A2, blink if ST5 offline - Vid ST5
+};
+const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
+
+// ============================================================
+// 🎛️ FEEDBACK → LED Pair Mapping (granular)
+// ============================================================
+// struct FeedbackMap
+// {
+//   uint8_t ledPair; // Which LED pair (0–23)
+//   uint8_t station; // Station ID (0–5)
+//   uint8_t bit;     // Bit position in stationFeedback[station]
+// };
+
+// // 🎛️ FEEDBACK → LED Pair Mapping
+// const FeedbackMap FEEDBACK_MAP[] = {
+//     // Station 0 A1 → used for Thermostat 1
+
+//     {0, 1, 0}, // Station 1 A1 → LED pair 0 - Vacuum 1
+//     {1, 1, 0}, // Station 1 A1 → LED pair 1 - Vacuum 2
+//     {2, 1, 1}, // Station 1 A2 → LED pair 2 - Transport Pump 1
+//     {3, 1, 2}, // Station 1 A3 → LED pair 3 - Transport Pump 2
+//     {4, 1, 3}, // Station 1 A4 → LED pair 4 - Vic T1
+//     {5, 1, 4}, // Station 1 A5 → LED pair 5 - Overture T2
+//     {6, 1, 5}, // Station 1 A6 → LED pair 6 - Vid T2
+// #if !DEBUG_SERIAL
+//     {7, 1, 6}, // Station 1 D1 → LED pair 7 - VId st2 -> St1
+// #endif
+
+//     {8, 2, 0},  // Station 2 A1 → LED pair 8 - Transport Pump
+//     {9, 2, 1},  // Station 2 A2 → LED pair 9 - Vacuum
+//     {10, 2, 2}, // Station 2 A3 → LED pair 10 - Vid ST1 -> ST2
+//     {11, 2, 3}, // Station 2 A4 → LED pair 11 - Vid ST3 -> ST2
+
+//     {12, 3, 0}, // Station 3 A1 → LED pair 12 - Transport Pump 1
+//     {13, 3, 1}, // Station 3 A2 → LED pair 13 - Transport Pump 2
+//     {14, 3, 2}, // Station 3 A3 → LED pair 14 - Vacuum
+//     {15, 3, 3}, // Station 3 A4 → LED pair 15 - Vid ST2 -> ST3
+
+//     // Station 4 A1 → used for Thermostat 2
+//     {16, 4, 1}, // Station 4 A2 → LED pair 16 - Transport Pump
+//     {17, 4, 2}, // Station 4 A3 → LED pair 17 - Vacuum
+//     {18, 4, 3}, // Station 4 A4 → LED pair 18 - Vid ST4
+
+//     {19, 5, 0}, // Station 5 A1 → LED pair 19 - Transport Pump
+//     {20, 5, 1}, // Station 5 A2 → LED pair 20 - Vid ST5
+//                 // Buzzer pair 21 is handled separately!
+//                 // Thermostat pairs 22–23 are handled separately!
+// };
+// const uint8_t FEEDBACK_MAP_COUNT = sizeof(FEEDBACK_MAP) / sizeof(FEEDBACK_MAP[0]);
 
 // ============================================================
 // 🧩 SECTION: MACROS
@@ -175,8 +268,8 @@ uint32_t pressStart[NUM_STATIONS] = {0};
 
 // Map each station to the input index in stableState[]
 const uint8_t stationButtonIndex[NUM_STATIONS] = {
-    2,  // Station 0 → first input
-    3,  // Station 1 → second input
+    0,  // Station 0 → first input
+    1,  // Station 1 → second input
     8,  // Station 2
     12, // Station 3
     16, // Station 4
@@ -473,85 +566,78 @@ void digitalWriteAll(const uint8_t *pins, uint8_t count, bool state)
 // Handles visual indication of network link status and
 // per-station feedback on the LED pairs.
 // Called once per loop(), non-blocking.
-//
+
 void updateEthernetAndLEDs(uint32_t now)
 {
-
   static bool linkDown = false;
 
-  // --- 1️⃣ Periodically check Ethernet link ---
-  if (now - lastLinkCheck >= 250)
+  // 1️⃣ Check Ethernet link
+  if (now - lastLinkCheck >= LINK_CHECK_INTERVAL)
   {
     lastLinkCheck = now;
     linkDown = (Ethernet.linkStatus() != LinkON);
-
-    DBG(4,
-        Serial.print(F("[LINK] "));
+    DBG(4, Serial.print(F("[LINK] "));
         Serial.println(linkDown ? F("DOWN") : F("OK")));
   }
 
-  // --- 2️⃣ LINK DOWN: flash all RED LEDs together ---
+  // 2️⃣ Link Down → Global RED blink
   if (linkDown)
   {
-    digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);        // greens off
-    digitalWriteAll(LED_A, NUM_LED_PAIRS, blinkPhase); // reds blink
-    return;                                            // Skip per-station logic while link is down
+    digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);
+    digitalWriteAll(LED_A, NUM_LED_PAIRS, blinkPhase);
+    return;
   }
 
-  // --- 3️⃣ LINK UP: per-station LED behavior ---
-  for (uint8_t pair = 0; pair < NUM_LED_PAIRS; pair++)
-  {
-    uint8_t owner = LED_OWNER[pair];
-    if (owner >= NUM_STATIONS)
-      continue; // Skip reserved LEDs
+  bool anyVacuumAlert = false; // Reset -> recheck below
 
-    // Station disabled → both LEDs OFF
-    if (!stationEnabled[owner])
+  // 3️⃣ Link Up → unified LED update
+  for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
+  {
+    const LedMap &m = LED_MAP[i];
+
+    // --- Disabled main station → OFF
+    if (!stationEnabled[m.offlineStation])
     {
-      LED_PAIR(pair, LOW, LOW);
+      LED_PAIR(m.ledPair, LOW, LOW);
       continue;
     }
 
-    // Station offline → alternate blink RED/GREEN
-    if (stationOffline[owner])
+    // --- Offline reference station → blink RED/GREEN
+    if (m.offlineStation != (uint8_t)-1 && stationOffline[m.offlineStation])
     {
-      LED_PAIR(pair,
+      LED_PAIR(m.ledPair,
                blinkPhase ? HIGH : LOW,
                blinkPhase ? LOW : HIGH);
       continue;
     }
 
-    // --- 4️⃣ ONLINE → use station feedback bits ---
-    uint8_t bitIndex;
-    switch (owner)
-    {
-    case ST0:
-      bitIndex = pair;
-      break;
-    case ST1:
-      bitIndex = pair - 2;
-      break;
-    case ST2:
-      bitIndex = pair - 8;
-      break;
-    case ST3:
-      bitIndex = pair - 12;
-      break;
-    case ST4:
-      bitIndex = pair - 16;
-      break;
-    case ST5:
-      bitIndex = pair - 19;
-      break;
-    default:
-      bitIndex = 0;
-      break;
+    // 🚨 Vacuum alert condition
+    bool bitVal = (stationFeedback[m.station] >> m.bit) & 1; // feedback
+    bool switchOn = stableState[m.switchIndex];              // from local input
+
+    if (m.isVacuum && switchOn && bitVal)
+    { // bitVal==1 means loss of vacuum
+      anyVacuumAlert = true;
+      LED_PAIR(m.ledPair,
+               blinkPhase ? HIGH : LOW, // blink red
+               LOW);
+      continue;
     }
 
-    bool relayOn = (stationFeedback[owner] >> bitIndex) & 1;
-    LED_PAIR(pair,
-             relayOn ? HIGH : LOW,  // RED if relay off
-             relayOn ? LOW : HIGH); // GREEN if relay on
+    // --- ONLINE feedback
+    LED_PAIR(m.ledPair,
+             bitVal ? HIGH : LOW,  // RED when relay off
+             bitVal ? LOW : HIGH); // GREEN when relay on
+  }
+
+  // Later: trigger buzzer LED pair 21 if any alert
+  if (anyVacuumAlert)
+  {
+    LED_PAIR(21, blinkPhase ? HIGH : LOW, LOW); // red blink
+  }
+  else
+  {
+    LED_PAIR(21, LOW, HIGH); // green OK
   }
 }
 
