@@ -114,6 +114,68 @@ const uint8_t LED_B[NUM_LED_PAIRS] = { // 🟢 GREEN pins (odd)
     55, 57, 59, 61};
 
 // ============================================================
+// 🧩 Input Mapping Configuration
+// ============================================================
+
+struct InputMap
+{
+  uint8_t index;    // global stableState[] index
+  bool isMCP;       // true if from MCP23017, false if physical pin
+  uint8_t pinOrBit; // digital pin (if physical) or MCP bit (0–7)
+  uint8_t mcpId;    // 0 = Port A, 1 = Port B
+  uint8_t station;  // station number (0–5)
+  uint8_t bit;      // bit index (0–7) within that station
+};
+
+// ============================================================
+// 📘 Unified Input Map Table
+// ============================================================
+//
+// NOTE: indices (index) must match stableState[] layout
+//       0–7   → physical pins
+//       8–15  → MCP Port A bits
+//       16–23 → MCP Port B bits
+//
+const InputMap INPUT_MAP[] = {
+    // index, isMCP, pinOrBit, mcpId, station, bit
+
+    // --- Physical pins (directly on Mega) ---
+    {0, false, 62, 0, 1, 0}, // Switch 0 - not mcp - Pin 62 - ST1 OUT - D2 - Transp 1
+    {1, false, 63, 0, 1, 1}, // Switch 1 - not mcp - Pin 63 - ST1 OUT - D3 - Transp 1
+    {2, false, 64, 0, 0, 0}, // Switch 2 - not mcp - Pin 64 - ST0 OUT - D2 - Vac 1
+    {3, false, 65, 0, 0, 1}, // Switch 3 - not mcp - Pin 65 - ST0 OUT - D3 - Vac2
+    {4, false, 66, 0, 1, 2}, // Switch 4 - not mcp - Pin 66 - ST1 OUT - D4 - Vid T1
+    {5, false, 67, 0, 1, 3}, // Switch 5 - not mcp - Pin 67 - ST1 OUT - D5 - Ouver T2
+    {6, false, 68, 0, 1, 4}, // Switch 6 - not mcp - Pin 68 - ST1 OUT - D6 - Vid T2
+    {7, false, 69, 0, 1, 5}, // Switch 7 - not mcp - Pin 69 - ST1 OUT - D7 - Vid ST2 -> ST1
+
+    // --- MCP23017 Port A (GPA0–7) ---
+    {8, true, 0, 0, 2, 0},  // Switch 8 - isMCP - Bit A0  - ST2 OUT - D2 - Transp
+    {9, true, 1, 0, 2, 1},  // Switch 9 - isMCP - Bit A1 - ST2 OUT - D3 - Vac
+    {10, true, 2, 0, 2, 2}, // Switch 10 - isMCP - Bit A2 - S2 OUT - D4 - Vid ST1 -> ST2
+    {11, true, 3, 0, 2, 3}, // Switch 11 - isMCP - Bit A3 - ST2 OUT - D5 - Vid ST33 -> ST2
+
+    {12, true, 4, 0, 3, 0}, // Switch 12 - isMCP - Bit A4 - ST3 OUT - D2 - Transp 1
+    {13, true, 5, 0, 3, 1}, // Switch 13 - isMCP - Bit A5 - ST3 OUT - D3 - Transp 2
+    {14, true, 6, 0, 3, 2}, // Switch 14 - isMCP - Bit A6 - ST3 OUT - D4 - Vac
+    {15, true, 7, 0, 3, 3}, // Switch 15 - isMCP - Bit A7 - ST3 OUT - D5 - Vid ST2 -> ST3
+
+    // --- MCP23017 Port B (GPB0–7) ---
+    {16, true, 0, 1, 4, 0}, // Switch 16 - isMCP - Bit B0 - ST4 OUT - D2 - Transp
+    {17, true, 1, 1, 4, 1}, // Switch 17 - isMCP - Bit B1 - ST4 OUT - D3 - Vac
+    {18, true, 2, 1, 4, 2}, // Switch 18 - isMCP - Bit B2 - ST4 OUT - D4 - Vid ST4
+
+    {19, true, 3, 1, 5, 0}, // Switch 19 - isMCP - Bit B3 - ST3 OUT - D2 - Transp
+    {20, true, 4, 1, 5, 1}, // Switch 20 - isMCP - Bit B4 - ST3 OUT - D3 - Vid ST5
+
+    {21, true, 5, 1, 255, 0}, // Buzzer switch (no station)
+    {22, true, 6, 1, 255, 0}, // TH1 switch (no station)
+    {23, true, 7, 1, 255, 0}, // TH2 switch (no station)
+};
+
+const uint8_t INPUT_MAP_COUNT = sizeof(INPUT_MAP) / sizeof(INPUT_MAP[0]);
+
+// ============================================================
 // 💡 SECTION: LED → Station Ownership Mapping
 // ============================================================
 
@@ -127,18 +189,6 @@ enum
   ST4,
   ST5
 };
-
-// Map each LED pair index (0–23) to its owning station
-//  - Last pairs (21–23) are reserved (buzzer, thermostats, etc.)
-// const uint8_t LED_OWNER[NUM_LED_PAIRS] = {
-//     ST0, ST0,                     // 0–1  Station 0
-//     ST1, ST1, ST1, ST1, ST1, ST1, // 2–7  Station 1
-//     ST2, ST2, ST2, ST2,           // 8–11 Station 2
-//     ST3, ST3, ST3, ST3,           // 12–15 Station 3
-//     ST4, ST4, ST4,                // 16–18 Station 4
-//     ST5, ST5,                     // 19–20 Station 5
-//     255, 255, 255                 // 21–23 reserved / non-station LEDs
-// };
 
 // -------------------------------------------
 // STATION-OFFLINE → LED pairs mapping
@@ -163,9 +213,11 @@ const LedMap LED_MAP[] = {
     {4, 1, 3, 1, 0, 4}, // pair 4: Station 1 A4, blink if ST1 offline - Vic T1
     {5, 1, 4, 1, 0, 5}, // pair 5: Station 1 A5, blink if ST1 offline - Overture T2
     {6, 1, 5, 1, 0, 6}, // pair 6: Station 1 A6, blink if ST1 offline - Vid T2
-    // #if !DEBUG_SERIAL
+#if DEBUG_SERIAL
+    {255, 255, 0, 255, 0, 255}, // pair 7: Station 1 D1, blink if ST1 offline - VId st2 -> St1
+#else
     {7, 2, 0, 1, 0, 7}, // pair 7: Station 1 D1, blink if ST1 offline - VId st2 -> St1
-    // #endif
+#endif
     // Station 2
     {8, 2, 0, 2, 0, 8},   // pair 8: Station 2 A1, blink if ST2 offline - Transport Pump
     {9, 2, 1, 2, 1, 9},   // pair 9: Station 2 A2, blink if ST2 offline - Vacuum
@@ -294,7 +346,7 @@ const uint8_t TH_FEEDBACK_STATION[2] = {0, 4}; // Thermostat 1 → Station 0, Th
 const uint8_t TH_FEEDBACK_BIT[2] = {0, 3};     // Bit positions in stationFeedback[station]
 
 // Override switch indices (multiple allowed)
-const uint8_t TH1_OVERRIDE_IDX[] = {0, 9, 14}; // Thermostat 1
+const uint8_t TH1_OVERRIDE_IDX[] = {2, 9, 14}; // Thermostat 1
 const uint8_t TH2_OVERRIDE_IDX[] = {17};       // Thermostat 2
 const uint8_t *TH_OVERRIDE_IDX[2] = {TH1_OVERRIDE_IDX, TH2_OVERRIDE_IDX};
 const uint8_t TH_OVERRIDE_COUNT[2] = {
@@ -538,6 +590,25 @@ void readMcpB()
     delayMicroseconds(50);
   }
   mcpIntB_Flag = false;
+}
+
+// ============================================================
+// 🧩 Helper: readInputByMap()
+// ============================================================
+// Reads the current raw logic level (active-high = pressed/on)
+// Handles both physical and MCP inputs seamlessly.
+//
+bool readInputByMap(const InputMap &m)
+{
+  if (m.isMCP)
+  {
+    uint8_t portState = (m.mcpId == 0) ? mcpStateA : mcpStateB;
+    return ((portState & (1 << m.pinOrBit)) == 0); // active-low logic
+  }
+  else
+  {
+    return !digitalRead(m.pinOrBit); // physical pin (active-low)
+  }
 }
 
 // ============================================================
@@ -884,6 +955,71 @@ void sendFeedbackRequest(uint8_t id)
 // ------------------------------------------------------------
 // NOTE: Uses the global stableState[], ipSx variables, and stationEnabled[].
 // ============================================================
+
+void sendAllStations()
+{
+  // 🧩 Define IP table
+  const IPAddress stationIPs[NUM_STATIONS] = {
+      ipS0, ipS1, ipS2, ipS3, ipS4, ipS5};
+
+  for (uint8_t st = 0; st < NUM_STATIONS; st++)
+  {
+
+    // Skip disabled/offline
+    if (!stationEnabled[st] || stationOffline[st])
+      continue;
+
+    bool bits[8] = {0};
+    uint8_t bitCount = 0;
+
+    // 🧠 Collect all inputs belonging to this station
+    for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+    {
+      const InputMap &m = INPUT_MAP[i];
+      if (m.station == st)
+      {
+        bool val = stableState[m.index];
+
+#if ENABLE_THERMOSTAT
+        // Optional thermostat override block (still works)
+        for (uint8_t t = 0; t < 2; t++)
+        {
+          if (thermostatEnabled[t] && thermostatActive[t])
+          {
+            for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
+            {
+              if (m.index == TH_OVERRIDE_IDX[t][k])
+              {
+                val = true; // forced ON
+                break;
+              }
+            }
+          }
+        }
+#endif
+
+        bits[m.bit] = val;
+        bitCount = max(bitCount, m.bit + 1);
+      }
+    }
+
+    // ============================================================
+    // 📨 Pack bits and send to station
+    // ============================================================
+    uint8_t packed = packBitsLSB(bits, bitCount);
+    sendSetFrame(stationIPs[st], st, packed);
+
+    DBG(3,
+        Serial.print(F("[TX→ST] "));
+        Serial.print(st);
+        Serial.print(F(" bits="));
+        Serial.println(packed, BIN););
+  }
+}
+// ============================================================
+// ============================================================
+// ============================================================
+/*
 void sendAllStations()
 {
   struct StationConfig
@@ -968,6 +1104,7 @@ void sendAllStations()
         Serial.println(packedBits, BIN););
   }
 }
+*/
 
 // ============================================================
 // 🛰️  SECTION: Send Commands to Stations
@@ -1372,29 +1509,28 @@ void setup()
 
   // ✅ Initialize MCP23017 I/O expander
   mcp.begin_I2C(MCP_I2C_ADDR);
+
+  // ✅ Configure all 16 pins as INPUT_PULLUP
   for (uint8_t p = 0; p < 8; p++)
   {
     mcp.pinMode(p, INPUT_PULLUP);     // GPA0-7
     mcp.pinMode(p + 8, INPUT_PULLUP); // GPB0-7
   }
 
+  // ✅ Configure interrupts (so mcpIntA_Flag / mcpIntB_Flag get triggered)
   mcp.setupInterrupts(false, false, LOW);
   for (uint8_t p = 0; p < 16; p++)
   {
     mcp.setupInterruptPin(p, CHANGE);
   }
 
+  // ✅ Setup interrupt input pins on Arduino
   pinMode(MCP_INTA_PIN, INPUT_PULLUP);
   pinMode(MCP_INTB_PIN, INPUT_PULLUP);
 
   // ✅ Initial snapshot of MCP ports (initialize stableState)
   mcpStateA = mcp.readGPIO(0);
   mcpStateB = mcp.readGPIO(1);
-  for (uint8_t b = 0; b < 8; b++)
-  {
-    stableState[8 + b] = ((mcpStateA & (1 << b)) == 0);
-    stableState[16 + b] = ((mcpStateB & (1 << b)) == 0);
-  }
 
   // ✅ Attach interrupts
   attachInterrupt(digitalPinToInterrupt(MCP_INTA_PIN), []()
@@ -1402,11 +1538,19 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
                   { mcpIntB_Flag = true; }, FALLING);
 
-  // ✅ Physical switch inputs (direct pins)
+  // ---------- stableState ----------
+  // ✅ Add to stableState - Physical switch inputs (direct pins)
   for (uint8_t i = 0; i < NUM_INPUTS; i++)
   {
     pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
     stableState[i] = !digitalRead(PHYS_SW_PINS[i]); // active-low
+  }
+
+  // ✅ Add to stableState - MCP switch inputs
+  for (uint8_t b = 0; b < 8; b++)
+  {
+    stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
+    stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
   }
 
   // ✅ LED Outputs
@@ -1474,63 +1618,101 @@ void loop()
   uint32_t now = millis();
 
   // ============================================================
-  // 🔁 Refresh and Debounce All Inputs (Physical + MCP)
+  // 🔁 MCP23017 Read (update snapshot before processing inputs)
   // ============================================================
-
-  // --- 1️⃣ Physical inputs (0–7) ---
-  for (uint8_t i = 0; i < NUM_INPUTS; i++)
-  {
-    bool current = !digitalRead(PHYS_SW_PINS[i]); // active-low
-
-    if (current != rawState[i])
-    {
-      rawState[i] = current;
-      lastChange[i] = now;
-    }
-
-    if ((now - lastChange[i]) > DEBOUNCE_MS)
-    {
-      stableState[i] = rawState[i];
-    }
-  }
-
-  // --- 2️⃣ MCP23017 inputs (8–23) ---
-  // Only read ports if interrupt flags triggered
   if (mcpIntA_Flag)
     readMcpA();
   if (mcpIntB_Flag)
     readMcpB();
 
-  for (uint8_t b = 0; b < 8; b++)
+  // ============================================================
+  // 🔁 Unified Input Read + Debounce Loop
+  // ============================================================
+
+  for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
   {
-    bool currentA = ((mcpStateA & (1 << b)) == 0);
-    bool currentB = ((mcpStateB & (1 << b)) == 0);
+    const InputMap &m = INPUT_MAP[i];
+    bool current = readInputByMap(m);
 
-    uint8_t idxA = 8 + b;
-    uint8_t idxB = 16 + b;
-
-    if (currentA != rawState[idxA])
+    if (current != rawState[m.index])
     {
-      rawState[idxA] = currentA;
-      lastChange[idxA] = now;
+      rawState[m.index] = current;
+      lastChange[m.index] = now;
     }
 
-    if (currentB != rawState[idxB])
+    if ((now - lastChange[m.index]) > DEBOUNCE_MS)
     {
-      rawState[idxB] = currentB;
-      lastChange[idxB] = now;
-    }
-
-    if ((now - lastChange[idxA]) > DEBOUNCE_MS)
-    {
-      stableState[idxA] = rawState[idxA];
-    }
-
-    if ((now - lastChange[idxB]) > DEBOUNCE_MS)
-    {
-      stableState[idxB] = rawState[idxB];
+      stableState[m.index] = rawState[m.index];
     }
   }
+
+#if DEBUG_SERIAL
+  // 🧩 4️⃣ (Optional) Debug print — place here 👇
+  static uint32_t lastPrint = 0;
+  if (now - lastPrint >= 1000)
+  {
+    lastPrint = now;
+    Serial.print(F("[INPUT] stableState: "));
+    for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+      Serial.print(stableState[i]);
+    Serial.println();
+  }
+#endif
+
+  // // --- 1️⃣ Physical inputs (0–7) ---
+  // for (uint8_t i = 0; i < NUM_INPUTS; i++)
+  // {
+  //   bool current = !digitalRead(PHYS_SW_PINS[i]); // active-low
+
+  //   if (current != rawState[i])
+  //   {
+  //     rawState[i] = current;
+  //     lastChange[i] = now;
+  //   }
+
+  //   if ((now - lastChange[i]) > DEBOUNCE_MS)
+  //   {
+  //     stableState[i] = rawState[i];
+  //   }
+  // }
+
+  // // --- 2️⃣ MCP23017 inputs (8–23) ---
+  // // Only read ports if interrupt flags triggered
+  // if (mcpIntA_Flag)
+  //   readMcpA();
+  // if (mcpIntB_Flag)
+  //   readMcpB();
+
+  // for (uint8_t b = 0; b < 8; b++)
+  // {
+  //   bool currentA = ((mcpStateA & (1 << b)) == 0);
+  //   bool currentB = ((mcpStateB & (1 << b)) == 0);
+
+  //   uint8_t idxA = 8 + b;
+  //   uint8_t idxB = 16 + b;
+
+  //   if (currentA != rawState[idxA])
+  //   {
+  //     rawState[idxA] = currentA;
+  //     lastChange[idxA] = now;
+  //   }
+
+  //   if (currentB != rawState[idxB])
+  //   {
+  //     rawState[idxB] = currentB;
+  //     lastChange[idxB] = now;
+  //   }
+
+  //   if ((now - lastChange[idxA]) > DEBOUNCE_MS)
+  //   {
+  //     stableState[idxA] = rawState[idxA];
+  //   }
+
+  //   if ((now - lastChange[idxB]) > DEBOUNCE_MS)
+  //   {
+  //     stableState[idxB] = rawState[idxB];
+  //   }
+  // }
 
   // --- 🧠 Debug (optional) ---
   // static uint32_t lastPrint = 0;
