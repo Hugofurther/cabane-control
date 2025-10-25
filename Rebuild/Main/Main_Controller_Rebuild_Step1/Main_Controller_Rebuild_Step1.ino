@@ -4,6 +4,12 @@
   Hardware-level initialization + MCP/LED/Vegas diagnostic only
   ==============================================================
 */
+// -------------------- SYSTEM DEFINES --------------------
+#define FIRMWARE_VERSION "v1.0-RebuildStep1"
+#define DEBUG_SERIAL true   // for the else clauses
+#define DEBUG_LEVEL 3       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
+#define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
+#define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
 
 // ============================================================
 // 🧩 SECTION: INCLUDE LIBRARIES
@@ -19,11 +25,9 @@
 // ============================================================
 // 🚧 SECTION: DEBUG CONFIG
 // ============================================================
-#define DEBUG_SERIAL true // for the else clauses
 
 // Limit how often serial debug lines are printed
 // ---------------- DEBUG CONFIG ----------------
-#define DEBUG_LEVEL 3                                   // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 const uint16_t DBG_THROTTLE_MS[4] = {0, 0, 1000, 3000}; // Minimum delay between same-level prints
 uint32_t dbgLastPrint[4] = {0, 0, 0, 0};                // timestamp to throttle serial prints
 
@@ -47,11 +51,6 @@ uint32_t dbgLastPrint[4] = {0, 0, 0, 0};                // timestamp to throttle
 // ============================================================
 // 🧩 SECTION: HARDWARE CONFIGURATION & CONSTANTS
 // ============================================================
-
-// -------------------- SYSTEM DEFINES --------------------
-#define DEBUG_SERIAL true
-#define FIRMWARE_VERSION "v1.0-RebuildStep1"
-#define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
 
 // --- MCP23017 ---
 #define MCP_I2C_ADDR 0x27 // DIP-switch address
@@ -79,9 +78,15 @@ IPAddress ipS3(192, 168, 1, 13);  // Station 3
 IPAddress ipS4(192, 168, 1, 14);  // Station 4
 IPAddress ipS5(192, 168, 1, 15);  // Station 5
 
-// -------------------- BUZZER --------------------
+// ============================================================
+// 🔔 BUZZER + VACUUM ALERT STATE
+// ============================================================
 #define PIN_BUZZER 2
-#define LEDPAIR_BUZZER 21
+
+bool anyVacuumAlert = false;          // set true when any vacuum fault detected
+const uint8_t BUZZER_SWITCH_IDX = 21; // index in stableState[]
+#define BUZZER_LED_PAIR 21            // LED pair index
+
 #define BUZZER_QUEUE_SIZE 8
 #define BUZZER_BLINK_MS 150 // blink period during active alarm
 
@@ -90,6 +95,16 @@ IPAddress ipS5(192, 168, 1, 15);  // Station 5
 #define NUM_INPUTS 8 // only the physical ones read directly
 #define NUM_LED_PAIRS 24
 #define TOTAL_INPUTS (NUM_INPUTS + 16) // 8 physical + 16 MCP
+
+#if BUZZER_REMINDER
+// --- BUZZER REMINDER TIMING ---
+uint32_t buzzerTimer = 0;
+bool buzzerPulseActive = false;
+
+// Reminder timing
+const uint32_t REMINDER_PERIOD_MS = 5000; // total cycle length (5 seconds for now)
+const uint32_t REMINDER_ON_MS = 1000;     // buzzer ON duration inside cycle (1 second)
+#endif
 
 // ============================================================
 // 🧩 Unified Debounce System (for all physical + MCP inputs)
@@ -465,7 +480,7 @@ uint8_t buzzerQueuePop()
 //   {
 //     // Switch OFF → silence and clear queue
 //     digitalWrite(PIN_BUZZER, LOW);
-//     LED_PAIR(LEDPAIR_BUZZER, LOW, HIGH);
+//     LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
 //     for (uint8_t s = 0; s < NUM_STATIONS; s++)
 //       lastQueuedMs[s] = 0;
 //     buzzerActive = false;
@@ -499,7 +514,7 @@ uint8_t buzzerQueuePop()
 //       if (now - beepTimer >= dur)
 //       {
 //         digitalWrite(PIN_BUZZER, LOW);
-//         LED_PAIR(LEDPAIR_BUZZER, LOW, LOW);
+//         LED_PAIR(BUZZER_LED_PAIR, LOW, LOW);
 //         buzzerOn = false;
 //         beepTimer = now;
 //         beepStep++;
@@ -512,7 +527,7 @@ uint8_t buzzerQueuePop()
 //       {
 //         // start next beep
 //         digitalWrite(PIN_BUZZER, HIGH);
-//         LED_PAIR(LEDPAIR_BUZZER, HIGH, LOW);
+//         LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
 //         buzzerOn = true;
 //         beepTimer = now;
 //       }
@@ -520,7 +535,7 @@ uint8_t buzzerQueuePop()
 //       {
 //         // finished this pattern
 //         digitalWrite(PIN_BUZZER, LOW);
-//         LED_PAIR(LEDPAIR_BUZZER, LOW, HIGH);
+//         LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
 //         buzzerActive = false;
 //         beepTimer = now + 400; // 400 ms pause before next queued pattern
 //       }
@@ -529,7 +544,7 @@ uint8_t buzzerQueuePop()
 //   else
 //   {
 //     // idle: steady green
-//     LED_PAIR(LEDPAIR_BUZZER, LOW, HIGH);
+//     LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
 //   }
 
 //   // --- Update global blink phase every BUZZER_BLINK_MS ---
@@ -659,7 +674,7 @@ void updateEthernetAndLEDs(uint32_t now)
     return;
   }
 
-  bool anyVacuumAlert = false; // Reset -> recheck below
+  anyVacuumAlert = false; // Reset -> recheck below
 
   // 3️⃣ Link Up → unified LED update
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
@@ -701,15 +716,7 @@ void updateEthernetAndLEDs(uint32_t now)
              bitVal ? LOW : HIGH); // GREEN when relay on
   }
 
-  // Later: trigger buzzer LED pair 21 if any alert
-  if (anyVacuumAlert)
-  {
-    LED_PAIR(21, blinkPhase ? HIGH : LOW, LOW); // red blink
-  }
-  else
-  {
-    LED_PAIR(21, LOW, HIGH); // green OK
-  }
+  // 🔕 Buzzer LED (pair 21) is handled by updateBuzzerLED()
 }
 
 // -------------------------------------------------------------------
@@ -1016,95 +1023,6 @@ void sendAllStations()
         Serial.println(packed, BIN););
   }
 }
-// ============================================================
-// ============================================================
-// ============================================================
-/*
-void sendAllStations()
-{
-  struct StationConfig
-  {
-    uint8_t id;        // Station number (0–5)
-    uint8_t startIdx;  // Index in stableState[] where its switches begin
-    uint8_t numInputs; // How many switches it reads
-    IPAddress ip;      // Station IP
-  };
-
-  // ---------------- Station mapping table ----------------
-  const StationConfig stations[NUM_STATIONS] = {
-      {0, 0, 2, ipS0},  // Station 0: indices 0–1
-      {1, 2, 6, ipS1},  // Station 1: indices 2–7
-      {2, 8, 4, ipS2},  // Station 2: indices 8–11
-      {3, 12, 4, ipS3}, // Station 3: indices 12–15
-      {4, 16, 3, ipS4}, // Station 4: indices 16–18
-      {5, 19, 2, ipS5}  // Station 5: indices 19–20
-  };
-
-  // ---------------- Iterate over all stations -------------
-  for (uint8_t i = 0; i < NUM_STATIONS; i++)
-  {
-    const StationConfig &st = stations[i];
-
-    // Skip disabled or offline stations
-    if (!stationEnabled[st.id] || stationOffline[st.id])
-      continue;
-
-    bool stateBits[8] = {0};
-
-    // ============================================================
-    // 🧩 Per-switch scan and thermostat override logic
-    // ============================================================
-    for (uint8_t j = 0; j < st.numInputs; j++)
-    {
-      uint8_t idx = st.startIdx + j; // Map local index → global input index
-      bool val = stableState[idx];   // Current state from stableState[]
-
-#if ENABLE_THERMOSTAT
-      // 🌡️ Thermostat override block
-      for (uint8_t t = 0; t < 2; t++)
-      {
-        if (ENABLE_THERMOSTAT && thermostatEnabled[t] && thermostatActive[t])
-        {
-          for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
-          {
-            if (idx == TH_OVERRIDE_IDX[t][k])
-            {
-              val = true; // forced ON (LOW) -> Inverted
-              break;
-            }
-          }
-        }
-      }
-#endif
-
-      stateBits[j] = val; // Save the final (possibly overridden) state
-    }
-
-    // ============================================================
-    // 📨 Pack bits and send to station
-    // ============================================================
-    uint8_t packedBits = packBitsLSB(stateBits, st.numInputs);
-
-    // TEMP DEBUG
-    DBG(4,
-        Serial.print(F("[DBG-IN] Station "));
-        Serial.print(st.id);
-        Serial.print(F(" raw bits: "));
-        for (uint8_t j = 0; j < st.numInputs; j++)
-            Serial.print(stateBits[j]);
-        Serial.println(););
-    // TEMP DEBUG - END
-
-    sendSetFrame(st.ip, st.id, packedBits);
-
-    DBG(3,
-        Serial.print(F("[TX] Sent → Station "));
-        Serial.print(st.id);
-        Serial.print(F(" bits="));
-        Serial.println(packedBits, BIN););
-  }
-}
-*/
 
 // ============================================================
 // 🛰️  SECTION: Send Commands to Stations
@@ -1340,6 +1258,161 @@ void updateThermostatStatus()
     }
   }
 }
+
+// -------------------------------------------------------------------
+// FUNCTION: updateBuzzerLED()
+// PURPOSE : Controls LED pair 21 and buzzer pin according to the
+//           vacuum alert and buzzer enable switch.
+// -------------------------------------------------------------------
+void updateBuzzerLED(uint32_t now)
+{
+  // Don't interfere if link is down.
+  // When linkDown, updateEthernetAndLEDs() owns LEDs, and we also don't beep.
+  if (Ethernet.linkStatus() != LinkON)
+  {
+    // Make sure buzzer is off while offline
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+
+  // --- read buzzer switch state ---
+  // Assuming active HIGH logic:
+  //   switchOn = true  → operator armed/allowed
+  //   switchOn = false → operator muted
+  bool switchOn = stableState[BUZZER_SWITCH_IDX]; // <-- adjust this index if needed
+
+  // --- priority 1: Active vacuum alert ---
+  // Alarm behavior: if alert + switch allowed, siren ON and LED flashing red.
+  if (anyVacuumAlert)
+  {
+    // LED pair 21 blinks RED, buzzer ON solid
+    LED_PAIR(BUZZER_LED_PAIR,
+             blinkPhase ? HIGH : LOW, // blink red
+             LOW);                    // green off
+
+    if (switchOn)
+    {
+      digitalWrite(PIN_BUZZER, HIGH); // sound ON
+    }
+
+    return;
+  }
+
+  // --- priority 2: No vacuum alert, switch OFF → reminder beep mode ---
+  // We ONLY consider reminder if:
+  //  - reminder feature compiled in
+  //  - switch is OFF
+  //  - no alert
+#if BUZZER_REMINDER
+  if (!switchOn)
+  {
+    // Periodic reminder: ON for REMINDER_ON_MS every REMINDER_PERIOD_MS
+    static uint32_t reminderStartMs = 0;
+    static bool reminderInit = false;
+
+    if (!reminderInit)
+    {
+      reminderStartMs = now;
+      reminderInit = true;
+    }
+
+    uint32_t elapsed = now - reminderStartMs;
+    if (elapsed >= REMINDER_PERIOD_MS)
+    {
+      // restart cycle
+      reminderStartMs = now;
+      elapsed = 0;
+    }
+
+    bool inBeepWindow = (elapsed < REMINDER_ON_MS); // first 1s of each cycle
+
+    // LED logic here when muted and no alert:
+    // solid RED during the beep window,
+    // solid GREEN the rest of the time.
+    if (inBeepWindow)
+    {
+      // LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid RED
+      digitalWrite(PIN_BUZZER, HIGH); // chirp ON
+    }
+    else
+    {
+      // LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH); // solid GREEN
+      digitalWrite(PIN_BUZZER, LOW); // chirp OFF
+    }
+
+    return;
+  }
+#endif
+
+  // --- priority 3: No vacuum alert, switch ON → system armed and healthy ---
+  // steady GREEN, buzzer silent
+  if (switchOn)
+  {
+    LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH); // solid GREEN
+    digitalWrite(PIN_BUZZER, LOW);
+
+    return;
+
+    // --- priority 4: No vacuum alert, switch OFF (and we either disabled reminder or #if 0) ---
+    // We want solid RED LED, buzzer OFF.
+  }
+  else
+  {
+    LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid RED
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+
+  // Fallback safety: buzzer off, LED green
+  LED_PAIR(BUZZER_LED_PAIR, LOW, LOW);
+  digitalWrite(PIN_BUZZER, LOW);
+}
+/*
+// -------------------------------------------------------------------
+// -------------------------------------------------------------------
+// -------------------------------------------------------------------
+void updateBuzzerLED(uint32_t now)
+{
+  // --- Returns if Main Controller disconnected
+  if (Ethernet.linkStatus() != LinkON)
+    return; // 🔕 Let updateEthernetAndLEDs() control all LEDs
+
+  bool buzzerSwitch = stableState[BUZZER_SWITCH_IDX]; // active LOW
+
+  // --- 🧩 CASE 1: Any vacuum alert active ---
+  if (anyVacuumAlert)
+  {
+    // LED blinks red only, never green
+    LED_PAIR(BUZZER_LED_PAIR,
+             blinkPhase ? HIGH : LOW, // red blinks
+             LOW);                    // green always off
+
+    // buzzer ON only if switch is ON
+    digitalWrite(PIN_BUZZER, buzzerSwitch ? HIGH : LOW);
+    return;
+  }
+
+  // --- 🧩 CASE 2: No vacuum alert ---
+  digitalWrite(PIN_BUZZER, LOW); // always off if no alert
+
+  if (buzzerSwitch)
+  {
+    // Switch ON → solid green
+    LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
+  }
+  else
+  {
+    // Switch OFF → solid red
+    LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
+  }
+
+  DBG(3,
+      Serial.print(F("[BUZZ] Switch="));
+      Serial.print(buzzerSwitch);
+      Serial.print(F(" Alert="));
+      Serial.println(anyVacuumAlert););
+}
+*/
 
 // --------------------------------------------------------------
 // 🎰 Vegas Mode LED Test Sequence
@@ -1755,17 +1828,20 @@ void loop()
   // 2️⃣ Process incoming packets
   processHeartbeatAndFeedback(now);
 
-  // Long press for station enable / disable
-  handleStationEnableLongPress(now);
-
-  // Thermostat
-  updateThermostatStatus();
-
   // 3️⃣ Update station online/offline
   updateHeartbeatStatus(now);
 
+  // Long press for station enable / disable
+  handleStationEnableLongPress(now);
+
   // 4️⃣ Update LEDs + Ethernet status
-  updateEthernetAndLEDs(now);
+  updateEthernetAndLEDs(now); // sets anyVacuumAlert + regular LEDs
+
+  // Buzzer
+  updateBuzzerLED(now); // overrides LED 21 + drives buzzer
+
+  // Thermostat
+  updateThermostatStatus(); // (this already bails when link down)
 
   // --------------------------------------------------
   // 5️⃣ SEND COMMAND FRAMES TO STATIONS
