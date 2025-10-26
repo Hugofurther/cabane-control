@@ -10,6 +10,7 @@
 #define DEBUG_LEVEL 3       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 #define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
+#define BUZZER_RYTHM 0
 
 // ============================================================
 // 🧩 SECTION: INCLUDE LIBRARIES
@@ -87,24 +88,68 @@ bool anyVacuumAlert = false;          // set true when any vacuum fault detected
 const uint8_t BUZZER_SWITCH_IDX = 21; // index in stableState[]
 #define BUZZER_LED_PAIR 21            // LED pair index
 
+#if BUZZER_RYTHM
+                                      // ========================
+// 🔊 BUZZER RHYTHM FEATURE
+// ========================
+// Base timing (all in milliseconds)
+#define BUZZER_BEEP_BASE_MS 200              // base length for 1-beep pattern
+#define BUZZER_BREAK_MS 120                  // pause between beeps
+#define BUZZER_PAUSE_BETWEEN_STATIONS_MS 600 // short silence between station sequences
+
+// uint8_t activeVacuumStations[NUM_STATIONS];
+// uint8_t activeVacuumCount = 0;
+
+struct BeepPattern
+{
+  uint8_t count;     // how many beeps
+  uint16_t duration; // ON duration per beep
+};
+
+const BeepPattern buzzerPatterns[] = {
+    {1, 300}, // Station 1: 1 long beep
+    {2, 180}, // Station 2: 2 medium beeps
+    {3, 120}, // Station 3: 3 short beeps
+    {4, 100}  // Station 4: 4 very short beeps
+};
+
+// small ring buffer of stations with active vacuum alarms
+#define BUZZER_MAX_QUEUE 4
+static uint8_t buzzerQueue[BUZZER_MAX_QUEUE];
+static uint8_t buzzerQueueLen = 0;
+static uint8_t buzzerQueueIdx = 0;
+
+// runtime state
+static bool buzzerPlaying = false;
+static bool buzzerOnPhase = false;
+static uint8_t currentBeepCount = 0;
+static bool lastVacuumAlert = false;
+
+////////////////////////
+
+// --- initialize queue only when entering alert mode ---
+
+static bool lastBuzzerPlaying = false;
+
+#endif
+
 #define BUZZER_QUEUE_SIZE 8
-#define BUZZER_BLINK_MS 150 // blink period during active alarm
+// #define BUZZER_BLINK_MS 150 // blink period during active alarm
+
+#if BUZZER_REMINDER
+// --- BUZZER REMINDER TIMING ---
+bool buzzerPulseActive = false;
+uint32_t buzzerTimer = 0;
+// Reminder timing
+const uint32_t REMINDER_PERIOD_MS = 5000; // total cycle length (5 seconds for now)
+const uint32_t REMINDER_ON_MS = 1000;     // buzzer ON duration inside cycle (1 second)
+#endif
 
 // -------------------- INPUT / OUTPUT COUNTS --------------------
 #define NUM_STATIONS 6
 #define NUM_INPUTS 8 // only the physical ones read directly
 #define NUM_LED_PAIRS 24
 #define TOTAL_INPUTS (NUM_INPUTS + 16) // 8 physical + 16 MCP
-
-#if BUZZER_REMINDER
-// --- BUZZER REMINDER TIMING ---
-uint32_t buzzerTimer = 0;
-bool buzzerPulseActive = false;
-
-// Reminder timing
-const uint32_t REMINDER_PERIOD_MS = 5000; // total cycle length (5 seconds for now)
-const uint32_t REMINDER_ON_MS = 1000;     // buzzer ON duration inside cycle (1 second)
-#endif
 
 // ============================================================
 // 🧩 Unified Debounce System (for all physical + MCP inputs)
@@ -397,7 +442,6 @@ uint32_t tSend = 0;
 uint32_t lastLinkCheck = 0;
 
 // --- Buzzer queue ---
-uint8_t buzzerQueue[BUZZER_QUEUE_SIZE];
 uint8_t buzzerHead = 0, buzzerTail = 0;
 
 // --- Buzzer state ---
@@ -418,12 +462,6 @@ uint32_t lastQueuedMs[NUM_STATIONS] = {0}; // per-station re-queue cooldown
 // ============================================================
 // 🏛️ SECTION: Helper Structures
 // ============================================================
-// ------------------------ BUZZER RHYTHM LOGIC ------------------------
-struct BeepPattern
-{
-  uint8_t count;    // number of beeps
-  uint16_t baseDur; // base duration of one beep
-};
 
 // ----------------------------- VACUUM ALERT MAPPING -----------------------------
 struct VacuumMap
@@ -437,15 +475,7 @@ struct VacuumMap
 // ============================================================
 // 🚨 SECTION: Buzzer System Core
 // ============================================================
-
-// ------------------------ BeepPattern table ------------------------
-const BeepPattern STATION_BEEP[4] = {
-    {1, 600}, // Station 1 (1 long beep)
-    {2, 200}, // Station 2 (2 semi-long)
-    {3, 120}, // Station 3 (3 short)
-    {4, 85}   // Station 4 (5 short, roughly x/7 base)
-};
-
+#if BUZZER_RYTHM
 // ------------------------ BUZZER QUEUE SYSTEM ------------------------
 bool buzzerQueueEmpty() { return buzzerHead == buzzerTail; }
 bool buzzerQueueFull() { return ((buzzerTail + 1) % BUZZER_QUEUE_SIZE) == buzzerHead; }
@@ -465,7 +495,7 @@ uint8_t buzzerQueuePop()
   buzzerHead = (buzzerHead + 1) % BUZZER_QUEUE_SIZE;
   return st;
 }
-
+#endif
 // -------------------------------------------------------------------
 // FUNCTION: updateBuzzer()
 // PURPOSE : Handles buzzer queue processing and LED synchronization.
@@ -676,6 +706,11 @@ void updateEthernetAndLEDs(uint32_t now)
 
   anyVacuumAlert = false; // Reset -> recheck below
 
+#if BUZZER_RYTHM
+  uint8_t vacuumAlertList[NUM_STATIONS];
+  uint8_t alertCount = 0;
+#endif
+
   // 3️⃣ Link Up → unified LED update
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
   {
@@ -704,6 +739,17 @@ void updateEthernetAndLEDs(uint32_t now)
     if (m.isVacuum && switchOn && bitVal)
     { // bitVal==1 means loss of vacuum
       anyVacuumAlert = true;
+
+#if BUZZER_RYTHM
+      // queue unique station if not already present
+      bool exists = false;
+      for (uint8_t q = 0; q < alertCount; q++)
+        if (vacuumAlertList[q] == m.station)
+          exists = true;
+      if (!exists && alertCount < NUM_STATIONS)
+        vacuumAlertList[alertCount++] = m.station;
+#endif
+
       LED_PAIR(m.ledPair,
                blinkPhase ? HIGH : LOW, // blink red
                LOW);
@@ -1259,54 +1305,157 @@ void updateThermostatStatus()
   }
 }
 
+// ---------- Buzzer Rythm ----------
+#if BUZZER_RYTHM
+void resetBuzzerQueue()
+{
+  buzzerQueueLen = 0;
+  buzzerQueueIdx = 0;
+}
+
+void enqueueBuzzerStation(uint8_t station)
+{
+  for (uint8_t i = 0; i < buzzerQueueLen; i++)
+    if (buzzerQueue[i] == station)
+      return; // avoid duplicates
+  if (buzzerQueueLen < BUZZER_MAX_QUEUE)
+    buzzerQueue[buzzerQueueLen++] = station;
+}
+#endif
+
 // -------------------------------------------------------------------
 // FUNCTION: updateBuzzerLED()
 // PURPOSE : Controls LED pair 21 and buzzer pin according to the
 //           vacuum alert and buzzer enable switch.
 // -------------------------------------------------------------------
+
 void updateBuzzerLED(uint32_t now)
 {
-  // Don't interfere if link is down.
-  // When linkDown, updateEthernetAndLEDs() owns LEDs, and we also don't beep.
+  // ============================================================
+  // 1️⃣ Link Check — If link is DOWN, Ethernet code owns LEDs.
+  // Also never beep while offline.
+  // ============================================================
   if (Ethernet.linkStatus() != LinkON)
   {
-    // Make sure buzzer is off while offline
     digitalWrite(PIN_BUZZER, LOW);
+#if BUZZER_RYTHM
+    buzzerPlaying = false;
+    resetBuzzerQueue();
+#endif
     return;
   }
 
-  // --- read buzzer switch state ---
-  // Assuming active HIGH logic:
-  //   switchOn = true  → operator armed/allowed
-  //   switchOn = false → operator muted
-  bool switchOn = stableState[BUZZER_SWITCH_IDX]; // <-- adjust this index if needed
+  // ============================================================
+  // 2️⃣ Read Operator Buzzer Switch
+  // switchOn == true  -> allowed to make noise
+  // switchOn == false -> muted
+  // ============================================================
+  bool switchOn = stableState[BUZZER_SWITCH_IDX];
+  bool alert = anyVacuumAlert;
 
-  // --- priority 1: Active vacuum alert ---
-  // Alarm behavior: if alert + switch allowed, siren ON and LED flashing red.
-  if (anyVacuumAlert)
+  // ============================================================
+  // 3️⃣ If we have ANY vacuum alert
+  // LED 21 takes alarm look. Buzzer behavior depends on mode.
+  // ============================================================
+  if (alert && switchOn)
   {
-    // LED pair 21 blinks RED, buzzer ON solid
-    LED_PAIR(BUZZER_LED_PAIR,
-             blinkPhase ? HIGH : LOW, // blink red
-             LOW);                    // green off
-
-    if (switchOn)
+#if BUZZER_RYTHM
+    // initialize once when entering alert mode
+    if (!lastVacuumAlert)
     {
-      digitalWrite(PIN_BUZZER, HIGH); // sound ON
+      resetBuzzerQueue();
+
+      // enqueueBuzzerStation(stationId) will skip dupes
+      if (!(stationFeedback[1] & (1 << 2)))
+        enqueueBuzzerStation(1); // station1 vacuum fail?
+      if (!(stationFeedback[2] & (1 << 1)))
+        enqueueBuzzerStation(2); // station2 vacuum fail?
+      if (!(stationFeedback[3] & (1 << 2)))
+        enqueueBuzzerStation(3); // station3 vacuum fail?
+      if (!(stationFeedback[4] & (1 << 1)))
+        enqueueBuzzerStation(4); // station4 vacuum fail?
+
+      buzzerPlaying = (buzzerQueueLen > 0);
+      buzzerQueueIdx = 0;
+      currentBeepCount = 0;
+      buzzerOnPhase = false;
+      buzzerTimer = now - BUZZER_BREAK_MS; // start immediately
     }
 
-    return;
+    // ===== Rhythm player state machine =====
+    if (buzzerPlaying && buzzerQueueLen > 0)
+    {
+      uint8_t st = buzzerQueue[buzzerQueueIdx];
+      const BeepPattern &pat = buzzerPatterns[st - 1];
+
+      if (!buzzerOnPhase)
+      {
+        if (now - buzzerTimer >= BUZZER_BREAK_MS)
+        {
+          digitalWrite(PIN_BUZZER, HIGH);
+          buzzerOnPhase = true;
+          buzzerTimer = now;
+          currentBeepCount++;
+        }
+      }
+      else
+      {
+        if (now - buzzerTimer >= pat.duration)
+        {
+          digitalWrite(PIN_BUZZER, LOW);
+          buzzerOnPhase = false;
+          buzzerTimer = now;
+
+          if (currentBeepCount >= pat.count)
+          {
+            currentBeepCount = 0;
+            buzzerQueueIdx++;
+
+            // if end reached → loop back
+            if (buzzerQueueIdx >= buzzerQueueLen)
+            {
+              buzzerQueueIdx = 0;
+              buzzerTimer = now + BUZZER_PAUSE_BETWEEN_STATIONS_MS;
+            }
+          }
+        }
+      }
+    }
+    else
+    {
+      digitalWrite(PIN_BUZZER, LOW);
+      buzzerPlaying = false;
+    }
+#else
+    // --- BUZZER_RYTHM == 0 path ---
+    // Simple: solid tone while alert is active and switch is on.
+    digitalWrite(PIN_BUZZER, HIGH);
+#endif
+
+    // LED always blinks red when in alert
+    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
   }
 
-  // --- priority 2: No vacuum alert, switch OFF → reminder beep mode ---
-  // We ONLY consider reminder if:
-  //  - reminder feature compiled in
-  //  - switch is OFF
-  //  - no alert
-#if BUZZER_REMINDER
-  if (!switchOn)
+  // ---------------- MUTE MODE ----------------
+  else if (alert && !switchOn)
   {
-    // Periodic reminder: ON for REMINDER_ON_MS every REMINDER_PERIOD_MS
+    // operator muted during alarm
+    digitalWrite(PIN_BUZZER, LOW);
+#if BUZZER_RYTHM
+    buzzerPlaying = false;
+    resetBuzzerQueue();
+#endif
+    // LED always blinks red when in alert
+    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
+  }
+
+  // ============================================================
+  // 5️⃣ Reminder chirp (mute warning)
+  //    Only applies when switchOff && no alert
+  // ============================================================
+#if BUZZER_REMINDER
+  else if (!alert && !switchOn)
+  {
     static uint32_t reminderStartMs = 0;
     static bool reminderInit = false;
 
@@ -1319,100 +1468,47 @@ void updateBuzzerLED(uint32_t now)
     uint32_t elapsed = now - reminderStartMs;
     if (elapsed >= REMINDER_PERIOD_MS)
     {
-      // restart cycle
       reminderStartMs = now;
       elapsed = 0;
     }
 
-    bool inBeepWindow = (elapsed < REMINDER_ON_MS); // first 1s of each cycle
+    bool inBeepWindow = (elapsed < REMINDER_ON_MS);
 
-    // LED logic here when muted and no alert:
-    // solid RED during the beep window,
-    // solid GREEN the rest of the time.
     if (inBeepWindow)
     {
-      // LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid RED
-      digitalWrite(PIN_BUZZER, HIGH); // chirp ON
+      // short chirp + solid RED
+      LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
+      digitalWrite(PIN_BUZZER, HIGH);
     }
     else
     {
-      // LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH); // solid GREEN
-      digitalWrite(PIN_BUZZER, LOW); // chirp OFF
+      // idle GREEN + buzzer OFF
+      LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
+      digitalWrite(PIN_BUZZER, LOW);
     }
 
     return;
   }
 #endif
 
-  // --- priority 3: No vacuum alert, switch ON → system armed and healthy ---
-  // steady GREEN, buzzer silent
-  if (switchOn)
-  {
-    LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH); // solid GREEN
-    digitalWrite(PIN_BUZZER, LOW);
-
-    return;
-
-    // --- priority 4: No vacuum alert, switch OFF (and we either disabled reminder or #if 0) ---
-    // We want solid RED LED, buzzer OFF.
-  }
+  // ---------------- NO ALERT ----------------
   else
   {
-    LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid RED
     digitalWrite(PIN_BUZZER, LOW);
-    return;
+#if BUZZER_RYTHM
+    buzzerPlaying = false;
+    resetBuzzerQueue();
+#endif
+
+    // LED solid green if system armed, red if muted
+    LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
   }
 
-  // Fallback safety: buzzer off, LED green
-  LED_PAIR(BUZZER_LED_PAIR, LOW, LOW);
-  digitalWrite(PIN_BUZZER, LOW);
+// ---------------- STATE MEMORY ----------------
+#if BUZZER_RYTHM
+  lastVacuumAlert = alert;
+#endif
 }
-/*
-// -------------------------------------------------------------------
-// -------------------------------------------------------------------
-// -------------------------------------------------------------------
-void updateBuzzerLED(uint32_t now)
-{
-  // --- Returns if Main Controller disconnected
-  if (Ethernet.linkStatus() != LinkON)
-    return; // 🔕 Let updateEthernetAndLEDs() control all LEDs
-
-  bool buzzerSwitch = stableState[BUZZER_SWITCH_IDX]; // active LOW
-
-  // --- 🧩 CASE 1: Any vacuum alert active ---
-  if (anyVacuumAlert)
-  {
-    // LED blinks red only, never green
-    LED_PAIR(BUZZER_LED_PAIR,
-             blinkPhase ? HIGH : LOW, // red blinks
-             LOW);                    // green always off
-
-    // buzzer ON only if switch is ON
-    digitalWrite(PIN_BUZZER, buzzerSwitch ? HIGH : LOW);
-    return;
-  }
-
-  // --- 🧩 CASE 2: No vacuum alert ---
-  digitalWrite(PIN_BUZZER, LOW); // always off if no alert
-
-  if (buzzerSwitch)
-  {
-    // Switch ON → solid green
-    LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
-  }
-  else
-  {
-    // Switch OFF → solid red
-    LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
-  }
-
-  DBG(3,
-      Serial.print(F("[BUZZ] Switch="));
-      Serial.print(buzzerSwitch);
-      Serial.print(F(" Alert="));
-      Serial.println(anyVacuumAlert););
-}
-*/
 
 // --------------------------------------------------------------
 // 🎰 Vegas Mode LED Test Sequence
