@@ -99,6 +99,12 @@ EthernetUDP Udp;
 EthernetLinkStatus linkStatus;
 static bool linkIsUp = true;
 
+// -------------------- NETWORK ID HANDLING --------------------
+uint8_t pendingID = 0;                   // Temporary ID shown while cycling
+uint32_t lastButtonTime = 0;             // Timestamp of last button press
+const uint16_t RECONFIG_DELAY_MS = 1500; // Wait 1.5 s after last press to apply
+bool reconfigPending = false;            // True when waiting to apply new ID
+
 // -------------------- TIMING --------------------
 
 const uint16_t HEARTBEAT_MS = 500;
@@ -163,11 +169,12 @@ bool readAnalogFeedbackA6()
 // ============================================================
 enum DisplayMode
 {
-  DISP_NORMAL, // show station number + colon heartbeat
-  DISP_ERROR,  // show "ErrX" blinking
-  DISP_LINK,   // show "LInk" blinking
-  DISP_NETCFG, // 🚀 new: blinking number during network reconfig
-  DISP_VEGAS   // startup LED test animation
+  DISP_NORMAL,    // show station number + colon heartbeat
+  DISP_ERROR,     // show "ErrX" blinking
+  DISP_LINK,      // show "LInk" blinking
+  DISP_SCROLLING, // 👈 new mode for quick station cycling
+  DISP_NETCFG,    // 🚀 new: blinking number during network reconfig
+  DISP_VEGAS      // startup LED test animation
 
 };
 
@@ -176,6 +183,7 @@ bool displayFlash = false; // blink toggle for ERR
 uint32_t lastDisplayBlinkMs = 0;
 const uint16_t DISPLAY_BLINK_MS = 1000; // 1s blink interval
 const uint16_t NETCFG_BLINK_MS = 250;   // ⚡ fast blink for network reconfig
+uint32_t scrollDisplayHoldUntil = 0;
 
 // Track if we have Ethernet link & valid commands
 bool ethernetLinkOK = false;
@@ -194,6 +202,37 @@ void updateDisplay(uint32_t now)
   }
   // TEST TEST TEST TEST
 #if HAS_TM1637
+
+  // ============================================================
+  // 🟩 PRIORITY OVERRIDE: Show pending station scroll number
+  // ============================================================
+  static int lastShownScrollID = -1;
+  static uint32_t lastScrollUpdate = 0;
+  const uint16_t SCROLL_UPDATE_INTERVAL = 200; // ms, prevents flicker
+
+  if(reconfigPending)
+  {
+    static int lastShownScrollID = -1;
+    static uint32_t lastScrollUpdate = 0;
+    const uint16_t SCROLL_UPDATE_INTERVAL = 200; // ms, prevents flicker
+
+    if (pendingID != lastShownScrollID || (millis() - lastScrollUpdate) > SCROLL_UPDATE_INTERVAL)
+    {
+      lastShownScrollID = pendingID;
+      lastScrollUpdate = millis();
+
+#if HAS_TM1637
+      // 🔹 Clear only once per update (so digits to the right reset cleanly)
+      display.clear();
+      // 🔹 Show leftmost digit only
+      display.showNumberDecEx(pendingID, 0, false, 1, 0);
+#endif
+    }
+
+    return; // Skip normal updates while scrolling through stations
+  }
+  // -----------------------------------------------------------
+
   // Blink timer
   uint16_t blinkInterval = DISPLAY_BLINK_MS;
   if (displayMode == DISP_NETCFG)
@@ -305,7 +344,8 @@ void reconfigureNetwork(bool fullReset = false)
   Udp.begin(UDP_PORT);
 
 #if DEBUG_SERIAL
-  Serial.println(F("[NET] Network reconfigured"));
+  Serial.print(F("[NET] Network reconfigured at "));
+  Serial.println(millis());
   Serial.print(F("IP: "));
   Serial.println(ip);
   Serial.print(F("MAC: ...:"));
@@ -328,6 +368,8 @@ void reconfigureNetwork(bool fullReset = false)
   else
     Serial.println(F("\n[NET] Link still down (timeout)"));
 #endif
+
+  tHeartbeat = millis() - HEARTBEAT_MS; // force immediate heartbeat
 
 #if HAS_TM1637
   // back to normal mode when link is up
@@ -376,62 +418,134 @@ void showStationID_Right()
 }
 #endif
 
+// ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+
 void checkButton()
 {
-  static uint32_t lastPress = 0;
-  static bool pressed = false;
+  static bool buttonPressed = false;
+  static uint32_t lastChangeTime = 0;
+  const uint16_t debounceDelay = 50; // ms
+  const int threshold = 200;         // analog level for "pressed"
+  uint32_t now = millis();
 
-  // --- Startup lockout to prevent accidental cycling ---
-  static bool startupLock = true;
-  static uint32_t startupTime = millis();
-  if (startupLock && millis() - startupTime < 3000)
-    return; // ignore for 3 sec
-  startupLock = false;
+  int analogValue = analogRead(BTN_PIN);
+  bool pressed = (analogValue < threshold);
 
-  int val = analogRead(BTN_PIN);
-  bool isPressed = (val < 200); // threshold for A7 (pull-up to +5V)
+  // --- Debounce logic ---
+  static bool stableState = false;
+  static bool lastReading = false;
 
-  if (!pressed && isPressed && millis() - lastPress > 150)
+  if (pressed != lastReading)
   {
-    lastPress = millis();
-    pressed = true;
-
-    STATION_ID++;
-    if (STATION_ID > 5)
-      STATION_ID = 0;
-    saveStationID(STATION_ID);
-
-#if HAS_TM1637
-    // ✅ Show new number immediately, left-aligned
-    showStationID_Left();
-    displayMode = DISP_NORMAL;
-#endif
-
-#if DEBUG_SERIAL
-    Serial.print(F("[BTN] Station ID set to "));
-    Serial.println(STATION_ID);
-    Serial.println(F("[NET] Reconfiguring network..."));
-#endif
-
-    // ✅ Reconfigure the Ethernet network (with optional reset)
-    reconfigureNetwork(true); // full reset + rebind IP/MAC
-
-#if HAS_TM1637
-    // ✅ After network is ready, show right-aligned confirmation
-    showStationID_Right();
-    delay(500); // brief visual pause
-    displayMode = DISP_NORMAL;
-#endif
-
-#if DEBUG_SERIAL
-    Serial.println(F("[NET] Network reconfiguration complete."));
-#endif
+    lastChangeTime = now;
   }
-  else if (!isPressed)
+
+  if ((now - lastChangeTime) > debounceDelay)
   {
-    pressed = false;
+    if (pressed != stableState)
+    {
+      stableState = pressed;
+
+      if (stableState)
+      {
+        // ✅ Button press detected
+        pendingID++;
+        if (pendingID > 5)
+          pendingID = 0;
+
+#if HAS_TM1637
+        displayMode = DISP_SCROLLING;             // 👈 tell display manager we’re in scroll mode
+        scrollDisplayHoldUntil = millis() + 1000; // keep scrolling display visible for 1 s
+#endif
+
+#if DEBUG_SERIAL
+        Serial.print(F("[BTN] Press detected. New pendingID="));
+        Serial.println(pendingID);
+#endif
+
+        lastButtonTime = now;
+        reconfigPending = true;
+      }
+    }
+  }
+
+  lastReading = pressed;
+
+  // --- Apply after idle delay (1.5 s) ---
+  if (reconfigPending && (now - lastButtonTime >= RECONFIG_DELAY_MS))
+  {
+    reconfigPending = false;
+
+    if (pendingID != STATION_ID)
+    {
+#if DEBUG_SERIAL
+      Serial.print(F("[NET] Applying new Station ID="));
+      Serial.println(pendingID);
+#endif
+
+      STATION_ID = pendingID;
+      saveStationID(STATION_ID);
+
+#if HAS_TM1637
+      // Move number to right to confirm
+      display.clear();
+      display.showNumberDecEx(STATION_ID, 0, false, 1, 3);
+#endif
+
+      reconfigureNetwork(true);
+    }
   }
 }
+
+// ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+// ------------------------------------------------------------------------
+// void checkButton()
+// {
+//   static uint32_t lastPress = 0;
+//   static bool pressed = false;
+
+//   // Read analog input
+//   int val = analogRead(BTN_PIN);
+//   bool isPressed = (val < 200); // threshold for pressed
+
+//   if (!pressed && isPressed && millis() - lastPress > 150)
+//   {
+//     lastPress = millis();
+//     pressed = true;
+
+//     // Instantly cycle station ID (fast user response)
+//     STATION_ID++;
+//     if (STATION_ID > 5)
+//       STATION_ID = 0;
+
+//     saveStationID(STATION_ID);
+
+// #if HAS_TM1637
+//     showStationID_Left();
+//     displayMode = DISP_NORMAL;
+// #endif
+
+// #if DEBUG_SERIAL
+//     Serial.print(F("[BTN] Clicked at "));
+//     Serial.println(millis());
+//     Serial.print(F("[BTN] Station ID → "));
+//     Serial.println(STATION_ID);
+// #endif
+
+//     // Record time of last button activity
+//     lastButtonActivity = millis();
+
+//     // Flag pending reconfiguration — handled later in loop()
+//     pendingReconfig = true;
+//   }
+//   else if (!isPressed)
+//   {
+//     pressed = false;
+//   }
+// }
 
 void vegasMode()
 {
@@ -500,6 +614,9 @@ void setup()
     pinMode(IN_PINS[i], INPUT_PULLUP);
 
   loadStationID(); // ensure STATION_ID is valid first
+
+  pendingID = STATION_ID; // Start pendingID as current
+
 // Display settings
 #if HAS_TM1637
   display.setBrightness(0x0F);
@@ -649,7 +766,9 @@ void loop()
       uint8_t id = buf[1];
       if (id == STATION_ID || id == 255) // 255 = broadcast to all
       {
-        Serial.print(F("[RX←MAIN] Feedback request received for station "));
+        Serial.print("millis(): ");
+        Serial.println(millis());
+        Serial.print(F("[RX←MAIN] Feedback request received for station at "));
         Serial.println(id == 255 ? STATION_ID : id);
 
         // Force immediate feedback resend
