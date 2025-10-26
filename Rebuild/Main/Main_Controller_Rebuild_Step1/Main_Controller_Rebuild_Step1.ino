@@ -10,7 +10,6 @@
 #define DEBUG_LEVEL 3       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 #define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
-#define BUZZER_RYTHM 0
 
 // ============================================================
 // 🧩 SECTION: INCLUDE LIBRARIES
@@ -88,54 +87,7 @@ bool anyVacuumAlert = false;          // set true when any vacuum fault detected
 const uint8_t BUZZER_SWITCH_IDX = 21; // index in stableState[]
 #define BUZZER_LED_PAIR 21            // LED pair index
 
-#if BUZZER_RYTHM
-                                      // ========================
-// 🔊 BUZZER RHYTHM FEATURE
-// ========================
-// Base timing (all in milliseconds)
-#define BUZZER_BEEP_BASE_MS 200              // base length for 1-beep pattern
-#define BUZZER_BREAK_MS 120                  // pause between beeps
-#define BUZZER_PAUSE_BETWEEN_STATIONS_MS 600 // short silence between station sequences
-
-// uint8_t activeVacuumStations[NUM_STATIONS];
-// uint8_t activeVacuumCount = 0;
-
-struct BeepPattern
-{
-  uint8_t count;     // how many beeps
-  uint16_t duration; // ON duration per beep
-};
-
-const BeepPattern buzzerPatterns[] = {
-    {1, 300}, // Station 1: 1 long beep
-    {2, 180}, // Station 2: 2 medium beeps
-    {3, 120}, // Station 3: 3 short beeps
-    {4, 100}  // Station 4: 4 very short beeps
-};
-
-// small ring buffer of stations with active vacuum alarms
-#define BUZZER_MAX_QUEUE 4
-static uint8_t buzzerQueue[BUZZER_MAX_QUEUE];
-static uint8_t buzzerQueueLen = 0;
-static uint8_t buzzerQueueIdx = 0;
-
-// runtime state
-static bool buzzerPlaying = false;
-static bool buzzerOnPhase = false;
-static uint8_t currentBeepCount = 0;
-static bool lastVacuumAlert = false;
-
-////////////////////////
-
-// --- initialize queue only when entering alert mode ---
-
-static bool lastBuzzerPlaying = false;
-
-#endif
-
-#define BUZZER_QUEUE_SIZE 8
-// #define BUZZER_BLINK_MS 150 // blink period during active alarm
-
+// -------------------- BUZZER REMINDER --------------------
 #if BUZZER_REMINDER
 // --- BUZZER REMINDER TIMING ---
 bool buzzerPulseActive = false;
@@ -250,10 +202,9 @@ enum
   ST5
 };
 
-// -------------------------------------------
-// STATION-OFFLINE → LED pairs mapping
-// -------------------------------------------
-
+// ============================================================
+// 🎛️ FEEDBACK → LED Pair Mapping (granular)
+// ============================================================
 struct LedMap
 {
   uint8_t ledPair;       // which LED pair (0–23)
@@ -297,53 +248,6 @@ const LedMap LED_MAP[] = {
     {20, 5, 1, 5, 0, 20}, // pair 20: Station 5 A2, blink if ST5 offline - Vid ST5
 };
 const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
-
-// ============================================================
-// 🎛️ FEEDBACK → LED Pair Mapping (granular)
-// ============================================================
-// struct FeedbackMap
-// {
-//   uint8_t ledPair; // Which LED pair (0–23)
-//   uint8_t station; // Station ID (0–5)
-//   uint8_t bit;     // Bit position in stationFeedback[station]
-// };
-
-// // 🎛️ FEEDBACK → LED Pair Mapping
-// const FeedbackMap FEEDBACK_MAP[] = {
-//     // Station 0 A1 → used for Thermostat 1
-
-//     {0, 1, 0}, // Station 1 A1 → LED pair 0 - Vacuum 1
-//     {1, 1, 0}, // Station 1 A1 → LED pair 1 - Vacuum 2
-//     {2, 1, 1}, // Station 1 A2 → LED pair 2 - Transport Pump 1
-//     {3, 1, 2}, // Station 1 A3 → LED pair 3 - Transport Pump 2
-//     {4, 1, 3}, // Station 1 A4 → LED pair 4 - Vic T1
-//     {5, 1, 4}, // Station 1 A5 → LED pair 5 - Overture T2
-//     {6, 1, 5}, // Station 1 A6 → LED pair 6 - Vid T2
-// #if !DEBUG_SERIAL
-//     {7, 1, 6}, // Station 1 D1 → LED pair 7 - VId st2 -> St1
-// #endif
-
-//     {8, 2, 0},  // Station 2 A1 → LED pair 8 - Transport Pump
-//     {9, 2, 1},  // Station 2 A2 → LED pair 9 - Vacuum
-//     {10, 2, 2}, // Station 2 A3 → LED pair 10 - Vid ST1 -> ST2
-//     {11, 2, 3}, // Station 2 A4 → LED pair 11 - Vid ST3 -> ST2
-
-//     {12, 3, 0}, // Station 3 A1 → LED pair 12 - Transport Pump 1
-//     {13, 3, 1}, // Station 3 A2 → LED pair 13 - Transport Pump 2
-//     {14, 3, 2}, // Station 3 A3 → LED pair 14 - Vacuum
-//     {15, 3, 3}, // Station 3 A4 → LED pair 15 - Vid ST2 -> ST3
-
-//     // Station 4 A1 → used for Thermostat 2
-//     {16, 4, 1}, // Station 4 A2 → LED pair 16 - Transport Pump
-//     {17, 4, 2}, // Station 4 A3 → LED pair 17 - Vacuum
-//     {18, 4, 3}, // Station 4 A4 → LED pair 18 - Vid ST4
-
-//     {19, 5, 0}, // Station 5 A1 → LED pair 19 - Transport Pump
-//     {20, 5, 1}, // Station 5 A2 → LED pair 20 - Vid ST5
-//                 // Buzzer pair 21 is handled separately!
-//                 // Thermostat pairs 22–23 are handled separately!
-// };
-// const uint8_t FEEDBACK_MAP_COUNT = sizeof(FEEDBACK_MAP) / sizeof(FEEDBACK_MAP[0]);
 
 // ============================================================
 // 🧩 SECTION: MACROS
@@ -471,119 +375,6 @@ struct VacuumMap
   uint8_t stationID;      // source station for feedback
   uint8_t bitIndex[2];    // which bits in stationFeedback[] correspond
 };
-
-// ============================================================
-// 🚨 SECTION: Buzzer System Core
-// ============================================================
-#if BUZZER_RYTHM
-// ------------------------ BUZZER QUEUE SYSTEM ------------------------
-bool buzzerQueueEmpty() { return buzzerHead == buzzerTail; }
-bool buzzerQueueFull() { return ((buzzerTail + 1) % BUZZER_QUEUE_SIZE) == buzzerHead; }
-
-void buzzerQueuePush(uint8_t st)
-{
-  if (!buzzerQueueFull())
-  {
-    buzzerQueue[buzzerTail] = st;
-    buzzerTail = (buzzerTail + 1) % BUZZER_QUEUE_SIZE;
-  }
-}
-
-uint8_t buzzerQueuePop()
-{
-  uint8_t st = buzzerQueue[buzzerHead];
-  buzzerHead = (buzzerHead + 1) % BUZZER_QUEUE_SIZE;
-  return st;
-}
-#endif
-// -------------------------------------------------------------------
-// FUNCTION: updateBuzzer()
-// PURPOSE : Handles buzzer queue processing and LED synchronization.
-//           Plays per-station alarm patterns and manages blinking phase.
-// -------------------------------------------------------------------
-// ************************************************************************************************************************
-// void updateBuzzer(uint32_t now)
-// {
-//   // --- Read Buzzer Enable Switch (active high logic) ---
-//   bool buzzerSwitch = stableState[IDX_BUZZER_EN];
-//   if (!buzzerSwitch)
-//   {
-//     // Switch OFF → silence and clear queue
-//     digitalWrite(PIN_BUZZER, LOW);
-//     LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
-//     for (uint8_t s = 0; s < NUM_STATIONS; s++)
-//       lastQueuedMs[s] = 0;
-//     buzzerActive = false;
-//     buzzerHead = buzzerTail = 0; // clear queue
-//     return;
-//   }
-
-//   // --- If no active pattern, pop next queued station ---
-//   if (!buzzerActive && !buzzerQueueEmpty())
-//   {
-//     if (currentPattern >= 4)
-//     {
-//       buzzerActive = false;
-//       return;
-//     }
-//     currentPattern = buzzerQueuePop() - 1; // Station 1–4 → index 0–3
-//     buzzerActive = true;
-//     beepStep = 0;
-//     buzzerOn = false;
-//     beepTimer = now;
-//   }
-
-//   if (buzzerActive)
-//   {
-//     const BeepPattern &p = STATION_BEEP[currentPattern];
-//     uint16_t dur = p.baseDur;
-
-//     if (buzzerOn)
-//     {
-//       // currently ON: time to stop?
-//       if (now - beepTimer >= dur)
-//       {
-//         digitalWrite(PIN_BUZZER, LOW);
-//         LED_PAIR(BUZZER_LED_PAIR, LOW, LOW);
-//         buzzerOn = false;
-//         beepTimer = now;
-//         beepStep++;
-//       }
-//     }
-//     else
-//     {
-//       // currently OFF
-//       if (beepStep < p.count * 2 - 1 && (now - beepTimer >= dur))
-//       {
-//         // start next beep
-//         digitalWrite(PIN_BUZZER, HIGH);
-//         LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
-//         buzzerOn = true;
-//         beepTimer = now;
-//       }
-//       else if (beepStep >= p.count * 2 - 1)
-//       {
-//         // finished this pattern
-//         digitalWrite(PIN_BUZZER, LOW);
-//         LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
-//         buzzerActive = false;
-//         beepTimer = now + 400; // 400 ms pause before next queued pattern
-//       }
-//     }
-//   }
-//   else
-//   {
-//     // idle: steady green
-//     LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
-//   }
-
-//   // --- Update global blink phase every BUZZER_BLINK_MS ---
-//   if (buzzerActive && (now - lastBuzzerBlinkMs >= BUZZER_BLINK_MS))
-//   {
-//     lastBuzzerBlinkMs = now;
-//     buzzerBlinkPhase = !buzzerBlinkPhase;
-//   }
-// }
 
 // ============================================================
 // 🌡️ SECTION: Thermostat Debouncer
@@ -739,16 +530,6 @@ void updateEthernetAndLEDs(uint32_t now)
     if (m.isVacuum && switchOn && bitVal)
     { // bitVal==1 means loss of vacuum
       anyVacuumAlert = true;
-
-#if BUZZER_RYTHM
-      // queue unique station if not already present
-      bool exists = false;
-      for (uint8_t q = 0; q < alertCount; q++)
-        if (vacuumAlertList[q] == m.station)
-          exists = true;
-      if (!exists && alertCount < NUM_STATIONS)
-        vacuumAlertList[alertCount++] = m.station;
-#endif
 
       LED_PAIR(m.ledPair,
                blinkPhase ? HIGH : LOW, // blink red
@@ -1102,26 +883,6 @@ void sendStationCommand(uint8_t id, uint8_t bits)
 // ============================================================
 // 🔧 FUNCTIONS: EEPROM Handlers
 // ============================================================
-// void setStationEnabled(uint8_t station, bool enabled)
-// {
-//   if (station >= NUM_STATIONS)
-//     return;
-
-//   if (stationEnabled[station] != enabled)
-//   {
-//     stationEnabled[station] = enabled;
-//     // write only when state changes (wear-protected)
-//     EEPROM.update(EEPROM_STATION_BASE + station, enabled ? 1 : 0);
-//   }
-
-// #if DEBUG_SERIAL
-//   Serial.print(F("[EEPROM] Updated Station "));
-//   Serial.print(station);
-//   Serial.print(F(" -> "));
-//   Serial.println(enabled ? F("ENABLED") : F("DISABLED"));
-// #endif
-// }
-
 // -------------------------------------------------------------------
 // FUNCTION: loadStationStatesFromEEPROM()
 // PURPOSE : Loads station enable/disable flags from EEPROM,
@@ -1305,24 +1066,6 @@ void updateThermostatStatus()
   }
 }
 
-// ---------- Buzzer Rythm ----------
-#if BUZZER_RYTHM
-void resetBuzzerQueue()
-{
-  buzzerQueueLen = 0;
-  buzzerQueueIdx = 0;
-}
-
-void enqueueBuzzerStation(uint8_t station)
-{
-  for (uint8_t i = 0; i < buzzerQueueLen; i++)
-    if (buzzerQueue[i] == station)
-      return; // avoid duplicates
-  if (buzzerQueueLen < BUZZER_MAX_QUEUE)
-    buzzerQueue[buzzerQueueLen++] = station;
-}
-#endif
-
 // -------------------------------------------------------------------
 // FUNCTION: updateBuzzerLED()
 // PURPOSE : Controls LED pair 21 and buzzer pin according to the
@@ -1338,10 +1081,6 @@ void updateBuzzerLED(uint32_t now)
   if (Ethernet.linkStatus() != LinkON)
   {
     digitalWrite(PIN_BUZZER, LOW);
-#if BUZZER_RYTHM
-    buzzerPlaying = false;
-    resetBuzzerQueue();
-#endif
     return;
   }
 
@@ -1359,78 +1098,9 @@ void updateBuzzerLED(uint32_t now)
   // ============================================================
   if (alert && switchOn)
   {
-#if BUZZER_RYTHM
-    // initialize once when entering alert mode
-    if (!lastVacuumAlert)
-    {
-      resetBuzzerQueue();
-
-      // enqueueBuzzerStation(stationId) will skip dupes
-      if (!(stationFeedback[1] & (1 << 2)))
-        enqueueBuzzerStation(1); // station1 vacuum fail?
-      if (!(stationFeedback[2] & (1 << 1)))
-        enqueueBuzzerStation(2); // station2 vacuum fail?
-      if (!(stationFeedback[3] & (1 << 2)))
-        enqueueBuzzerStation(3); // station3 vacuum fail?
-      if (!(stationFeedback[4] & (1 << 1)))
-        enqueueBuzzerStation(4); // station4 vacuum fail?
-
-      buzzerPlaying = (buzzerQueueLen > 0);
-      buzzerQueueIdx = 0;
-      currentBeepCount = 0;
-      buzzerOnPhase = false;
-      buzzerTimer = now - BUZZER_BREAK_MS; // start immediately
-    }
-
-    // ===== Rhythm player state machine =====
-    if (buzzerPlaying && buzzerQueueLen > 0)
-    {
-      uint8_t st = buzzerQueue[buzzerQueueIdx];
-      const BeepPattern &pat = buzzerPatterns[st - 1];
-
-      if (!buzzerOnPhase)
-      {
-        if (now - buzzerTimer >= BUZZER_BREAK_MS)
-        {
-          digitalWrite(PIN_BUZZER, HIGH);
-          buzzerOnPhase = true;
-          buzzerTimer = now;
-          currentBeepCount++;
-        }
-      }
-      else
-      {
-        if (now - buzzerTimer >= pat.duration)
-        {
-          digitalWrite(PIN_BUZZER, LOW);
-          buzzerOnPhase = false;
-          buzzerTimer = now;
-
-          if (currentBeepCount >= pat.count)
-          {
-            currentBeepCount = 0;
-            buzzerQueueIdx++;
-
-            // if end reached → loop back
-            if (buzzerQueueIdx >= buzzerQueueLen)
-            {
-              buzzerQueueIdx = 0;
-              buzzerTimer = now + BUZZER_PAUSE_BETWEEN_STATIONS_MS;
-            }
-          }
-        }
-      }
-    }
-    else
-    {
-      digitalWrite(PIN_BUZZER, LOW);
-      buzzerPlaying = false;
-    }
-#else
     // --- BUZZER_RYTHM == 0 path ---
     // Simple: solid tone while alert is active and switch is on.
     digitalWrite(PIN_BUZZER, HIGH);
-#endif
 
     // LED always blinks red when in alert
     LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
@@ -1441,10 +1111,7 @@ void updateBuzzerLED(uint32_t now)
   {
     // operator muted during alarm
     digitalWrite(PIN_BUZZER, LOW);
-#if BUZZER_RYTHM
-    buzzerPlaying = false;
-    resetBuzzerQueue();
-#endif
+
     // LED always blinks red when in alert
     LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
   }
@@ -1495,19 +1162,10 @@ void updateBuzzerLED(uint32_t now)
   else
   {
     digitalWrite(PIN_BUZZER, LOW);
-#if BUZZER_RYTHM
-    buzzerPlaying = false;
-    resetBuzzerQueue();
-#endif
 
     // LED solid green if system armed, red if muted
     LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
   }
-
-// ---------------- STATE MEMORY ----------------
-#if BUZZER_RYTHM
-  lastVacuumAlert = alert;
-#endif
 }
 
 // --------------------------------------------------------------
@@ -1828,83 +1486,12 @@ void loop()
   }
 #endif
 
-  // // --- 1️⃣ Physical inputs (0–7) ---
-  // for (uint8_t i = 0; i < NUM_INPUTS; i++)
-  // {
-  //   bool current = !digitalRead(PHYS_SW_PINS[i]); // active-low
-
-  //   if (current != rawState[i])
-  //   {
-  //     rawState[i] = current;
-  //     lastChange[i] = now;
-  //   }
-
-  //   if ((now - lastChange[i]) > DEBOUNCE_MS)
-  //   {
-  //     stableState[i] = rawState[i];
-  //   }
-  // }
-
-  // // --- 2️⃣ MCP23017 inputs (8–23) ---
-  // // Only read ports if interrupt flags triggered
-  // if (mcpIntA_Flag)
-  //   readMcpA();
-  // if (mcpIntB_Flag)
-  //   readMcpB();
-
-  // for (uint8_t b = 0; b < 8; b++)
-  // {
-  //   bool currentA = ((mcpStateA & (1 << b)) == 0);
-  //   bool currentB = ((mcpStateB & (1 << b)) == 0);
-
-  //   uint8_t idxA = 8 + b;
-  //   uint8_t idxB = 16 + b;
-
-  //   if (currentA != rawState[idxA])
-  //   {
-  //     rawState[idxA] = currentA;
-  //     lastChange[idxA] = now;
-  //   }
-
-  //   if (currentB != rawState[idxB])
-  //   {
-  //     rawState[idxB] = currentB;
-  //     lastChange[idxB] = now;
-  //   }
-
-  //   if ((now - lastChange[idxA]) > DEBOUNCE_MS)
-  //   {
-  //     stableState[idxA] = rawState[idxA];
-  //   }
-
-  //   if ((now - lastChange[idxB]) > DEBOUNCE_MS)
-  //   {
-  //     stableState[idxB] = rawState[idxB];
-  //   }
-  // }
-
-  // --- 🧠 Debug (optional) ---
-  // static uint32_t lastPrint = 0;
-  // if (now - lastPrint > 1000) {
-  //   lastPrint = now;
-  //   Serial.print(F("[DBG] Stable: "));
-  //   for (uint8_t i = 0; i < TOTAL_INPUTS; i++) Serial.print(stableState[i]);
-  //   Serial.println();
-  // }
-
   // 🔁 Blink-phase update (global for all blinking states)
   if (now - tBlink >= BLINK_INTERVAL_MS)
   {
     tBlink = now;
     blinkPhase = !blinkPhase;
   }
-
-  // // DBG(2,
-  // int pkt = Udp.parsePacket();
-  // // if (pkt > 0)
-  // // {
-  // //   IPAddress rip = Udp.remoteIP();
-  // // }
 
   DBG(2,
       // IPAddress rip = Udp.remoteIP();
