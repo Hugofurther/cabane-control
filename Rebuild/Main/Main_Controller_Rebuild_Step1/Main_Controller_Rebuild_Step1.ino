@@ -656,6 +656,50 @@ void processHeartbeatAndFeedback(uint32_t now)
 
   uint8_t id = 0, bits = 0, cks = 0, st = 0;
 
+  // ============================================================
+  // 🟨 STATION IP CLAIM HANDSHAKE HANDLER
+  // ============================================================
+  if (buf[0] == 0xA9 && n >= 4)
+  {
+    uint8_t id = buf[1];
+    uint8_t cmd = buf[2];
+    uint8_t cks = buf[3];
+    bool valid = (cks == (buf[0] ^ buf[1] ^ buf[2]));
+
+    if (valid && cmd == 0x01)
+    {
+      // 🧠 Use your stationOffline[] tracking array
+      // bool inUse = !stationOffline[id];
+      bool inUse = (id == 1); // ← change this to test different IDs
+
+      // 📨 Build reply
+      uint8_t reply[4];
+      reply[0] = 0xAA;
+      reply[1] = id;
+      reply[2] = inUse ? 0xFE : 0x00;
+      reply[3] = reply[0] ^ reply[1] ^ reply[2];
+
+      // 🌐 Get IP of the sender
+      IPAddress remoteIP = Udp.remoteIP();
+
+      // 📤 Send reply to requesting station
+      Udp.beginPacket(remoteIP, UDP_PORT);
+      Udp.write(reply, 4);
+      Udp.endPacket();
+
+#if DEBUG_SERIAL
+      Serial.print(F("[CLAIM] Station "));
+      Serial.print(id);
+      if (inUse)
+        Serial.println(F(" rejected (ID already active)."));
+      else
+        Serial.println(F(" approved."));
+#endif
+    }
+  }
+
+  // ------------------------------------------------------------
+
   // 🩺 HEARTBEAT FRAME [0xAB, id, status, cks]
   if (buf[0] == 0xAB && n >= 4)
   {

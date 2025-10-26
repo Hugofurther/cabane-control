@@ -210,7 +210,7 @@ void updateDisplay(uint32_t now)
   static uint32_t lastScrollUpdate = 0;
   const uint16_t SCROLL_UPDATE_INTERVAL = 200; // ms, prevents flicker
 
-  if(reconfigPending)
+  if (reconfigPending)
   {
     static int lastShownScrollID = -1;
     static uint32_t lastScrollUpdate = 0;
@@ -326,14 +326,68 @@ void updateDisplay(uint32_t now)
 }
 
 // ============================================================
+// 🟨 FUNCTION: IP Claim Handshake with Main Controller
+// ============================================================
+bool requestIPClaim(uint8_t id)
+{
+  // Build claim packet [0xA9, id, 0x01, checksum]
+  uint8_t claim[4] = {0xA9, id, 0x01, 0xA9 ^ id ^ 0x01};
+
+  // Send claim to Main
+  Udp.beginPacket(ipMain, UDP_PORT);
+  Udp.write(claim, 4);
+  Udp.endPacket();
+
+#if DEBUG_SERIAL
+  Serial.print(F("[CLAIM] Sent ID claim for "));
+  Serial.println(id);
+#endif
+
+  // Wait briefly for Main’s reply
+  uint32_t start = millis();
+  while (millis() - start < 500) // 0.5-second timeout
+  {
+    int size = Udp.parsePacket();
+    if (size >= 4)
+    {
+      uint8_t buf[8];
+      Udp.read(buf, sizeof(buf));
+
+      if (buf[0] == 0xAA && buf[1] == id)
+      {
+        uint8_t result = buf[2];
+        if (result == 0x00)
+        {
+#if DEBUG_SERIAL
+          Serial.println(F("[CLAIM] Approved by Main."));
+#endif
+          return true; // ID available
+        }
+        else if (result == 0xFE)
+        {
+#if DEBUG_SERIAL
+          Serial.println(F("[CLAIM] Rejected — ID already in use."));
+#endif
+          return false; // ID conflict
+        }
+      }
+    }
+  }
+
+#if DEBUG_SERIAL
+  Serial.println(F("[CLAIM] No reply — assuming OK (Main offline)."));
+#endif
+  return true; // default OK if no reply
+}
+
+// ============================================================
 // 🌐 SECTION: NETWORK RECONFIGURATION
 // ============================================================
 void reconfigureNetwork(bool fullReset = false)
 {
-
   if (fullReset)
   {
-    ethernetResetPulse(); // ✅ Only if we want a full clean restart
+    ethernetResetPulse();
     delay(200);
   }
 
@@ -344,39 +398,67 @@ void reconfigureNetwork(bool fullReset = false)
   Udp.begin(UDP_PORT);
 
 #if DEBUG_SERIAL
-  Serial.print(F("[NET] Network reconfigured at "));
-  Serial.println(millis());
+  Serial.print(F("[NET] Network reconfigured for Station "));
+  Serial.println(STATION_ID);
   Serial.print(F("IP: "));
   Serial.println(ip);
   Serial.print(F("MAC: ...:"));
   Serial.println(mac[5], HEX);
 #endif
 
-  // Wait for link to come back up
+  // Wait briefly for link to come online
   uint32_t start = millis();
-  while (Ethernet.linkStatus() != LinkON && millis() - start < 5000)
+  while (Ethernet.linkStatus() != LinkON && millis() - start < 3000)
   {
-    delay(250);
+    delay(100);
+  }
+
+  // ============================================================
+  // 🟨 Perform Claim Handshake with Main Controller
+  // ============================================================
+  if (Ethernet.linkStatus() == LinkON)
+  {
+    for (uint8_t tries = 0; tries < 6; tries++)
+    {
+      if (requestIPClaim(STATION_ID))
+      {
 #if DEBUG_SERIAL
-    Serial.print(F("."));
+        Serial.println(F("[CLAIM] Approved or Main offline — continuing."));
+#endif
+        break; // success or offline
+      }
+
+      // Conflict detected → next ID + rebind Ethernet
+      STATION_ID++;
+      if (STATION_ID > 5)
+        STATION_ID = 0;
+      saveStationID(STATION_ID);
+
+      ip = IPAddress(192, 168, 1, 10 + STATION_ID);
+      mac[5] = 0x10 + STATION_ID;
+      Ethernet.begin(mac, ip);
+      Udp.begin(UDP_PORT);
+
+#if DEBUG_SERIAL
+      Serial.print(F("[CLAIM] Collision, retrying with Station ID "));
+      Serial.println(STATION_ID);
+#endif
+
+      delay(250 + random(0, 200)); // small randomized delay
+    }
+  }
+  else
+  {
+#if DEBUG_SERIAL
+    Serial.println(F("[CLAIM] Link down — skipping handshake."));
 #endif
   }
 
-#if DEBUG_SERIAL
-  if (Ethernet.linkStatus() == LinkON)
-    Serial.println(F("\n[NET] Link restored"));
-  else
-    Serial.println(F("\n[NET] Link still down (timeout)"));
-#endif
-
-  tHeartbeat = millis() - HEARTBEAT_MS; // force immediate heartbeat
+  // Resume heartbeat timing
+  tHeartbeat = millis() - HEARTBEAT_MS;
 
 #if HAS_TM1637
-  // back to normal mode when link is up
-  if (Ethernet.linkStatus() == LinkON)
-    displayMode = DISP_NORMAL;
-  else
-    displayMode = DISP_LINK;
+  displayMode = (Ethernet.linkStatus() == LinkON) ? DISP_NORMAL : DISP_LINK;
 #endif
 }
 
@@ -615,7 +697,7 @@ void setup()
 
   loadStationID(); // ensure STATION_ID is valid first
 
-  pendingID = STATION_ID; // Start pendingID as current
+  pendingID = STATION_ID; // make sure both synced
 
 // Display settings
 #if HAS_TM1637
@@ -643,12 +725,28 @@ void setup()
   pinMode(10, OUTPUT);
   digitalWrite(10, HIGH); // deselect W5500 before init
 
+  // // --- for Request Station Id Connection ---
+  // while (!requestIPClaim(STATION_ID))
+  // {
+  //   STATION_ID++;
+  //   if (STATION_ID > 5)
+  //     STATION_ID = 0;
+  //   saveStationID(STATION_ID);
+  //   DBG(3,
+  //       Serial.print(F("[NET] ID conflict; trying next ID "));
+  //       Serial.println(STATION_ID););
+  //   delay(200 + random(0, 200)); // back-off
+  // }
+
   Ethernet.init(ETH_CS);
   ethernetResetPulse();
   Ethernet.begin(mac, ip);
   // delay(100);
   Udp.begin(UDP_PORT);
   delay(500);
+
+  // ✅ Run initial network setup and handshake
+  reconfigureNetwork(true);
 
   EthernetLinkStatus linkStatus = Ethernet.linkStatus();
   if (linkStatus != LinkON)
@@ -716,6 +814,9 @@ void loop()
 #if DEBUG_SERIAL
     Serial.println(F("[NET] Link restored — returning to normal display"));
 #endif
+    // Run a lightweight reconfigure to ensure ID uniqueness
+    delay(250);
+    reconfigureNetwork(false);
   }
 
   // 3️⃣ Parse UDP packets (only if link is up
@@ -879,8 +980,21 @@ void loop()
     }
 
 #if HAS_TM1637
-    displayMode = DISP_ERROR; // switch to blinking "Err"
+    if (displayMode != DISP_NETCFG) // don't override during handshake
+      displayMode = DISP_ERROR;     // switch to blinking "Err"
 #endif
+
+    // 🧠 Schedule an automatic handshake retry after 5 s of silence
+    static uint32_t lastRetryAttempt = 0;
+    if (millis() - lastRetryAttempt > 5000)
+    {
+      lastRetryAttempt = millis();
+
+#if DEBUG_SERIAL
+      Serial.println(F("[WDG] Attempting network re-handshake..."));
+#endif
+      reconfigureNetwork(false); // soft handshake (no full W5500 reset)
+    }
   }
   else
   {
