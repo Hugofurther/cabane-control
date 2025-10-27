@@ -6,8 +6,8 @@
 */
 // -------------------- SYSTEM DEFINES --------------------
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
-#define DEBUG_SERIAL true   // for the else clauses
-#define DEBUG_LEVEL 3       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
+#define DEBUG_SERIAL 0   // for the else clauses
+#define DEBUG_LEVEL 0       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 #define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
 
@@ -79,6 +79,18 @@ IPAddress ipS4(192, 168, 1, 14);  // Station 4
 IPAddress ipS5(192, 168, 1, 15);  // Station 5
 
 // ============================================================
+// 🔔 BUZZER ALERT MODE CONFIGURATION
+// ============================================================
+
+// 0 = Continuous tone when active (default legacy behavior)
+// 1 = Pulsed tone (on/off cycle while alert active)
+#define BUZZER_ALERT_MODE 1
+
+// --- Only used if BUZZER_ALERT_MODE == 1 ---
+#define BUZZER_ALERT_ON_MS 5000   // 5 seconds ON
+#define BUZZER_ALERT_OFF_MS 10000 // 10 seconds OFF
+
+// ============================================================
 // 🔔 BUZZER + VACUUM ALERT STATE
 // ============================================================
 #define PIN_BUZZER 2
@@ -94,7 +106,7 @@ bool buzzerPulseActive = false;
 uint32_t buzzerTimer = 0;
 // Reminder timing
 const uint32_t REMINDER_PERIOD_MS = 5000; // total cycle length (5 seconds for now)
-const uint32_t REMINDER_ON_MS = 1000;     // buzzer ON duration inside cycle (1 second)
+const uint32_t REMINDER_ON_MS = 500;      // buzzer ON duration inside cycle (1 second)
 #endif
 
 // -------------------- INPUT / OUTPUT COUNTS --------------------
@@ -669,8 +681,8 @@ void processHeartbeatAndFeedback(uint32_t now)
     if (valid && cmd == 0x01)
     {
       // 🧠 Use your stationOffline[] tracking array
-      // bool inUse = !stationOffline[id];
-      bool inUse = (id == 1); // ← change this to test different IDs
+      bool inUse = !stationOffline[id];
+      // bool inUse = (id == 5); // ← change this to test different IDs
 
       // 📨 Build reply
       uint8_t reply[4];
@@ -1142,11 +1154,41 @@ void updateBuzzerLED(uint32_t now)
   // ============================================================
   if (alert && switchOn)
   {
-    // --- BUZZER_RYTHM == 0 path ---
-    // Simple: solid tone while alert is active and switch is on.
-    digitalWrite(PIN_BUZZER, HIGH);
 
-    // LED always blinks red when in alert
+#if BUZZER_ALERT_MODE
+    // --- Pulsed tone mode ---
+    static uint32_t buzzerCycleStart = 0;
+    static bool buzzerCycleOn = false;
+
+    uint32_t elapsed = now - buzzerCycleStart;
+
+    if (buzzerCycleOn && elapsed >= BUZZER_ALERT_ON_MS)
+    {
+      buzzerCycleOn = false;
+      buzzerCycleStart = now;
+    }
+    else if (!buzzerCycleOn && elapsed >= BUZZER_ALERT_OFF_MS)
+    {
+      buzzerCycleOn = true;
+      buzzerCycleStart = now;
+    }
+
+    // Drive buzzer + LED based on phase
+    if (buzzerCycleOn)
+    {
+      digitalWrite(PIN_BUZZER, HIGH);
+      // LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid red
+        }
+    else
+    {
+      digitalWrite(PIN_BUZZER, LOW);
+      LED_PAIR(BUZZER_LED_PAIR, LOW, LOW); // off between pulses
+    }
+#else
+    // --- Continuous tone mode ---
+    digitalWrite(PIN_BUZZER, HIGH);
+    // LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
+#endif
     LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
   }
 

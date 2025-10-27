@@ -2,6 +2,8 @@
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
 #define HAS_TM1637 1        // Set to true when a display is connected
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED
+#define DEBUG_SERIAL 0 // for the else clauses
+#define DEBUG_LEVEL 0                                     // 0 = Off, 1 = 
 
 // ============================================================
 // 🧩 SECTION: FORWARD DECLARATIONS (tell compiler these exist later)
@@ -26,11 +28,11 @@ TM1637Display display(CLK_PIN, DIO_PIN);
 // ============================================================
 // 🚧 SECTION: DEBUG CONFIG
 // ============================================================
-#define DEBUG_SERIAL 1 // for the else clauses
+
 
 // Limit how often serial debug lines are printed
 // ---------------- DEBUG CONFIG ----------------
-#define DEBUG_LEVEL 3                                     // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
+// Errors only, 2 = Normal, 3 = Verbose
 const uint16_t DBG_THROTTLE_MS[4] = {0, 500, 1000, 3000}; // Minimum delay between same-level prints
 uint32_t dbgLastPrint[4] = {0, 0, 0, 0};                  // timestamp to throttle serial prints
 
@@ -381,6 +383,51 @@ bool requestIPClaim(uint8_t id)
 }
 
 // ============================================================
+// 🟢 FUNCTION: checkStationIDConflict()
+// PURPOSE : Sends a handshake to Main (0xAE) and interprets reply.
+//           Returns true only if Main explicitly reports a conflict.
+//           Returns false if ID OK or no reply (Main offline).
+// ============================================================
+bool checkStationIDConflict(uint8_t currentID)
+{
+  uint8_t buf[3] = {0xAE, currentID, (uint8_t)(0xAE ^ currentID)}; // handshake request
+  Udp.beginPacket(ipMain, UDP_PORT);
+  Udp.write(buf, 3);
+  Udp.endPacket();
+
+  uint32_t tStart = millis();
+  while (millis() - tStart < 1000)  // wait up to 1s for reply
+  {
+    int size = Udp.parsePacket();
+    if (size >= 3)
+    {
+      uint8_t reply[3];
+      Udp.read(reply, 3);
+
+      // Expect [0xAF, id, status^cks]
+      if (reply[0] == 0xAF && reply[1] == currentID)
+      {
+        uint8_t status = reply[2] ^ (reply[0] ^ reply[1]);
+        if (status == 0xFF)
+        {
+          Serial.println(F("[HS] Conflict reply received"));
+          return true;  // confirmed conflict
+        }
+        else
+        {
+          Serial.println(F("[HS] ID accepted by main"));
+          return false; // explicitly approved
+        }
+      }
+    }
+  }
+
+  // If we reach here → no reply from main (offline)
+  Serial.println(F("[HS] No reply from main (assuming main offline, ID OK)"));
+  return false;
+}
+
+// ============================================================
 // 🌐 SECTION: NETWORK RECONFIGURATION
 // ============================================================
 void reconfigureNetwork(bool fullReset = false)
@@ -414,21 +461,24 @@ void reconfigureNetwork(bool fullReset = false)
   }
 
   // ============================================================
-  // 🟨 Perform Claim Handshake with Main Controller
+  // 🟨 Perform ID Handshake + Conflict Resolution with Main
   // ============================================================
   if (Ethernet.linkStatus() == LinkON)
   {
     for (uint8_t tries = 0; tries < 6; tries++)
     {
-      if (requestIPClaim(STATION_ID))
+      // 🔹 Ask main whether this ID is already in use
+      bool conflict = checkStationIDConflict(STATION_ID);
+
+      if (!conflict)
       {
-#if DEBUG_SERIAL
-        Serial.println(F("[CLAIM] Approved or Main offline — continuing."));
-#endif
-        break; // success or offline
+  #if DEBUG_SERIAL
+        Serial.println(F("[CLAIM] ID accepted or main offline — proceeding."));
+  #endif
+        break; // exit the loop, ID OK
       }
 
-      // Conflict detected → next ID + rebind Ethernet
+      // 🔸 Conflict detected → increment and retry
       STATION_ID++;
       if (STATION_ID > 5)
         STATION_ID = 0;
@@ -439,19 +489,19 @@ void reconfigureNetwork(bool fullReset = false)
       Ethernet.begin(mac, ip);
       Udp.begin(UDP_PORT);
 
-#if DEBUG_SERIAL
-      Serial.print(F("[CLAIM] Collision, retrying with Station ID "));
+  #if DEBUG_SERIAL
+      Serial.print(F("[CLAIM] Conflict detected. Retrying with Station ID "));
       Serial.println(STATION_ID);
-#endif
+  #endif
 
-      delay(250 + random(0, 200)); // small randomized delay
+      delay(250 + random(0, 200)); // small back-off delay
     }
   }
   else
   {
-#if DEBUG_SERIAL
+  #if DEBUG_SERIAL
     Serial.println(F("[CLAIM] Link down — skipping handshake."));
-#endif
+  #endif
   }
 
   // Resume heartbeat timing
@@ -581,53 +631,7 @@ void checkButton()
   }
 }
 
-// ------------------------------------------------------------------------
-// ------------------------------------------------------------------------
-// ------------------------------------------------------------------------
-// void checkButton()
-// {
-//   static uint32_t lastPress = 0;
-//   static bool pressed = false;
-
-//   // Read analog input
-//   int val = analogRead(BTN_PIN);
-//   bool isPressed = (val < 200); // threshold for pressed
-
-//   if (!pressed && isPressed && millis() - lastPress > 150)
-//   {
-//     lastPress = millis();
-//     pressed = true;
-
-//     // Instantly cycle station ID (fast user response)
-//     STATION_ID++;
-//     if (STATION_ID > 5)
-//       STATION_ID = 0;
-
-//     saveStationID(STATION_ID);
-
-// #if HAS_TM1637
-//     showStationID_Left();
-//     displayMode = DISP_NORMAL;
-// #endif
-
-// #if DEBUG_SERIAL
-//     Serial.print(F("[BTN] Clicked at "));
-//     Serial.println(millis());
-//     Serial.print(F("[BTN] Station ID → "));
-//     Serial.println(STATION_ID);
-// #endif
-
-//     // Record time of last button activity
-//     lastButtonActivity = millis();
-
-//     // Flag pending reconfiguration — handled later in loop()
-//     pendingReconfig = true;
-//   }
-//   else if (!isPressed)
-//   {
-//     pressed = false;
-//   }
-// }
+// ---------- VEGAS MODE ----------
 
 void vegasMode()
 {
