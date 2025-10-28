@@ -6,7 +6,7 @@
 */
 // -------------------- SYSTEM DEFINES --------------------
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
-#define DEBUG_SERIAL 0   // for the else clauses
+#define DEBUG_SERIAL 0      // for the else clauses
 #define DEBUG_LEVEL 0       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 #define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
@@ -1178,7 +1178,7 @@ void updateBuzzerLED(uint32_t now)
     {
       digitalWrite(PIN_BUZZER, HIGH);
       // LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid red
-        }
+    }
     else
     {
       digitalWrite(PIN_BUZZER, LOW);
@@ -1209,6 +1209,40 @@ void updateBuzzerLED(uint32_t now)
 #if BUZZER_REMINDER
   else if (!alert && !switchOn)
   {
+    // ============================================================
+    // ✅ Only allow reminder when any vacuum switch is ON
+    //    and its LED pair is GREEN (vacuum OK)
+    // ============================================================
+    bool vacuumOK = false;
+
+    // Station 1: vacuum switches 2, 3 → LED pairs 2, 3
+    if ((stableState[2] && digitalRead(LED_B[2]) == HIGH) ||
+        (stableState[3] && digitalRead(LED_B[3]) == HIGH))
+      vacuumOK = true;
+
+    // Station 2: vacuum switch 9 → LED pair 9
+    if (stableState[9] && digitalRead(LED_B[9]) == HIGH)
+      vacuumOK = true;
+
+    // Station 3: vacuum switch 14 → LED pair 14
+    if (stableState[14] && digitalRead(LED_B[14]) == HIGH)
+      vacuumOK = true;
+
+    // Station 4: vacuum switch 17 → LED pair 17
+    if (stableState[17] && digitalRead(LED_B[17]) == HIGH)
+      vacuumOK = true;
+
+    if (!vacuumOK)
+    {
+      // 🚫 No active vacuum in OK state → skip reminder entirely
+      LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
+      digitalWrite(PIN_BUZZER, LOW);
+      return;
+    }
+
+    // ============================================================
+    // ✅ Continue with normal reminder pulse logic
+    // ============================================================
     static uint32_t reminderStartMs = 0;
     static bool reminderInit = false;
 
