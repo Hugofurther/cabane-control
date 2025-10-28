@@ -105,8 +105,8 @@ const uint8_t BUZZER_SWITCH_IDX = 21; // index in stableState[]
 bool buzzerPulseActive = false;
 uint32_t buzzerTimer = 0;
 // Reminder timing
-const uint32_t REMINDER_PERIOD_MS = 5000; // total cycle length (5 seconds for now)
-const uint32_t REMINDER_ON_MS = 500;      // buzzer ON duration inside cycle (1 second)
+const uint32_t REMINDER_PERIOD_MS = 300000; // total cycle length (60 seconds)
+const uint32_t REMINDER_ON_MS = 500;        // buzzer ON duration inside cycle (1 second)
 #endif
 
 // -------------------- INPUT / OUTPUT COUNTS --------------------
