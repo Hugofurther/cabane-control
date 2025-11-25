@@ -46,3 +46,4 @@ This configuration ensures:
 - Analog-based pushbutton (A7) and extra input (A6)
 - No SPI or TM1637 interference
 - Safe upload/debugging behavior when Serial active
+	

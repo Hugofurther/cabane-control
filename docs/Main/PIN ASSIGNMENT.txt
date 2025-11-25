@@ -1,0 +1,147 @@
+Add MCP 2317
+- Add enable / disable Thermostats
+- Add Thermostat logic + lights ( Lights depending on the status of ENABLE_OVERRIDE )
+- Add buzzer + lights ( Lights depending on the status of buzzer state var )
+- Add buzzer song
+
+Vacuum led pairs
+Station 1 -> 28-29 ( 30-31 )
+Station 2 -> 42-43
+Station 3 -> 56-57
+Station 4 -> 62-63
+
+
+
+
+
+I thought we were taking my approach
+
+
+LED Outputs (48)	D4–D17, D22-D47, D54-61	(Even = LEDA (Red), Odd = LEDB (Green))
+Switch Inputs (24)	D62-D69, GPA0-GPA7, GPB0-GPB7
+BUZZER			D2
+
+Chips
+
+1: D8-D15
+2: D16, D17, D22, D23, D26-D29
+3: D30, D31, D36-D39, D42, D43
+4: D44, D45, D54-D59
+5: D60,D61 -> Buzzer D2
+
+
+1: D4-D7, D24, D25, D32, D33
+2: D34, D35, D40, D41, D46, D47
+
+
+
+Ethernet CS		D48	W5500 Chip Select
+Ethernet RESET		D49	Reset pin
+SPI (Ethernet)		D50–D53	MOSI=51, MISO=50, SCK=52, SS=53 (set HIGH)
+
+MCP23017		D20, D21 (SDA, SCL)
+MCP23017 Interrupts	D18, D19 (INTA, INTB)
+
+
+Maybe have a function to disable all switches and just have a second Main controller as a monitor
+
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+
+16 pin connector
+
+INPUTS
+1. A1
+2. A2
+3. A3
+4. A4
+5. A5
+
+6. 0 ( 4.7kΩ in-line )
+7. 1 ( 4.7kΩ in-line )
+
+OUTPUTS
+8. 2
+9. 3
+10. 4
+11. 5
+12. 6
+13. 7
+14. GND
+15. PWR
+
+Wire only has 15 cores.
+
+
+6.4mm
+0.251
+
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+
+
+NOTE CONNECT W5500 2ND GROUND
+
+CHANGE POWER TO 9V	
+
+
+----------------------------------------------------------------
+----------------------------------------------------------------
+
+The W5500 ethernet module resets the Arduino board intermitently.
+
+- When the "DEBUG_SERIAL" gives me the following output at first, the system runs without fault.
+<good output>
+
+</good output>
+
+
+- When the "DEBUG_SERIAL" gives me the following output at first, the system resets at line 662 "int packetSize = Udp.parsePacket();".
+
+
+
+----
+
+Good Output
+
+Converter 5v to VIN
+
+================================================
+ Main Controller Firmware
+ Version: v1.0-RebuildStep1
+================================================
+[BOOT] Main_Controller_Binary_Detailed starting...
+[NET] Link not detected, retrying init...
+192.168.1.1
+[NET] Link still down after retry
+[VEGAS] Duration: 2881 ms
+------------------------------------------------
+[EEPROM] Loaded station enable states:
+[EEPROM] Station 0: ENABLED
+[EEPROM] Station 1: ENABLED
+[EEPROM] Station 2: ENABLED
+[EEPROM] Station 3: ENABLED
+[EEPROM] Station 4: ENABLED
+[EEPROM] Station 5: ENABLED
+[DEBUG] Initial pin voltages:
+Pin 62 = 1
+Pin 63 = 1
+Pin 64 = 1
+Pin 65 = 1
+Pin 66 = 1
+Pin 67 = 1
+Pin 68 = 1
+Pin 69 = 1
+[INIT] Setup complete.
+[INPUT] stableState: 000000000000000000000000
+MCP A: 11111111  MCP B: 11111111
+before Udp.parsePacket
+After Udp.parsePacket
+[DEBUG] LinkStatus = 2
+before Udp.parsePacket
+After Udp.parsePacket
+before Udp.parsePacket
+
+	

@@ -87,7 +87,7 @@ IPAddress ipS5(192, 168, 1, 15);  // Station 5
 #define BUZZER_ALERT_MODE 1
 
 // --- Only used if BUZZER_ALERT_MODE == 1 ---
-#define BUZZER_ALERT_ON_MS 5000   // 5 seconds ON
+#define BUZZER_ALERT_ON_MS 5000   // 5 seconds ON   <-- MAKE SURE THIS LINE IS HERE
 #define BUZZER_ALERT_OFF_MS 10000 // 10 seconds OFF
 
 // ============================================================
@@ -235,12 +235,8 @@ const LedMap LED_MAP[] = {
     {3, 1, 2, 1, 1, 3}, // pair 3: Station 1 A3, blink if ST1 offline - Vacuum 2
     {4, 1, 3, 1, 0, 4}, // pair 4: Station 1 A4, blink if ST1 offline - Vic T1
     {5, 1, 4, 1, 0, 5}, // pair 5: Station 1 A5, blink if ST1 offline - Overture T2
-    {6, 1, 5, 1, 0, 6}, // pair 6: Station 1 A6, blink if ST1 offline - Vid T2
-#if DEBUG_SERIAL
-    {255, 255, 0, 255, 0, 255}, // pair 7: Station 1 D1, blink if ST1 offline - VId st2 -> St1
-#else
-    {7, 2, 0, 1, 0, 7}, // pair 7: Station 1 D1, blink if ST1 offline - VId st2 -> St1
-#endif
+    {6, 1, 5, 1, 0, 6}, // pair 6: Station 1 A6 - val 573, blink if ST1 offline - Vid T2
+    {7, 1, 6, 1, 0, 7}, // pair 7: Station 1 A6 - val 634, blink if ST1 offline - VId st2 -> St1
     // Station 2
     {8, 2, 0, 2, 0, 8},   // pair 8: Station 2 A1, blink if ST2 offline - Transport Pump
     {9, 2, 1, 2, 1, 9},   // pair 9: Station 2 A2, blink if ST2 offline - Vacuum
@@ -252,9 +248,9 @@ const LedMap LED_MAP[] = {
     {14, 3, 2, 3, 1, 14}, // pair 14: Station 3 A3, blink if ST3 offline - Vacuum
     {15, 3, 3, 3, 0, 15}, // pair 15: Station 3 A4, blink if ST3 offline - Vid ST2 -> ST3
     // Station 4
-    {16, 4, 1, 4, 0, 16}, // pair 16: Station 4 A2, blink if ST4 offline - Transport Pump
-    {17, 4, 2, 4, 1, 17}, // pair 17: Station 4 A3, blink if ST4 offline - Vacuum
-    {18, 4, 3, 4, 0, 18}, // pair 18: Station 4 A4, blink if ST4 offline - Vid ST4
+    {16, 4, 0, 4, 0, 16}, // pair 16: Station 4 A2, blink if ST4 offline - Transport Pump
+    {17, 4, 1, 4, 1, 17}, // pair 17: Station 4 A3, blink if ST4 offline - Vacuum
+    {18, 4, 2, 4, 0, 18}, // pair 18: Station 4 A4, blink if ST4 offline - Vid ST4
     // Station 5
     {19, 5, 0, 5, 0, 19}, // pair 19: Station 5 A1, blink if ST5 offline - Transport Pump
     {20, 5, 1, 5, 0, 20}, // pair 20: Station 5 A2, blink if ST5 offline - Vid ST5
@@ -273,8 +269,8 @@ const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
     digitalWrite(LED_B[idx], (greenOn)); \
   } while (0)
 
-#define VEGAS_DELAY_MS 60  // Speed between LEDs (adjust to taste)
-#define VEGAS_FLASHES = 3; // Number of red/green blinks per station
+#define VEGAS_DELAY_MS 60 // Speed between LEDs (adjust to taste)
+#define VEGAS_FLASHES 3   // Number of red/green blinks per station
 
 // -------------------- EEPROM Address --------------------
 #define EEPROM_STATION_BASE 0 // start address
@@ -319,7 +315,7 @@ const uint8_t TH_LED_PAIR[2] = {22, 23};
 
 // Station/feedback mapping
 const uint8_t TH_FEEDBACK_STATION[2] = {0, 4}; // Thermostat 1 → Station 0, Thermostat 2 → Station 4
-const uint8_t TH_FEEDBACK_BIT[2] = {0, 3};     // Bit positions in stationFeedback[station]
+const uint8_t TH_FEEDBACK_BIT[2] = {3, 3};     // Bit positions in stationFeedback[station]
 
 // Override switch indices (multiple allowed)
 const uint8_t TH1_OVERRIDE_IDX[] = {2, 9, 14}; // Thermostat 1
@@ -481,11 +477,6 @@ void digitalWriteAll(const uint8_t *pins, uint8_t count, bool state)
 // ============================================================
 // 🌐 SECTION: Ethernet Link + LED Status Logic
 // ============================================================
-//
-// Handles visual indication of network link status and
-// per-station feedback on the LED pairs.
-// Called once per loop(), non-blocking.
-
 void updateEthernetAndLEDs(uint32_t now)
 {
   static bool linkDown = false;
@@ -509,11 +500,6 @@ void updateEthernetAndLEDs(uint32_t now)
 
   anyVacuumAlert = false; // Reset -> recheck below
 
-#if BUZZER_RYTHM
-  uint8_t vacuumAlertList[NUM_STATIONS];
-  uint8_t alertCount = 0;
-#endif
-
   // 3️⃣ Link Up → unified LED update
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
   {
@@ -535,24 +521,45 @@ void updateEthernetAndLEDs(uint32_t now)
       continue;
     }
 
-    // 🚨 Vacuum alert condition
-    bool bitVal = (stationFeedback[m.station] >> m.bit) & 1; // feedback
-    bool switchOn = stableState[m.switchIndex];              // from local input
+    // 🚨 STATE CALCULATION (Manual Switch vs Thermostat)
+    bool bitVal = (stationFeedback[m.station] >> m.bit) & 1; // feedback (1=OFF/Lost)
+    bool isCommandedOn = stableState[m.switchIndex];         // Manual Switch
 
-    if (m.isVacuum && switchOn && bitVal)
-    { // bitVal==1 means loss of vacuum
+#if ENABLE_THERMOSTAT
+    // Check if a Thermostat is forcing this index ON
+    for (uint8_t t = 0; t < 2; t++)
+    {
+      // If Thermostat is Enabled AND Active (calling for heat/vacuum)
+      if (thermostatEnabled[t] && thermostatActive[t])
+      {
+        for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
+        {
+          if (m.switchIndex == TH_OVERRIDE_IDX[t][k])
+          {
+            isCommandedOn = true; // ⚠️ Override Active!
+            break;
+          }
+        }
+      }
+    }
+#endif
+
+    // 🚨 VACUUM ALERT LOGIC
+    // Alarm if: (Commanded ON) AND (Feedback says OFF/Loss)
+    if (m.isVacuum && isCommandedOn && bitVal)
+    {
       anyVacuumAlert = true;
 
       LED_PAIR(m.ledPair,
-               blinkPhase ? HIGH : LOW, // blink red
+               blinkPhase ? HIGH : LOW, // Flash RED
                LOW);
       continue;
     }
 
-    // --- ONLINE feedback
+    // --- NORMAL STATUS LED
     LED_PAIR(m.ledPair,
-             bitVal ? HIGH : LOW,  // RED when relay off
-             bitVal ? LOW : HIGH); // GREEN when relay on
+             bitVal ? HIGH : LOW,  // RED when relay off (feedback 1)
+             bitVal ? LOW : HIGH); // GREEN when relay on (feedback 0)
   }
 
   // 🔕 Buzzer LED (pair 21) is handled by updateBuzzerLED()
@@ -565,45 +572,98 @@ void updateEthernetAndLEDs(uint32_t now)
 // -------------------------------------------------------------------
 void ethernetResetPulse()
 {
+  // Ensure Mega Hardware SS is inactive (Critical for SPI stability)
+  pinMode(53, OUTPUT);
+  digitalWrite(53, HIGH);
+
+  // Ensure W5500 is deselected before reset
+  pinMode(ETH_CS, OUTPUT);
+  digitalWrite(ETH_CS, HIGH);
+
+  // Perform the "Raw Probe" Hard Reset Sequence
   pinMode(ETH_RESET, OUTPUT);
   digitalWrite(ETH_RESET, LOW);
-  delay(10);
+  delay(200); // Hold Low for 200ms (was 10ms)
   digitalWrite(ETH_RESET, HIGH);
-  delay(100);
+  delay(800); // Wait 800ms for PLL lock (was 100ms)
 }
 
+// ============================================================
+// 🔧 FINAL STABLE INITIALIZATION (Matches Diagnostic Tests)
+// ============================================================
 void initEthernet()
 {
+  Serial.println(F("[NET] Starting Network Initialization..."));
+
+  // 1. MANUAL SPI STARTUP
+  // Force SPI bus active before library loads
+  SPI.begin();
+
+  // 2. HARD RESET (200ms / 800ms)
+  Serial.print(F("[NET] Resetting W5500..."));
+  pinMode(ETH_RESET, OUTPUT);
+  digitalWrite(ETH_RESET, LOW);
+  delay(200);
+  digitalWrite(ETH_RESET, HIGH);
+  delay(800);
+  Serial.println(F(" Done."));
+
+  // 3. MANUAL HANDSHAKE (Trust Verify)
+  // We talk to the chip manually to ensure it is awake and listening.
+  Serial.print(F("[NET] Manual Handshake... "));
+
+  SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  digitalWrite(ETH_CS, LOW);
+  SPI.transfer(0x00); // Address H
+  SPI.transfer(0x39); // Address L
+  SPI.transfer(0x00); // Control
+  byte version = SPI.transfer(0x00);
+  digitalWrite(ETH_CS, HIGH);
+  SPI.endTransaction();
+
+  if (version == 0x04)
+  {
+    Serial.println(F("SUCCESS (0x04)"));
+  }
+  else
+  {
+    Serial.print(F("WARNING: Read 0x"));
+    Serial.print(version, HEX);
+    Serial.println(F(". Proceeding anyway..."));
+  }
+
+  // 4. FORCE LIBRARY START
+  // We skip Ethernet.hardwareStatus() because it is unreliable on this setup.
+  // We go straight to begin(), which performs the necessary Soft Reset to sync the library.
   Ethernet.init(ETH_CS);
-  ethernetResetPulse();
   Ethernet.begin(mac, ipMain);
+
+  // 5. START UDP
   Udp.begin(UDP_PORT);
+
+  // 6. CONFIGURE RETRIES
+  // Maple syrup farms are noisy; if a packet fails, retry quickly.
   Ethernet.setRetransmissionCount(1);
   Ethernet.setRetransmissionTimeout(200);
 
-  delay(500); // Give W5500 time to settle
+  // 7. FINAL VERIFICATION
+  IPAddress local = Ethernet.localIP();
+  Serial.print(F("[NET] Initialization Complete. IP: "));
+  Serial.println(local);
 
-  EthernetLinkStatus linkStatus = Ethernet.linkStatus();
-  if (linkStatus != LinkON)
+  // Halt if IP assignment failed (SPI totally dead)
+  if (local[0] == 0 || local[0] == 255)
   {
-#if DEBUG_SERIAL
-    Serial.println(F("[NET] Link not detected, retrying init..."));
-    Serial.println(Ethernet.localIP());
-#endif
-    delay(1000);
-    ethernetResetPulse();
-    Ethernet.begin(mac, ipMain);
-    Udp.begin(UDP_PORT);
-    delay(500);
-    linkStatus = Ethernet.linkStatus();
+    Serial.println(F("[NET] CRITICAL ERROR: IP Address invalid. System halted."));
+    while (1)
+    {
+      // Flash the LED or Buzzer to alert operator of hardware failure
+      digitalWrite(ETH_RESET, LOW);
+      delay(100);
+      digitalWrite(ETH_RESET, HIGH);
+      delay(100);
+    }
   }
-
-#if DEBUG_SERIAL
-  if (linkStatus == LinkON)
-    Serial.println(F("[NET] Ethernet link OK"));
-  else
-    Serial.println(F("[NET] Link still down after retry"));
-#endif
 }
 
 inline uint8_t xorChecksum(const uint8_t *d, uint8_t l)
@@ -655,6 +715,9 @@ void sendSetFrame(IPAddress dst, uint8_t id, uint8_t bits)
 // ============================================================
 
 // 🧩 HEARTBEAT + FEEDBACK HANDLER
+// ============================================================
+// 📡 MAIN CONTROLLER: PACKET PROCESSING
+// ============================================================
 void processHeartbeatAndFeedback(uint32_t now)
 {
   int packetSize = Udp.parsePacket();
@@ -663,121 +726,131 @@ void processHeartbeatAndFeedback(uint32_t now)
 
   uint8_t buf[16];
   int n = Udp.read(buf, sizeof(buf));
-  if (n < 4)
-    return;
+  if (n < 3)
+    return; // Too short to be valid
 
-  uint8_t id = 0, bits = 0, cks = 0, st = 0;
+  uint8_t id = 0, st = 0, cks = 0;
 
-  // ============================================================
-  // 🟨 STATION IP CLAIM HANDSHAKE HANDLER
-  // ============================================================
-  if (buf[0] == 0xA9 && n >= 4)
-  {
-    uint8_t id = buf[1];
-    uint8_t cmd = buf[2];
-    uint8_t cks = buf[3];
-    bool valid = (cks == (buf[0] ^ buf[1] ^ buf[2]));
-
-    if (valid && cmd == 0x01)
-    {
-      // 🧠 Use your stationOffline[] tracking array
-      bool inUse = !stationOffline[id];
-      // bool inUse = (id == 5); // ← change this to test different IDs
-
-      // 📨 Build reply
-      uint8_t reply[4];
-      reply[0] = 0xAA;
-      reply[1] = id;
-      reply[2] = inUse ? 0xFE : 0x00;
-      reply[3] = reply[0] ^ reply[1] ^ reply[2];
-
-      // 🌐 Get IP of the sender
-      IPAddress remoteIP = Udp.remoteIP();
-
-      // 📤 Send reply to requesting station
-      Udp.beginPacket(remoteIP, UDP_PORT);
-      Udp.write(reply, 4);
-      Udp.endPacket();
-
-#if DEBUG_SERIAL
-      Serial.print(F("[CLAIM] Station "));
-      Serial.print(id);
-      if (inUse)
-        Serial.println(F(" rejected (ID already active)."));
-      else
-        Serial.println(F(" approved."));
-#endif
-    }
-  }
-
-  // ------------------------------------------------------------
-
-  // 🩺 HEARTBEAT FRAME [0xAB, id, status, cks]
+  // ---------------------------------------------------------
+  // 1. HEARTBEAT [0xAB] - "I am alive"
+  // ---------------------------------------------------------
   if (buf[0] == 0xAB && n >= 4)
   {
     id = buf[1];
     st = buf[2];
     cks = buf[3];
-    if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS && st == 0x00)
+
+    if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS)
     {
+      // Logic Preservation: Update timestamps
       lastHeartbeatMs[id] = now;
       stationOffline[id] = false;
       heartbeatCount[id]++;
 
-      // 🆕 Request feedback once on first heartbeat
+      // Logic Preservation: Sync on reconnect
       if (!firstHeartbeatSeen[id])
       {
         firstHeartbeatSeen[id] = true;
-        Serial.print(F("[SYNC] First heartbeat from station "));
-        Serial.println(id);
-        sendFeedbackRequest(id); // Ask this specific station for feedback
+        DBG(2, Serial.print(F("[SYNC] Station found: ")); Serial.println(id));
+        sendFeedbackRequest(id);
       }
-
-      DBG(3,
-          Serial.print(F("[HB ] Station "));
-          Serial.print(id);
-          Serial.println(F(" OK")););
-    }
-    else
-    {
-      DBG(2, Serial.println(F("[HB ] Invalid heartbeat")););
     }
   }
 
-  // 💬 FEEDBACK FRAME [0xAC, id, bits, status, cks]
+  // ---------------------------------------------------------
+  // 2. FEEDBACK [0xAC] - "Here are my sensor states"
+  // ---------------------------------------------------------
   else if (buf[0] == 0xAC && n >= 5)
   {
     id = buf[1];
-    bits = buf[2];
+    uint8_t bits = buf[2];
     cks = buf[4];
+
     if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS)
     {
+      // Logic Preservation: Update global state
       stationFeedback[id] = bits;
       lastHeartbeatMs[id] = now;
       stationOffline[id] = false;
-
-      DBG(3,
-          Serial.print(F("[FB ] Station "));
-          Serial.print(id);
-          Serial.print(F(" bits="));
-          Serial.println(bits, BIN););
-    }
-    else
-    {
-      DBG(2, Serial.println(F("[FB ] Invalid feedback")););
     }
   }
 
-  // 🧠 Optional print every 5s
-  DBG(4, if (DEBUG_SERIAL && now - lastHeartbeatPrint >= 5000) {
-      lastHeartbeatPrint = now;
-      Serial.print(F("[HB] Counts: "));
-      for (uint8_t i = 0; i < NUM_STATIONS; i++)
+  // ---------------------------------------------------------
+  // 3. CONFLICT CHECK [0xAE] - "Can I use this ID?"
+  // ---------------------------------------------------------
+  else if (buf[0] == 0xAE && n >= 3)
+  {
+    id = buf[1];
+    cks = buf[2];
+
+    if (cks == (buf[0] ^ buf[1]))
+    {
+      bool inUse = false;
+
+      // STEP 1: Check internal memory first
+      if (!stationOffline[id])
       {
-        Serial.print(heartbeatCount[i]);
-        Serial.print(' ');
+        // STEP 2: ACTIVE PING VERIFICATION
+        // The memory says it's online, but is it? Or is it a ghost?
+        // We send a Feedback Request to the specific IP and wait 100ms.
+
+        // Flush buffer first
+        while (Udp.parsePacket())
+          Udp.flush();
+
+        // Send Ping
+        sendFeedbackRequest(id);
+
+        // Wait 100ms for a reply
+        uint32_t tPing = millis();
+        bool pingReply = false;
+
+        while (millis() - tPing < 100)
+        {
+          if (Udp.parsePacket())
+          {
+            // We got a packet! Check if it's a valid reply from ID 'id'
+            uint8_t pBuf[16];
+            int pn = Udp.read(pBuf, sizeof(pBuf));
+            // Check for Feedback (0xAC) or Heartbeat (0xAB) from target ID
+            if (pn >= 4 && (pBuf[0] == 0xAC || pBuf[0] == 0xAB) && pBuf[1] == id)
+            {
+              pingReply = true;
+              break;
+            }
+          }
+        }
+
+        // If we got a reply, it's TRULY in use.
+        // If silence, it was a ghost session (the candidate itself rebooting).
+        inUse = pingReply;
       }
-      Serial.println(); });
+
+      // STEP 3: Send Decision
+      // 0xFF = Conflict, 0x00 = OK
+      uint8_t status = inUse ? 0xFF : 0x00;
+
+      uint8_t reply[3];
+      reply[0] = 0xAF;
+      reply[1] = id;
+      reply[2] = status ^ reply[0] ^ reply[1];
+
+      Udp.beginPacket(Udp.remoteIP(), UDP_PORT);
+      Udp.write(reply, 3);
+      Udp.endPacket();
+
+      DBG(2,
+          Serial.print(F("[HS] Check ID "));
+          Serial.print(id);
+          Serial.println(inUse ? F(" -> BLOCKED (Active Ping)") : F(" -> FREE (No Ping Reply)")););
+
+      // If we decided it's FREE (Ghost killed), mark it offline immediately
+      if (!inUse && !stationOffline[id])
+      {
+        stationOffline[id] = true;
+      }
+    }
+  }
 }
 
 // 🧩 OFFLINE DETECTION
@@ -1296,6 +1369,7 @@ void updateBuzzerLED(uint32_t now)
 //           verification during boot. Optional cosmetic feature.
 // -------------------------------------------------------------------
 
+#if DEBUG_SERIAL
 // TEMP VEGAS UNTIL FULL
 void runVegasMode()
 {
@@ -1324,94 +1398,93 @@ void runVegasMode()
   }
 }
 
-// void runVegasMode()
-// {
-//   if (!ENABLE_VEGAS_MODE)
-//     return;
+#else
 
-// #if DEBUG_SERIAL
-//   Serial.println(F("[VEGAS] Starting LED diagnostic sequence..."));
-// #endif
+void runVegasMode()
+{
+  if (!ENABLE_VEGAS_MODE)
+    return;
 
-//   // --- 1️⃣ Sweep all RED LEDs ---
-//   for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-//   {
-//     digitalWrite(LED_A[i], HIGH); // RED ON
-//     delay(VEGAS_DELAY_MS);
-//     digitalWrite(LED_A[i], LOW);
-//   }
+  // Serial.println(F("[VEGAS] Starting LED diagnostic sequence..."));
 
-//   delay(200);
+  // --- 1️⃣ Sweep all RED LEDs ---
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+  {
+    digitalWrite(LED_A[i], HIGH); // RED ON
+    delay(VEGAS_DELAY_MS);
+    digitalWrite(LED_A[i], LOW);
+  }
 
-//   // --- 2️⃣ Sweep all GREEN LEDs ---
-//   for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-//   {
-//     digitalWrite(LED_B[i], HIGH); // GREEN ON
-//     delay(VEGAS_DELAY_MS);
-//     digitalWrite(LED_B[i], LOW);
-//   }
+  delay(200);
 
-//   delay(200);
+  // --- 2️⃣ Sweep all GREEN LEDs ---
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+  {
+    digitalWrite(LED_B[i], HIGH); // GREEN ON
+    delay(VEGAS_DELAY_MS);
+    digitalWrite(LED_B[i], LOW);
+  }
 
-//   // --- 3️⃣ Station-by-station red/green flash ---
-//   uint8_t startIndex = 0;
-//   const uint8_t stationPairCount[NUM_STATIONS] = {2, 6, 4, 4, 3, 2}; // pairs per station
+  delay(200);
 
-//   for (uint8_t st = 0; st < NUM_STATIONS; st++)
-//   {
-//     for (uint8_t f = 0; f < VEGAS_FLASHES; f++)
-//     {
-//       for (uint8_t j = 0; j < stationPairCount[st]; j++)
-//       {
-//         uint8_t idx = startIndex + j;
-//         LED_PAIR(idx, HIGH, LOW);
-//       }
-//       delay(200);
-//       for (uint8_t j = 0; j < stationPairCount[st]; j++)
-//       {
-//         uint8_t idx = startIndex + j;
-//         LED_PAIR(idx, LOW, HIGH);
-//       }
-//       delay(200);
-//     }
-//     // turn off all LEDs for this station before next
-//     for (uint8_t j = 0; j < stationPairCount[st]; j++)
-//     {
-//       uint8_t idx = startIndex + j;
-//       LED_PAIR(idx, LOW, LOW);
-//     }
-//     startIndex += stationPairCount[st];
-//   }
+  // --- 3️⃣ Station-by-station red/green flash ---
+  uint8_t startIndex = 0;
+  const uint8_t stationPairCount[NUM_STATIONS] = {2, 6, 4, 4, 3, 2}; // pairs per station
 
-//   delay(200);
+  for (uint8_t st = 0; st < NUM_STATIONS; st++)
+  {
+    for (uint8_t f = 0; f < VEGAS_FLASHES; f++)
+    {
+      for (uint8_t j = 0; j < stationPairCount[st]; j++)
+      {
+        uint8_t idx = startIndex + j;
+        LED_PAIR(idx, HIGH, LOW);
+      }
+      delay(200);
+      for (uint8_t j = 0; j < stationPairCount[st]; j++)
+      {
+        uint8_t idx = startIndex + j;
+        LED_PAIR(idx, LOW, HIGH);
+      }
+      delay(200);
+    }
+    // turn off all LEDs for this station before next
+    for (uint8_t j = 0; j < stationPairCount[st]; j++)
+    {
+      uint8_t idx = startIndex + j;
+      LED_PAIR(idx, LOW, LOW);
+    }
+    startIndex += stationPairCount[st];
+  }
 
-//   // --- 4️⃣ Global RED/GREEN flashes ---
-//   for (uint8_t f = 0; f < VEGAS_FLASHES; f++)
-//   {
-//     // all RED
-//     for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-//     {
-//       LED_PAIR(i, HIGH, LOW);
-//     }
-//     delay(300);
-//     // all GREEN
-//     for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-//     {
-//       LED_PAIR(i, LOW, HIGH);
-//     }
-//     delay(300);
-//   }
+  delay(200);
 
-//   // --- turn everything off ---
-//   for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-//   {
-//     LED_PAIR(i, LOW, LOW);
-//   }
+  // --- 4️⃣ Global RED/GREEN flashes ---
+  for (uint8_t f = 0; f < VEGAS_FLASHES; f++)
+  {
+    // all RED
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+    {
+      LED_PAIR(i, HIGH, LOW);
+    }
+    delay(300);
+    // all GREEN
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+    {
+      LED_PAIR(i, LOW, HIGH);
+    }
+    delay(300);
+  }
 
-// #if DEBUG_SERIAL
-//   Serial.println(F("[VEGAS] LED test complete."));
-// #endif
-// }
+  // --- turn everything off ---
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+  {
+    LED_PAIR(i, LOW, LOW);
+  }
+
+  // Serial.println(F("[VEGAS] LED test complete."));
+}
+#endif
 
 // ----------------------------- SETUP ----------------------------------
 // ============================================================================
@@ -1422,6 +1495,12 @@ void runVegasMode()
 // ============================================================================
 void setup()
 {
+  // 1. Disable WDT immediately (Mega can get stuck in WDT loops at boot)
+  wdt_disable();
+
+  // 2. Power Stabilization (Give the W5500 time to power up)
+  delay(1000);
+
 #if DEBUG_SERIAL
   Serial.begin(115200);
   while (!Serial)
@@ -1429,22 +1508,17 @@ void setup()
   }
   Serial.println();
   Serial.println(F("================================================"));
-  Serial.println(F(" Main Controller Firmware"));
+  Serial.println(F(" Main Controller Firmware - STABLE BOOT FIX"));
   Serial.print(F(" Version: "));
   Serial.println(FIRMWARE_VERSION);
   Serial.println(F("================================================"));
   Serial.println(F("[BOOT] Main_Controller_Binary_Detailed starting..."));
 #endif
 
-  // ✅ Disable watchdog timer for setup
-  // wdt_enable(WDTO_8S);
-  wdt_disable(); // Always disable first at boot — critical on Mega
-  delay(10);     // Give it a moment
-
-  // --- Ethernet setup
-  pinMode(53, OUTPUT);
-  digitalWrite(53, HIGH);
-  initEthernet();
+  // 3. Setup Output Pins for LED/Buzzer early (safe state)
+  // ✅ Buzzer output
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
 
   // --- LED setup
   for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
@@ -1454,27 +1528,30 @@ void setup()
     LED_PAIR(i, LOW, LOW);
   }
 
+  // 4. Initialize Ethernet (Blocking until success)
+  initEthernet();
+
+  // 5. Initialize MCP23017
+  // We do this AFTER Ethernet to ensure SPI bus traffic has settled
   // ✅ Initialize MCP23017 I/O expander
   mcp.begin_I2C(MCP_I2C_ADDR);
 
+  // Configure MCP Inputs
   // ✅ Configure all 16 pins as INPUT_PULLUP
   for (uint8_t p = 0; p < 8; p++)
   {
-    mcp.pinMode(p, INPUT_PULLUP);     // GPA0-7
-    mcp.pinMode(p + 8, INPUT_PULLUP); // GPB0-7
+    mcp.pinMode(p, INPUT_PULLUP);
+    mcp.pinMode(p + 8, INPUT_PULLUP);
   }
-
-  // ✅ Configure interrupts (so mcpIntA_Flag / mcpIntB_Flag get triggered)
   mcp.setupInterrupts(false, false, LOW);
   for (uint8_t p = 0; p < 16; p++)
   {
     mcp.setupInterruptPin(p, CHANGE);
   }
-
-  // ✅ Setup interrupt input pins on Arduino
   pinMode(MCP_INTA_PIN, INPUT_PULLUP);
   pinMode(MCP_INTB_PIN, INPUT_PULLUP);
 
+  // 6. Initialize State Arrays
   // ✅ Initial snapshot of MCP ports (initialize stableState)
   mcpStateA = mcp.readGPIO(0);
   mcpStateB = mcp.readGPIO(1);
@@ -1485,68 +1562,130 @@ void setup()
   attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
                   { mcpIntB_Flag = true; }, FALLING);
 
-  // ---------- stableState ----------
-  // ✅ Add to stableState - Physical switch inputs (direct pins)
+  // Read Physical Inputs
   for (uint8_t i = 0; i < NUM_INPUTS; i++)
   {
     pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
-    stableState[i] = !digitalRead(PHYS_SW_PINS[i]); // active-low
+    stableState[i] = !digitalRead(PHYS_SW_PINS[i]);
   }
 
-  // ✅ Add to stableState - MCP switch inputs
+  // Read MCP Inputs
   for (uint8_t b = 0; b < 8; b++)
   {
     stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
     stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
   }
 
-  // ✅ LED Outputs
-  for (uint8_t k = 0; k < NUM_LED_PAIRS; k++)
-  {
-    pinMode(LED_A[k], OUTPUT);
-    pinMode(LED_B[k], OUTPUT);
-    LED_PAIR(k, LOW, HIGH); // initialize GREEN
-  }
-
-  // ✅ Buzzer output
-  pinMode(PIN_BUZZER, OUTPUT);
-  digitalWrite(PIN_BUZZER, LOW);
-
-  // ✅ Vegas LED Diagnostic (keep)
+  // 7. Vegas Mode
   if (ENABLE_VEGAS_MODE)
   {
-    uint32_t t0 = millis();
     runVegasMode();
-    uint32_t elapsed = millis() - t0;
-#if DEBUG_SERIAL
-    Serial.print(F("[VEGAS] Duration: "));
-    Serial.print(elapsed);
-    Serial.println(F(" ms"));
-    Serial.println(F("------------------------------------------------"));
-#endif
   }
 
-  // ✅ EEPROM Load
-  loadStationStatesFromEEPROM(); // restore last enable/disable states
+  // 8. EEPROM Load
+  loadStationStatesFromEEPROM();
 
-  // ✅ Enable watchdog timer (keep it)
-  wdt_enable(WDTO_8S); // Enable only after setup() fully completes
-
-  // TEMP TEMP TEMP TEMP TEMP TEMP
-  Serial.println(F("[DEBUG] Initial pin voltages:"));
-  for (uint8_t i = 0; i < NUM_INPUTS; i++)
-  {
-    Serial.print(F("Pin "));
-    Serial.print(PHYS_SW_PINS[i]);
-    Serial.print(F(" = "));
-    Serial.println(digitalRead(PHYS_SW_PINS[i]));
-  }
-  // END TEMP TEMP TEMP TEMP TEMP TEMP
+  // 9. Enable Watchdog (Only now that we are safe)
+  wdt_enable(WDTO_8S);
 
 #if DEBUG_SERIAL
-  Serial.println(F("[INIT] Setup complete."));
+  Serial.println(F("[INIT] Setup complete. Entering Loop."));
 #endif
 }
+
+//   // 2. SPI Safety Configuration
+//   // --- Ethernet setup
+//   // Before doing anything, ensure the Mega's Hardware SS is OUTPUT HIGH
+//   // and the Ethernet CS is OUTPUT HIGH (Deselected).
+//   pinMode(53, OUTPUT); // Mega Hardware SS
+//   digitalWrite(53, HIGH);
+
+//   pinMode(ETH_CS, OUTPUT); // W5500 CS
+//   digitalWrite(ETH_CS, HIGH);
+
+//   pinMode(ETH_RESET, OUTPUT);
+//   // Ensure reset pin starts High before the pulse function toggles it
+//   digitalWrite(ETH_RESET, HIGH);
+
+//   // ✅ Configure all 16 pins as INPUT_PULLUP
+//   for (uint8_t p = 0; p < 8; p++)
+//   {
+//     mcp.pinMode(p, INPUT_PULLUP);     // GPA0-7
+//     mcp.pinMode(p + 8, INPUT_PULLUP); // GPB0-7
+//   }
+
+//   // ✅ Configure interrupts (so mcpIntA_Flag / mcpIntB_Flag get triggered)
+//   mcp.setupInterrupts(false, false, LOW);
+//   for (uint8_t p = 0; p < 16; p++)
+//   {
+//     mcp.setupInterruptPin(p, CHANGE);
+//   }
+
+//   // ✅ Setup interrupt input pins on Arduino
+//   pinMode(MCP_INTA_PIN, INPUT_PULLUP);
+//   pinMode(MCP_INTB_PIN, INPUT_PULLUP);
+
+//   // ---------- stableState ----------
+//   // ✅ Add to stableState - Physical switch inputs (direct pins)
+//   for (uint8_t i = 0; i < NUM_INPUTS; i++)
+//   {
+//     pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
+//     stableState[i] = !digitalRead(PHYS_SW_PINS[i]); // active-low
+//   }
+
+//   // ✅ Add to stableState - MCP switch inputs
+//   for (uint8_t b = 0; b < 8; b++)
+//   {
+//     stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
+//     stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
+//   }
+
+//   // ✅ LED Outputs
+//   for (uint8_t k = 0; k < NUM_LED_PAIRS; k++)
+//   {
+//     pinMode(LED_A[k], OUTPUT);
+//     pinMode(LED_B[k], OUTPUT);
+//     LED_PAIR(k, LOW, HIGH); // initialize GREEN
+//   }
+
+//   // ✅ Vegas LED Diagnostic (keep)
+//   if (ENABLE_VEGAS_MODE)
+//   {
+//     uint32_t t0 = millis();
+//     runVegasMode();
+//     uint32_t elapsed = millis() - t0;
+// #if DEBUG_SERIAL
+//     Serial.print(F("[VEGAS] Duration: "));
+//     Serial.print(elapsed);
+//     Serial.println(F(" ms"));
+//     Serial.println(F("------------------------------------------------"));
+// #endif
+//   }
+
+//   // ✅ EEPROM Load
+//   loadStationStatesFromEEPROM(); // restore last enable/disable states
+
+//   // ✅ Enable watchdog timer (keep it)
+//   wdt_enable(WDTO_8S); // Enable only after setup() fully completes
+
+//   // TEMP TEMP TEMP TEMP TEMP TEMP
+//   Serial.println(F("[DEBUG] Initial pin voltages:"));
+//   for (uint8_t i = 0; i < NUM_INPUTS; i++)
+//   {
+//     Serial.print(F("Pin "));
+//     Serial.print(PHYS_SW_PINS[i]);
+//     Serial.print(F(" = "));
+//     Serial.println(digitalRead(PHYS_SW_PINS[i]));
+//   }
+//   // END TEMP TEMP TEMP TEMP TEMP TEMP
+
+// #if DEBUG_SERIAL
+//   Serial.println(F("[INIT] Setup complete."));
+// #endif
+
+//   // Enable Watchdog at the VERY END of setup
+//   wdt_enable(WDTO_8S);
+// }
 
 // ----------------------------- LOOP -----------------------------------
 // ============================================================================

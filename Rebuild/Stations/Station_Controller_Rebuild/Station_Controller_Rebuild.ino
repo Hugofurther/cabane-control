@@ -2,8 +2,8 @@
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
 #define HAS_TM1637 1        // Set to true when a display is connected
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED
-#define DEBUG_SERIAL 0 // for the else clauses
-#define DEBUG_LEVEL 0                                     // 0 = Off, 1 = 
+#define DEBUG_SERIAL 0      // for the else clauses
+#define DEBUG_LEVEL 0       // 0 = Off, 1 =
 
 // ============================================================
 // 🧩 SECTION: FORWARD DECLARATIONS (tell compiler these exist later)
@@ -17,6 +17,7 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 #include <EEPROM.h>
+#include <avr/wdt.h>
 
 #if HAS_TM1637
 #include <TM1637Display.h>
@@ -28,7 +29,6 @@ TM1637Display display(CLK_PIN, DIO_PIN);
 // ============================================================
 // 🚧 SECTION: DEBUG CONFIG
 // ============================================================
-
 
 // Limit how often serial debug lines are printed
 // ---------------- DEBUG CONFIG ----------------
@@ -69,12 +69,12 @@ const uint8_t OUT_PINS[OUT_COUNT] = {2, 3, 4, 5, 6, 7};
 const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5};
 #else
 // Use D0, D1 as inputs when not debugging
-const uint8_t IN_COUNT = 7;
-const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5, 1, 0};
+#define IN_COUNT 7
+const uint8_t IN_PINS[IN_COUNT] = {A1, A2, A3, A4, A5, 0, 1};
 #endif
 
 // --- Extra analog input (optional) ---
-#define EXTRA_INPUT = A6; // Analog input with 10 kΩ pull-up, threshold <200 = pressed
+// #define EXTRA_INPUT = A6; // Analog input with 10 kΩ pull-up, threshold <200 = pressed
 
 // --- Pushbutton (Cycle Station) ---
 #define BTN_PIN A7 // Analog-only button (10 kΩ pull-up to +5 V, button → GND)
@@ -140,13 +140,82 @@ uint8_t linkDisplay[4] = {SEGMENT_L, SEGMENT_I, SEGMENT_n, SEGMENT_K};
 #endif
 
 // -------------------- UTILITIES --------------------
+// ============================================================
+// 🔧 ROBUST ETHERNET INITIALIZATION (Nano Version)
+// ============================================================
+
 void ethernetResetPulse()
 {
+  // Safety: Ensure SS/CS is high to prevent SPI bus contention during reset
+  pinMode(ETH_CS, OUTPUT);
+  digitalWrite(ETH_CS, HIGH);
+
+  // Long, Stable Reset Sequence (Matches Main Controller)
   pinMode(ETH_RST, OUTPUT);
   digitalWrite(ETH_RST, LOW);
-  delay(10);
+  delay(200);
   digitalWrite(ETH_RST, HIGH);
-  delay(100);
+  delay(800);
+}
+
+// Unified initialization function
+// input: fullReset -> if true, performs physical hardware reset + manual handshake
+//                   -> if false, just reconfigures library IP (soft restart)
+void initEthernet(bool fullReset)
+{
+  if (fullReset)
+  {
+    Serial.println(F("[NET] Hardware Init (Hybrid Mode)..."));
+
+    // 1. MANUAL SPI START
+    SPI.begin();
+
+    // 2. HARD RESET
+    ethernetResetPulse();
+
+    // 3. MANUAL HANDSHAKE (Trust Verify)
+    // Talk to the chip manually to ensure it's awake
+    SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(ETH_CS, LOW);
+    SPI.transfer(0x00);
+    SPI.transfer(0x39);
+    SPI.transfer(0x00);
+    byte version = SPI.transfer(0x00);
+    digitalWrite(ETH_CS, HIGH);
+    SPI.endTransaction();
+
+    if (version == 0x04)
+    {
+      Serial.println(F("[NET] Manual Handshake: SUCCESS"));
+    }
+    else
+    {
+      Serial.print(F("[NET] WARNING: Handshake read 0x"));
+      Serial.println(version, HEX);
+    }
+  }
+
+  // 4. FORCE LIBRARY START
+  // We skip hardwareStatus() check because it can be unreliable
+  Ethernet.init(ETH_CS);
+  Ethernet.begin(mac, ip);
+  Udp.begin(UDP_PORT);
+
+  // 5. Configure Retries
+  Ethernet.setRetransmissionCount(1);
+  Ethernet.setRetransmissionTimeout(200);
+
+  // 6. Verify
+  IPAddress local = Ethernet.localIP();
+  if (local[0] == 0 || local[0] == 255)
+  {
+    Serial.println(F("[NET] ERROR: Failed to configure IP."));
+  }
+  else
+  {
+    Serial.print(F("[NET] Ready. IP: "));
+    Serial.println(local);
+  }
 }
 
 uint8_t xorChecksum(const uint8_t *data, uint8_t len)
@@ -396,7 +465,7 @@ bool checkStationIDConflict(uint8_t currentID)
   Udp.endPacket();
 
   uint32_t tStart = millis();
-  while (millis() - tStart < 1000)  // wait up to 1s for reply
+  while (millis() - tStart < 1000) // wait up to 1s for reply
   {
     int size = Udp.parsePacket();
     if (size >= 3)
@@ -411,7 +480,7 @@ bool checkStationIDConflict(uint8_t currentID)
         if (status == 0xFF)
         {
           Serial.println(F("[HS] Conflict reply received"));
-          return true;  // confirmed conflict
+          return true; // confirmed conflict
         }
         else
         {
@@ -428,84 +497,82 @@ bool checkStationIDConflict(uint8_t currentID)
 }
 
 // ============================================================
-// 🌐 SECTION: NETWORK RECONFIGURATION
+// 🌐 ROBUST NETWORK RECONFIGURATION + ACTIVE PING SUPPORT
 // ============================================================
-void reconfigureNetwork(bool fullReset = false)
+void reconfigureNetwork(bool fullReset)
 {
-  if (fullReset)
-  {
-    ethernetResetPulse();
-    delay(200);
-  }
-
+  // 1. Setup initial credentials
   ip = IPAddress(192, 168, 1, 10 + STATION_ID);
   mac[5] = 0x10 + STATION_ID;
 
-  Ethernet.begin(mac, ip);
-  Udp.begin(UDP_PORT);
+  // 2. Init Hardware
+  initEthernet(fullReset);
 
-#if DEBUG_SERIAL
-  Serial.print(F("[NET] Network reconfigured for Station "));
-  Serial.println(STATION_ID);
-  Serial.print(F("IP: "));
-  Serial.println(ip);
-  Serial.print(F("MAC: ...:"));
-  Serial.println(mac[5], HEX);
-#endif
-
-  // Wait briefly for link to come online
-  uint32_t start = millis();
-  while (Ethernet.linkStatus() != LinkON && millis() - start < 3000)
+  // 3. Link Wait
+  if (fullReset)
   {
-    delay(100);
-  }
-
-  // ============================================================
-  // 🟨 Perform ID Handshake + Conflict Resolution with Main
-  // ============================================================
-  if (Ethernet.linkStatus() == LinkON)
-  {
-    for (uint8_t tries = 0; tries < 6; tries++)
+    uint32_t start = millis();
+    while (Ethernet.linkStatus() != LinkON && millis() - start < 3000)
     {
-      // 🔹 Ask main whether this ID is already in use
-      bool conflict = checkStationIDConflict(STATION_ID);
-
-      if (!conflict)
-      {
-  #if DEBUG_SERIAL
-        Serial.println(F("[CLAIM] ID accepted or main offline — proceeding."));
-  #endif
-        break; // exit the loop, ID OK
-      }
-
-      // 🔸 Conflict detected → increment and retry
-      STATION_ID++;
-      if (STATION_ID > 5)
-        STATION_ID = 0;
-      saveStationID(STATION_ID);
-
-      ip = IPAddress(192, 168, 1, 10 + STATION_ID);
-      mac[5] = 0x10 + STATION_ID;
-      Ethernet.begin(mac, ip);
-      Udp.begin(UDP_PORT);
-
-  #if DEBUG_SERIAL
-      Serial.print(F("[CLAIM] Conflict detected. Retrying with Station ID "));
-      Serial.println(STATION_ID);
-  #endif
-
-      delay(250 + random(0, 200)); // small back-off delay
+      delay(100);
+      wdt_reset();
     }
   }
-  else
+
+  // 4. FAST HANDSHAKE
+  // We rely on the Main Controller's "Active Ping" to distinguish
+  // between a Ghost Session (my old self) and a Real Conflict.
+
+  if (Ethernet.linkStatus() == LinkON)
   {
-  #if DEBUG_SERIAL
-    Serial.println(F("[CLAIM] Link down — skipping handshake."));
-  #endif
+    // Try the current ID first
+    bool conflict = checkStationIDConflict(STATION_ID);
+
+    if (!conflict)
+    {
+// Success! Main Controller verified we are the only one.
+#if DEBUG_SERIAL
+      Serial.println(F("[NET] ID Accepted."));
+#endif
+    }
+    else
+    {
+// Real Conflict detected (Main Controller pinged someone else).
+// Search for a new ID.
+#if DEBUG_SERIAL
+      Serial.println(F("[NET] ID Taken. Searching..."));
+#endif
+
+      for (uint8_t offset = 1; offset < 6; offset++)
+      {
+        uint8_t tryID = (STATION_ID + offset) % 6;
+
+        // Temporary IP config for the check
+        // (Note: We don't strictly need to change IP to ask, but it keeps logic clean)
+        bool check = checkStationIDConflict(tryID);
+
+        if (!check)
+        {
+          // Found a free one
+          STATION_ID = tryID;
+          saveStationID(STATION_ID);
+
+          // Apply new Network settings permanently
+          ip = IPAddress(192, 168, 1, 10 + STATION_ID);
+          mac[5] = 0x10 + STATION_ID;
+          initEthernet(false); // Soft re-init
+
+          break;
+        }
+        delay(50);
+        wdt_reset();
+      }
+    }
   }
 
-  // Resume heartbeat timing
+  // 5. Reset State
   tHeartbeat = millis() - HEARTBEAT_MS;
+  lastCmdMs = millis();
 
 #if HAS_TM1637
   displayMode = (Ethernet.linkStatus() == LinkON) ? DISP_NORMAL : DISP_LINK;
@@ -672,6 +739,12 @@ void applyBitfieldLSB(uint8_t bits)
 // -------------------------- Setup -----------------------------------
 void setup()
 {
+  // 1. Disable Watchdog (Nano can get stuck in WDT loops too)
+  wdt_disable();
+
+  // 2. Power Settle
+  delay(500);
+
 #if DEBUG_SERIAL
   Serial.begin(115200);
   while (!Serial)
@@ -683,12 +756,13 @@ void setup()
 #endif
 
   // --- Random seed and Ethernet reset pin reuse ---
-  randomSeed(analogRead(ETH_RST) ^ micros());
+  randomSeed(analogRead(A0) ^ micros());
 
+  // --- Pin Setup ---
   // A7 is analog-only on Nano; internal pull-up cannot be enabled.
   // Use external 10k pull-up to +5V (as you wired).
   // pinMode(BTN_PIN, INPUT_PULLUP); // no effect on A7
-  pinMode(BTN_PIN, INPUT); // NOTE: A7 is analog-only; pinMode() has no effect. Button read via analogRead(A7).
+  pinMode(BTN_PIN, INPUT); // A7 is Analog Input Only
 
   for (uint8_t i = 0; i < OUT_COUNT; i++)
   {
@@ -697,90 +771,38 @@ void setup()
   }
 
   for (uint8_t i = 0; i < IN_COUNT; i++)
+  {
     pinMode(IN_PINS[i], INPUT_PULLUP);
+  }
 
-  loadStationID(); // ensure STATION_ID is valid first
+  // --- Load ID ---
+  loadStationID();
+  pendingID = STATION_ID;
 
-  pendingID = STATION_ID; // make sure both synced
-
-// Display settings
+// --- Display Init ---
 #if HAS_TM1637
   display.setBrightness(0x0F);
   if (ENABLE_VEGAS_MODE)
   {
-    vegasMode(); // Run the TM1637 test sequence
+    vegasMode();
     displayMode = DISP_NORMAL;
   }
-
   showStationID();
 #endif
 
-  ip = IPAddress(192, 168, 1, 10 + STATION_ID); // Compute IP dynamically from Station ID
-  mac[5] = 0x10 + STATION_ID;                   // make last byte unique
+  // --- PIN SAFETY (Nano Specific) ---
+  // Pin 10 is SS on Nano. It MUST be output for SPI Master.
+  // It is also your ETH_CS, so this handles both.
+  pinMode(ETH_CS, OUTPUT);
+  digitalWrite(ETH_CS, HIGH);
 
-  // turn A0 into a digital output for RESET and pulse it
-  pinMode(ETH_RST, OUTPUT);
-  digitalWrite(ETH_RST, LOW);
-  delay(10);
-  digitalWrite(ETH_RST, HIGH); // keep high after reset pulse
-  delay(100);
-
-  // SPI + CS safety
-  pinMode(10, OUTPUT);
-  digitalWrite(10, HIGH); // deselect W5500 before init
-
-  // // --- for Request Station Id Connection ---
-  // while (!requestIPClaim(STATION_ID))
-  // {
-  //   STATION_ID++;
-  //   if (STATION_ID > 5)
-  //     STATION_ID = 0;
-  //   saveStationID(STATION_ID);
-  //   DBG(3,
-  //       Serial.print(F("[NET] ID conflict; trying next ID "));
-  //       Serial.println(STATION_ID););
-  //   delay(200 + random(0, 200)); // back-off
-  // }
-
-  Ethernet.init(ETH_CS);
-  ethernetResetPulse();
-  Ethernet.begin(mac, ip);
-  // delay(100);
-  Udp.begin(UDP_PORT);
-  delay(500);
-
-  // ✅ Run initial network setup and handshake
+  // --- NETWORK INIT ---
+  // This now uses the robust "Hybrid" logic
   reconfigureNetwork(true);
 
-  EthernetLinkStatus linkStatus = Ethernet.linkStatus();
-  if (linkStatus != LinkON)
-  {
-#if DEBUG_SERIAL
-    Serial.println(F("[NET] Link not detected, retrying init..."));
-#endif
-    delay(1000);
-    ethernetResetPulse();
-    Ethernet.begin(mac, ip);
-    // delay(100);
-    Udp.begin(UDP_PORT);
-    delay(500);
-  }
-
-#if DEBUG_SERIAL
-  if (Ethernet.linkStatus() == LinkON)
-    Serial.println(F("[NET] Ethernet link OK"));
-  else
-    Serial.println(F("[NET] Link still down after retry"));
-#endif
-
-  uint32_t now = millis();
-  lastCmdMs = now;
-  tHeartbeat = now;
-
-#if DEBUG_SERIAL
-  Serial.print(F("[NET] IP="));
-  Serial.println(ip);
-#endif
+  // --- Watchdog Start ---
+  // Only enable if you are using wdt_reset() in the loop
+  // wdt_enable(WDTO_4S);
 }
 
 // -------------------------- Loop ------------------------------------
@@ -918,20 +940,53 @@ void loop()
     // ============================================================
 
     uint8_t feedbackBits = 0;
-    for (uint8_t i = 0; i < IN_COUNT; i++)
+
+    // 1. Read Standard Inputs (A1-A5) -> Bits 0, 1, 2, 3, 4
+    // We cap at 5 because Bit 5 and 6 are handled by A6 logic
+    for (uint8_t i = 0; i < IN_COUNT && i < 5; i++)
     {
-      bool active = false;
-      if (IN_PINS[i] == A6)
+      if (digitalRead(IN_PINS[i]) == LOW) // Active Low
+        feedbackBits |= (1 << i);
+    }
+
+    // 2. Read Multiplexed Inputs on A6 (Replaces D0/D1)
+    int valA6 = analogRead(A6);
+
+    // CALIBRATED THRESHOLDS based on your data:
+    // Both OFF: 1023
+    // Sw 7 Only: 634
+    // Sw 6 Only: 572
+    // Both ON: 427
+
+    bool sw6_Active = false; // Old D1
+    bool sw7_Active = false; // Old D0
+
+    if (valA6 < 850)
+    { // If voltage is < 4.1V, something is ON
+      if (valA6 < 500)
       {
-        active = (analogRead(A6) < 200); // analog threshold
+        // Both ON (~427)
+        sw6_Active = true;
+        sw7_Active = true;
+      }
+      else if (valA6 < 605)
+      {
+        // Switch 6 Only (~572)
+        // Range: 500 to 605
+        sw6_Active = true;
       }
       else
       {
-        active = (digitalRead(IN_PINS[i]) == LOW); // active-low logic
+        // Switch 7 Only (~634)
+        // Range: 605 to 850
+        sw7_Active = true;
       }
-      if (active)
-        feedbackBits |= (1 << i);
     }
+
+    if (sw6_Active)
+      feedbackBits |= (1 << 5); // Bit 5
+    if (sw7_Active)
+      feedbackBits |= (1 << 6); // Bit 6
 
     // ---- FEEDBACK SEND DECISION ----
     bool changed = (feedbackBits != lastFeedbackBits);
@@ -943,7 +998,7 @@ void loop()
     {
       lastFeedbackBits = feedbackBits;
 
-      // 🧠 Invert all bits (1→0, 0→1)
+      // 🧠 Invert all bits (1→0, 0→1) so 0 means ON (active low logic for Main)
       uint8_t invertedBits = ~feedbackBits;
 
       uint8_t fb[5];
@@ -958,9 +1013,7 @@ void loop()
       Udp.endPacket();
 
       firstFeedbackSent = true;
-      DBG(1,
-          Serial.print(F("[FB] Sent bits="));
-          Serial.println(invertedBits, BIN););
+      DBG(1, Serial.print(F("[FB] Sent bits=")); Serial.println(invertedBits, BIN););
     }
 
     lastLinkState = linkNow;
@@ -1012,13 +1065,6 @@ void loop()
         displayMode = DISP_NORMAL;
 #endif
     }
-
-    //     DBG(1,
-    //         Serial.println(F("[WDG] No command received — showing ERR on display.")););
-    //     lastCmdRecent = false;
-    // #if HAS_TM1637
-    //     displayMode = DISP_ERROR; // switch to error blink
-    // #endif
   }
 
   // --- Update Display Once per loop ---
