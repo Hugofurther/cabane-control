@@ -233,7 +233,7 @@ const LedMap LED_MAP[] = {
     {1, 1, 1, 1, 0, 1}, // pair 1: Station 1 A2, blink if ST1 offline - Transport Pump 2
     {2, 1, 2, 1, 1, 2}, // pair 2: Station 1 A3, blink if ST1 offline - Vacuum 1
     {3, 1, 2, 1, 1, 3}, // pair 3: Station 1 A3, blink if ST1 offline - Vacuum 2
-    {4, 1, 3, 1, 0, 4}, // pair 4: Station 1 A4, blink if ST1 offline - Vic T1
+    {4, 1, 3, 1, 0, 4}, // pair 4: Station 1 A4, blink if ST1 offline - Vid T1
     {5, 1, 4, 1, 0, 5}, // pair 5: Station 1 A5, blink if ST1 offline - Overture T2
     {6, 1, 5, 1, 0, 6}, // pair 6: Station 1 A6 - val 573, blink if ST1 offline - Vid T2
     {7, 1, 6, 1, 0, 7}, // pair 7: Station 1 A6 - val 634, blink if ST1 offline - VId st2 -> St1

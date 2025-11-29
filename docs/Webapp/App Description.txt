@@ -1,0 +1,41 @@
+Now, I would like you to create a web app with iOS app and an Android app for mobile and tablet formats versions, to replicate the Main Controller and override it when instructed.
+
+The web app lives on a Raspberry Pi Zero with a ethernet shield and acts as the server users connect to via Internet. The Default boot for the Raspberry Pi is to automatically launch the Server and the web app.
+
+The Raspberry Pi needs to be accessible via internet on a Starlink ISP connection.
+
+The web app requires the user to login with a secure Authentication, with optionally 2 factor Auth. When users log in, the top of the GUI screen displays the name of the user acting as the Main Controlling and overriding any other instance of the Main Controller. If the Main Controller has control, "Cabane" would be displayed instead of a username.
+
+When overridden by a web app user, the 2 thermostat switches and the Buzzer ledPairs of the Main Controller start blinking GREEN to indicate it is being overridden. The other ledPairs of the Main Controller represents the actual feedback of the stations so the user of the Main Controller can adjust the switches to reflect the override before regaining control. For the Main Controller to regain control, push buttons at index 0 and 1 are pressed simultaneously for 2 seconds after which all lights blink GREEN 5 times to let the user release the buttons and the Main Controller return to normal operation and being the device controlling the stations. "Cabane" is then displayed at the top of the app GUI screen.
+
+For the Web and mobile device apps, beside the name of the user in control or "Cabane" there should be a label indicating wetter the interface is communicating with the sever ( online / offline ) as well as a button to gain control and override which ever device controlling the stations. When pressing the button, there should be a confirmation pop up up with an authentication being presented before gaining control to assure the user is granted access and it is what the user wants to do. Once the user's device is overriding the control of the system, the button to gain control turns in to a release button for the user to release control.
+
+After gaining control on the app, when the user decides to release controls, controls return to the Main controller automatically. If nothing is different from the Main Controller, controls return to Main Controller without warning. If any of the switches position were changed on the app and the user wants to release control back to the Main Controller, a pop up warning window is presented displaying the differences between the controlling user and the Main Controller to make the user aware of the consequences and assures the user still wants to carry on with the release of the controls back to the Main Controller, which would change the state of the controls back to whatever the Main Controller is set on.
+
+If the app controlling the system looses internet, the state of the systems remains the same until either another user or the Main Controller takes control.
+
+The server keeps a timestamped log of user logging in, taking control and releasing control as well as any switch and push button taken and feedback from stations. Only changes are logged, not every read.
+
+A messaging system for users to communicate and leave notes is integrated in the web app and served by the Raspberry Pi. Communications are logged with timestamps and username. There should be a button on the web app to bring up a messaging window. Messages can be send globally or personally to another user. There would be a user list on the sidebar of the messaging window. A touchscreen keyboard can be used for the messaging of a physical keyboard an mouse if accessing the app on a computer or raspberry pie.
+
+Since buttons on a small screen might be too small and pressing the wrong button could have negative impact on the system, when on a small screen and clicking on a station, a pop up window representing a station clicked occupying the entire screen is displayed with a button to dismiss it and return to the main screen after making changes or not.
+
+The GUI needs to represent momentary on push buttons (switches index 0, 1, 12, 13, 16, 19) and toggle switches on the up / down axis (switches index 2-7, 9-11, 14, 15, 17, 18, 20-23).
+For the Push buttons, there should be a wide halo glow around the button when it is pushed with the color of its ledPair. I need recommendation and suggestions for the toggle switches. Please help me with this.
+
+The app should be clear and easy to use and visually appealing. There is a splash screen when opening the app while loading all necessary for authentication. Once the necessary loaded, the authentication screen is displayed and the user can log in to the main GUI representing the Main Controller panel.
+
+The authentication and account creation system lives on the server ideally. When creating an account, the account needs to be reviewed by the administrator. When a new user is registering an account, an email is sent to the administrator to review and approve the user. The email sent to the administrator contains an "approve" or "reject" link application of the account which automatically emails the user with a response to the new account request. The authentication system has an option to reset a user's password as well as an option for 2 facto authentication or using the biometrics of the iOS device and Android.
+
+I'm including the Main Controller panel so you understand what the GUI of the app needs to be.
+
+
+---
+
+Additions:
+
+There should be a settings link to access the users' settings.
+- Username
+- Password
+- Email Address
+- etc.
