@@ -70,13 +70,14 @@ EthernetUDP Udp; // Single socket for RX/TX
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 
 // Fixed IPs per design
-IPAddress ipMain(192, 168, 1, 220); // UPDATED: Main Controller is .220
-IPAddress ipS0(192, 168, 1, 210);   // UPDATED: Station 0 is .210
-IPAddress ipS1(192, 168, 1, 211);   // UPDATED: Station 1 is .211
-IPAddress ipS2(192, 168, 1, 212);   // UPDATED: Station 2 is .212
-IPAddress ipS3(192, 168, 1, 213);   // UPDATED: Station 3 is .213
-IPAddress ipS4(192, 168, 1, 214);   // UPDATED: Station 4 is .214
-IPAddress ipS5(192, 168, 1, 215);   // UPDATED: Station 5 is .215
+IPAddress ipServer(192, 168, 1, 200); // Server is .200
+IPAddress ipMain(192, 168, 1, 220); // Main Controller is .220
+IPAddress ipS0(192, 168, 1, 210);   // Station 0 is .210
+IPAddress ipS1(192, 168, 1, 211);   // Station 1 is .211
+IPAddress ipS2(192, 168, 1, 212);   // Station 2 is .212
+IPAddress ipS3(192, 168, 1, 213);   // Station 3 is .213
+IPAddress ipS4(192, 168, 1, 214);   // Station 4 is .214
+IPAddress ipS5(192, 168, 1, 215);   // Station 5 is .215
 
 // ============================================================
 // 🔔 BUZZER ALERT MODE CONFIGURATION
