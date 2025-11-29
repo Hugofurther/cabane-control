@@ -54,6 +54,38 @@ router.post('/auth/login', (req, res) => {
     });
 });
 
+// GET /api/auth/me
+router.get('/auth/me', authenticateToken, (req, res) => {
+    // Return info about the token holder
+    res.json({
+        id: req.user.id,
+        username: req.user.username,
+        role: req.user.role
+    });
+});
+
+// ============================================================
+// 🔑 Admin Only
+// ============================================================
+
+// GET /api/users (Admin Only)
+router.get('/users', authenticateToken, requireAdmin, (req, res) => {
+    db.all("SELECT id, username, email, role, status, created_at FROM users", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.json(rows);
+    });
+});
+
+// POST /api/users/approve (Admin Only)
+router.post('/users/approve', authenticateToken, requireAdmin, (req, res) => {
+    const { userId } = req.body;
+    db.run("UPDATE users SET status = 'ACTIVE' WHERE id = ?", [userId], function (err) {
+        if (err) return res.status(500).json({ error: "Update failed" });
+        res.json({ success: true });
+        // TODO: Send Email Notification to User
+    });
+});
+
 // ============================================================
 // 🏭 CONTROL (Protected)
 // ============================================================
@@ -87,6 +119,42 @@ router.post('/control/toggle', authenticateToken, (req, res) => {
 
     logicEngine.toggleSwitch(index, value);
     res.json({ success: true });
+});
+
+// ============================================================
+// 📩 MESSAGING
+// ============================================================
+
+// GET /api/messages
+router.get('/messages', authenticateToken, (req, res) => {
+    // Get last 50 global messages OR messages to/from this user
+    const sql = `
+    SELECT m.id, m.content, m.timestamp, u.username as sender 
+    FROM messages m 
+    JOIN users u ON m.sender_id = u.id
+    WHERE m.recipient_id IS NULL OR m.recipient_id = ? OR m.sender_id = ?
+    ORDER BY m.timestamp DESC LIMIT 50
+  `;
+
+    db.all(sql, [req.user.id, req.user.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.json(rows.reverse()); // Send oldest first for chat UI
+    });
+});
+
+// POST /api/messages
+router.post('/messages', authenticateToken, (req, res) => {
+    const { content, recipientId } = req.body;
+
+    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, content) VALUES (?, ?, ?)");
+    stmt.run(req.user.id, recipientId || null, content, function (err) {
+        if (err) return res.status(500).json({ error: "Send failed" });
+
+        // Broadcast to Websockets immediately
+        // Note: We need to import 'io' here or emit via LogicEngine helper
+        // For now, simpler to just save. The Frontend will rely on polling or we add socket emit later.
+        res.json({ success: true, id: this.lastID });
+    });
 });
 
 module.exports = router;
