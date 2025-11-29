@@ -505,10 +505,10 @@ void reconfigureNetwork(bool fullReset)
   // 1. Setup initial credentials
   // UPDATED: IP is now 210 + StationID (e.g., ID 0 = .210, ID 1 = .211)
   ip = IPAddress(192, 168, 1, 210 + STATION_ID);
-  
+
   // MAC Last Byte: 0x10 + ID. We can keep this logic, it doesn't strictly need to match IP.
   // 0x10 = 16. So ID 0 has MAC ending in :10. This is fine and avoids conflicts.
-  mac[5] = 0x10 + STATION_ID; 
+  mac[5] = 0x10 + STATION_ID;
 
   // 2. Init Hardware
   initEthernet(fullReset);
@@ -550,24 +550,26 @@ void reconfigureNetwork(bool fullReset)
 
       for (uint8_t offset = 1; offset < 6; offset++)
       {
-         uint8_t tryID = (STATION_ID + offset) % 6;
-         
-         // Temporary IP config for the check
-         bool check = checkStationIDConflict(tryID);
-         
-         if (!check) {
-            // Found a free one
-            STATION_ID = tryID;
-            saveStationID(STATION_ID);
-            
-            // UPDATED: Apply new Network settings permanently (210 + ID)
-            ip = IPAddress(192, 168, 1, 210 + STATION_ID);
-            mac[5] = 0x10 + STATION_ID;
-            initEthernet(false); // Soft re-init
-            
-            break; 
-         }
-         delay(50); wdt_reset();
+        uint8_t tryID = (STATION_ID + offset) % 6;
+
+        // Temporary IP config for the check
+        bool check = checkStationIDConflict(tryID);
+
+        if (!check)
+        {
+          // Found a free one
+          STATION_ID = tryID;
+          saveStationID(STATION_ID);
+
+          // UPDATED: Apply new Network settings permanently (210 + ID)
+          ip = IPAddress(192, 168, 1, 210 + STATION_ID);
+          mac[5] = 0x10 + STATION_ID;
+          initEthernet(false); // Soft re-init
+
+          break;
+        }
+        delay(50);
+        wdt_reset();
       }
     }
   }
@@ -880,16 +882,17 @@ void loop()
       if (ok)
       {
         applyBitfieldLSB(dat);
-        lastCmdMs = now; 
+        lastCmdMs = now;
         lastCmdRecent = true;
 
         // 🔄 DYNAMIC MASTER HANDOVER
         // If this valid command came from a different IP (e.g., the Pi),
         // switch loyalty to that new IP so feedbacks go to the active controller.
         IPAddress senderIP = Udp.remoteIP();
-        if (senderIP != ipMain) {
-           ipMain = senderIP;
-           DBG(1, Serial.print(F("[NET] Master IP Changed to: ")); Serial.println(ipMain));
+        if (senderIP != ipMain)
+        {
+          ipMain = senderIP;
+          DBG(1, Serial.print(F("[NET] Master IP Changed to: ")); Serial.println(ipMain));
         }
 
 #if HAS_TM1637
@@ -937,7 +940,9 @@ void loop()
     hb[2] = 0x00;
     hb[3] = xorChecksum(hb, 3);
 
-    Udp.beginPacket(ipMain, UDP_PORT);
+    // OLD: Udp.beginPacket(ipMain, UDP_PORT);
+    // NEW: Send to Broadcast so everyone knows I am alive
+    Udp.beginPacket(ipBroadcast, UDP_PORT);
     Udp.write(hb, 4);
     Udp.endPacket();
 
@@ -1018,7 +1023,7 @@ void loop()
       fb[4] = fb[0] ^ fb[1] ^ fb[2] ^ fb[3];
 
       // SEND TO BROADCAST (So both Main and Pi see it)
-      Udp.beginPacket(ipBroadcast, UDP_PORT); 
+      Udp.beginPacket(ipBroadcast, UDP_PORT);
       Udp.write(fb, 5);
       Udp.endPacket();
 
