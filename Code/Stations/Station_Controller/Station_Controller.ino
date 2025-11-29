@@ -93,6 +93,7 @@ uint8_t lastFeedbackBits = 0;
 
 // -------------------- NETWORK --------------------
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x02, 0x10};
+IPAddress ipBroadcast(192, 168, 1, 255);
 IPAddress ipMain(192, 168, 1, 220); // UPDATED: Main controller is .220
 IPAddress ip(192, 168, 1, 211);     // Placeholder, will be recomputed
 const uint16_t UDP_PORT = 8888;
@@ -1007,8 +1008,6 @@ void loop()
     if (changed || force)
     {
       lastFeedbackBits = feedbackBits;
-
-      // 🧠 Invert all bits (1→0, 0→1) so 0 means ON (active low logic for Main)
       uint8_t invertedBits = ~feedbackBits;
 
       uint8_t fb[5];
@@ -1018,7 +1017,8 @@ void loop()
       fb[3] = 0x00;
       fb[4] = fb[0] ^ fb[1] ^ fb[2] ^ fb[3];
 
-      Udp.beginPacket(ipMain, UDP_PORT);
+      // SEND TO BROADCAST (So both Main and Pi see it)
+      Udp.beginPacket(ipBroadcast, UDP_PORT); 
       Udp.write(fb, 5);
       Udp.endPacket();
 
