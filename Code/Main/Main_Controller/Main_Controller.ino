@@ -6,8 +6,8 @@
 */
 // -------------------- SYSTEM DEFINES --------------------
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
-#define DEBUG_SERIAL 0      // for the else clauses
-#define DEBUG_LEVEL 0       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
+#define DEBUG_SERIAL 1      // for the else clauses
+#define DEBUG_LEVEL 3       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
 #define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
 
@@ -70,13 +70,13 @@ EthernetUDP Udp; // Single socket for RX/TX
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 
 // Fixed IPs per design
-IPAddress ipMain(192, 168, 1, 1); // This Mega
-IPAddress ipS0(192, 168, 1, 10);  // Station 0
-IPAddress ipS1(192, 168, 1, 11);  // Station 1
-IPAddress ipS2(192, 168, 1, 12);  // Station 2
-IPAddress ipS3(192, 168, 1, 13);  // Station 3
-IPAddress ipS4(192, 168, 1, 14);  // Station 4
-IPAddress ipS5(192, 168, 1, 15);  // Station 5
+IPAddress ipMain(192, 168, 1, 220); // UPDATED: Main Controller is .220
+IPAddress ipS0(192, 168, 1, 210);   // UPDATED: Station 0 is .210
+IPAddress ipS1(192, 168, 1, 211);   // UPDATED: Station 1 is .211
+IPAddress ipS2(192, 168, 1, 212);   // UPDATED: Station 2 is .212
+IPAddress ipS3(192, 168, 1, 213);   // UPDATED: Station 3 is .213
+IPAddress ipS4(192, 168, 1, 214);   // UPDATED: Station 4 is .214
+IPAddress ipS5(192, 168, 1, 215);   // UPDATED: Station 5 is .215
 
 // ============================================================
 // 🔔 BUZZER ALERT MODE CONFIGURATION
@@ -338,6 +338,10 @@ volatile bool mcpIntA_Flag = false;
 volatile bool mcpIntB_Flag = false;
 uint8_t mcpStateA = 0xFF; // bit = 1 means switch not pressed (pull-ups)
 uint8_t mcpStateB = 0xFF;
+
+// --- Remote Control State ---
+bool remoteOverrideActive = false;
+uint8_t remoteSwitchBytes[3] = {0, 0, 0}; // Stores the 24 bits from the Web App
 
 // ============================================================
 // 🕒 TIMING CONSTANTS
@@ -716,138 +720,100 @@ void sendSetFrame(IPAddress dst, uint8_t id, uint8_t bits)
 
 // 🧩 HEARTBEAT + FEEDBACK HANDLER
 // ============================================================
-// 📡 MAIN CONTROLLER: PACKET PROCESSING
+// 📡 MAIN CONTROLLER: PACKET PROCESSING (Updated for Override)
 // ============================================================
 void processHeartbeatAndFeedback(uint32_t now)
 {
   int packetSize = Udp.parsePacket();
-  if (packetSize <= 0)
-    return;
+  if (packetSize <= 0) return;
 
   uint8_t buf[16];
   int n = Udp.read(buf, sizeof(buf));
-  if (n < 3)
-    return; // Too short to be valid
+  if (n < 3) return; 
 
   uint8_t id = 0, st = 0, cks = 0;
 
-  // ---------------------------------------------------------
-  // 1. HEARTBEAT [0xAB] - "I am alive"
-  // ---------------------------------------------------------
-  if (buf[0] == 0xAB && n >= 4)
-  {
-    id = buf[1];
-    st = buf[2];
-    cks = buf[3];
-
-    if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS)
-    {
-      // Logic Preservation: Update timestamps
+  // 1. HEARTBEAT [0xAB]
+  if (buf[0] == 0xAB && n >= 4) {
+    id = buf[1]; st = buf[2]; cks = buf[3];
+    if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS) {
       lastHeartbeatMs[id] = now;
       stationOffline[id] = false;
       heartbeatCount[id]++;
-
-      // Logic Preservation: Sync on reconnect
-      if (!firstHeartbeatSeen[id])
-      {
+      if (!firstHeartbeatSeen[id]) {
         firstHeartbeatSeen[id] = true;
-        DBG(2, Serial.print(F("[SYNC] Station found: ")); Serial.println(id));
-        sendFeedbackRequest(id);
+        sendFeedbackRequest(id); 
       }
     }
   }
-
-  // ---------------------------------------------------------
-  // 2. FEEDBACK [0xAC] - "Here are my sensor states"
-  // ---------------------------------------------------------
-  else if (buf[0] == 0xAC && n >= 5)
-  {
-    id = buf[1];
-    uint8_t bits = buf[2];
-    cks = buf[4];
-
-    if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS)
-    {
-      // Logic Preservation: Update global state
+  // 2. FEEDBACK [0xAC]
+  else if (buf[0] == 0xAC && n >= 5) {
+    id = buf[1]; uint8_t bits = buf[2]; cks = buf[4];
+    if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS) {
       stationFeedback[id] = bits;
       lastHeartbeatMs[id] = now;
       stationOffline[id] = false;
     }
   }
-
-  // ---------------------------------------------------------
-  // 3. CONFLICT CHECK [0xAE] - "Can I use this ID?"
-  // ---------------------------------------------------------
-  else if (buf[0] == 0xAE && n >= 3)
-  {
-    id = buf[1];
-    cks = buf[2];
-
-    if (cks == (buf[0] ^ buf[1]))
-    {
+  // 3. CONFLICT CHECK [0xAE] (For Station Boot)
+  else if (buf[0] == 0xAE && n >= 3) {
+    id = buf[1]; cks = buf[2];
+    if (cks == (buf[0] ^ buf[1])) {
       bool inUse = false;
-
-      // STEP 1: Check internal memory first
-      if (!stationOffline[id])
-      {
-        // STEP 2: ACTIVE PING VERIFICATION
-        // The memory says it's online, but is it? Or is it a ghost?
-        // We send a Feedback Request to the specific IP and wait 100ms.
-
-        // Flush buffer first
-        while (Udp.parsePacket())
-          Udp.flush();
-
-        // Send Ping
-        sendFeedbackRequest(id);
-
-        // Wait 100ms for a reply
+      if (!stationOffline[id]) {
+        // Active Ping Verification
+        while(Udp.parsePacket()) Udp.flush();
+        sendFeedbackRequest(id); 
         uint32_t tPing = millis();
-        bool pingReply = false;
-
-        while (millis() - tPing < 100)
-        {
-          if (Udp.parsePacket())
-          {
-            // We got a packet! Check if it's a valid reply from ID 'id'
-            uint8_t pBuf[16];
-            int pn = Udp.read(pBuf, sizeof(pBuf));
-            // Check for Feedback (0xAC) or Heartbeat (0xAB) from target ID
-            if (pn >= 4 && (pBuf[0] == 0xAC || pBuf[0] == 0xAB) && pBuf[1] == id)
-            {
-              pingReply = true;
-              break;
-            }
-          }
+        while(millis() - tPing < 100) {
+           if (Udp.parsePacket()) {
+             uint8_t pBuf[16];
+             int pn = Udp.read(pBuf, sizeof(pBuf));
+             if (pn >= 4 && (pBuf[0] == 0xAC || pBuf[0] == 0xAB) && pBuf[1] == id) {
+               inUse = true; break; 
+             }
+           }
         }
-
-        // If we got a reply, it's TRULY in use.
-        // If silence, it was a ghost session (the candidate itself rebooting).
-        inUse = pingReply;
       }
-
-      // STEP 3: Send Decision
-      // 0xFF = Conflict, 0x00 = OK
       uint8_t status = inUse ? 0xFF : 0x00;
-
-      uint8_t reply[3];
-      reply[0] = 0xAF;
-      reply[1] = id;
-      reply[2] = status ^ reply[0] ^ reply[1];
-
+      uint8_t reply[3] = {0xAF, id, (uint8_t)(status ^ 0xAF ^ id)};
       Udp.beginPacket(Udp.remoteIP(), UDP_PORT);
       Udp.write(reply, 3);
       Udp.endPacket();
+      if (!inUse && !stationOffline[id]) stationOffline[id] = true; 
+    }
+  }
+  
+  // ============================================================
+  // 4. 🕹️ REMOTE OVERRIDE COMMANDS (From Pi)
+  // ============================================================
+  
+  // CONTROL MODE [0xAF, Mode, Cks]
+  // Mode: 0x01 = Take Control, 0x00 = Release Control
+  else if (buf[0] == 0xAF && n >= 3) {
+    uint8_t mode = buf[1];
+    cks = buf[2];
+    if (cks == (buf[0] ^ buf[1])) {
+      if (mode == 0x01) {
+        remoteOverrideActive = true;
+        DBG(1, Serial.println(F("[REMOTE] Control TAKEN by Web App")));
+      } else {
+        remoteOverrideActive = false;
+        DBG(1, Serial.println(F("[REMOTE] Control RELEASED to Cabane")));
+      }
+    }
+  }
 
-      DBG(2,
-          Serial.print(F("[HS] Check ID "));
-          Serial.print(id);
-          Serial.println(inUse ? F(" -> BLOCKED (Active Ping)") : F(" -> FREE (No Ping Reply)")););
-
-      // If we decided it's FREE (Ghost killed), mark it offline immediately
-      if (!inUse && !stationOffline[id])
-      {
-        stationOffline[id] = true;
+  // REMOTE DATA [0xB0, Byte0, Byte1, Byte2, Cks]
+  // Contains the 24 switch states from the Web App
+  else if (buf[0] == 0xB0 && n >= 5) {
+    cks = buf[4];
+    if (cks == (buf[0] ^ buf[1] ^ buf[2] ^ buf[3])) {
+      if (remoteOverrideActive) {
+        remoteSwitchBytes[0] = buf[1];
+        remoteSwitchBytes[1] = buf[2];
+        remoteSwitchBytes[2] = buf[3];
+        lastLinkCheck = now; // Treat valid data as a heartbeat from Pi
       }
     }
   }
@@ -899,9 +865,10 @@ void sendFeedbackRequest(uint8_t id)
   buf[3] = 0x00;
   buf[4] = xorChecksum(buf, 4);
 
+  // UPDATED: Broadcast is .255, Stations start at .210 (210 + id)
   IPAddress ipStation = (id == 255)
                             ? IPAddress(192, 168, 1, 255)
-                            : IPAddress(192, 168, 1, 10 + id);
+                            : IPAddress(192, 168, 1, 210 + id);
 
   Udp.beginPacket(ipStation, UDP_PORT);
   Udp.write(buf, 5);
@@ -993,8 +960,8 @@ void sendStationCommand(uint8_t id, uint8_t bits)
   buf[3] = bits;                              // Bitfield (LSB→OUT0)
   buf[4] = buf[0] ^ buf[1] ^ buf[2] ^ buf[3]; // XOR checksum
 
-  // Compute target IP based on station ID
-  IPAddress ipStation(192, 168, 1, 10 + id);
+  // UPDATED: Compute target IP based on station ID (210 + id)
+  IPAddress ipStation(192, 168, 1, 210 + id);
 
   Udp.beginPacket(ipStation, 8888);
   Udp.write(buf, 5);
@@ -1181,15 +1148,15 @@ void updateThermostatStatus()
     // -------------------------------------------------------------------
     // LED logic: RED = off, GREEN = on
     // -------------------------------------------------------------------
-    if (thermostatEnabled[i])
-    {
-      if (thermostatActive[i])
-        LED_PAIR(TH_LED_PAIR[i], LOW, HIGH); // GREEN
-      else
-        LED_PAIR(TH_LED_PAIR[i], HIGH, LOW); // RED
+    if (remoteOverrideActive) {
+       // Blink Green to indicate Web Control
+       LED_PAIR(TH_LED_PAIR[i], LOW, blinkPhase); 
     }
-    else
-    {
+    else if (thermostatEnabled[i]) {
+      if (thermostatActive[i]) LED_PAIR(TH_LED_PAIR[i], LOW, HIGH); // GREEN
+      else LED_PAIR(TH_LED_PAIR[i], HIGH, LOW); // RED
+    }
+    else {
       LED_PAIR(TH_LED_PAIR[i], LOW, LOW); // OFF
     }
   }
@@ -1211,6 +1178,13 @@ void updateBuzzerLED(uint32_t now)
   {
     digitalWrite(PIN_BUZZER, LOW);
     return;
+  }
+
+  // Override Indicator
+  if (remoteOverrideActive) {
+     digitalWrite(PIN_BUZZER, LOW); // Mute buzzer during override unless commanded?
+     LED_PAIR(BUZZER_LED_PAIR, LOW, blinkPhase); // Blink Green
+     return;
   }
 
   // ============================================================
@@ -1712,23 +1686,37 @@ void loop()
     readMcpB();
 
   // ============================================================
-  // 🔁 Unified Input Read + Debounce Loop
+  // 🔁 Unified Input Logic (Physical vs Remote)
   // ============================================================
 
-  for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+  if (!remoteOverrideActive) 
   {
-    const InputMap &m = INPUT_MAP[i];
-    bool current = readInputByMap(m);
-
-    if (current != rawState[m.index])
+    // --- MODE: LOCAL (Physical Pins) ---
+    for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
     {
-      rawState[m.index] = current;
-      lastChange[m.index] = now;
+      const InputMap &m = INPUT_MAP[i];
+      bool current = readInputByMap(m); // Read Physical
+
+      if (current != rawState[m.index]) {
+        rawState[m.index] = current;
+        lastChange[m.index] = now;
+      }
+      if ((now - lastChange[m.index]) > DEBOUNCE_MS) {
+        stableState[m.index] = rawState[m.index];
+      }
     }
-
-    if ((now - lastChange[m.index]) > DEBOUNCE_MS)
-    {
-      stableState[m.index] = rawState[m.index];
+  }
+  else 
+  {
+    // --- MODE: REMOTE (Web App) ---
+    // Map the 3 incoming bytes to the 24 stableState bools
+    // Byte 0: Indices 0-7, Byte 1: 8-15, Byte 2: 16-23
+    for (uint8_t i = 0; i < 24; i++) {
+        uint8_t byteIdx = i / 8;
+        uint8_t bitIdx = i % 8;
+        if (byteIdx < 3) {
+            stableState[i] = (remoteSwitchBytes[byteIdx] >> bitIdx) & 1;
+        }
     }
   }
 
@@ -1775,6 +1763,33 @@ void loop()
 
   // Long press for station enable / disable
   handleStationEnableLongPress(now);
+
+  // 🚨 EMERGENCY RELEASE (Hold Switch 0 + 1 for 2s)
+  // We must read PHYSICAL pins 0 and 1 directly here, bypassing the stableState override
+  // Switch 0 = Pin 62, Switch 1 = Pin 63
+  if (remoteOverrideActive) {
+    bool sw0 = !digitalRead(62); // Active Low
+    bool sw1 = !digitalRead(63);
+    static uint32_t emergStart = 0;
+    
+    if (sw0 && sw1) {
+      if (emergStart == 0) emergStart = now;
+      else if (now - emergStart > 2000) {
+        // TRIGGER RELEASE
+        remoteOverrideActive = false;
+        emergStart = 0;
+        Serial.println(F("[EMERG] Manual Override Executed"));
+        
+        // Blink Green 5x to confirm
+        for(int k=0; k<5; k++) {
+           digitalWriteAll(LED_B, NUM_LED_PAIRS, HIGH); delay(100);
+           digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);  delay(100);
+        }
+      }
+    } else {
+      emergStart = 0;
+    }
+  }
 
   // 4️⃣ Update LEDs + Ethernet status
   updateEthernetAndLEDs(now); // sets anyVacuumAlert + regular LEDs

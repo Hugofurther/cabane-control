@@ -2,8 +2,8 @@
 #define FIRMWARE_VERSION "v1.0-RebuildStep1"
 #define HAS_TM1637 1        // Set to true when a display is connected
 #define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED
-#define DEBUG_SERIAL 0      // for the else clauses
-#define DEBUG_LEVEL 0       // 0 = Off, 1 =
+#define DEBUG_SERIAL 1      // for the else clauses
+#define DEBUG_LEVEL 3       // 0 = Off, 1 =
 
 // ============================================================
 // 🧩 SECTION: FORWARD DECLARATIONS (tell compiler these exist later)
@@ -93,8 +93,8 @@ uint8_t lastFeedbackBits = 0;
 
 // -------------------- NETWORK --------------------
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x02, 0x10};
-IPAddress ipMain(192, 168, 1, 1); // Main controller IP
-IPAddress ip(192, 168, 1, 11);    // Placeholder, will be recomputed
+IPAddress ipMain(192, 168, 1, 220); // UPDATED: Main controller is .220
+IPAddress ip(192, 168, 1, 211);     // Placeholder, will be recomputed
 const uint16_t UDP_PORT = 8888;
 EthernetUDP Udp;
 
@@ -502,8 +502,12 @@ bool checkStationIDConflict(uint8_t currentID)
 void reconfigureNetwork(bool fullReset)
 {
   // 1. Setup initial credentials
-  ip = IPAddress(192, 168, 1, 10 + STATION_ID);
-  mac[5] = 0x10 + STATION_ID;
+  // UPDATED: IP is now 210 + StationID (e.g., ID 0 = .210, ID 1 = .211)
+  ip = IPAddress(192, 168, 1, 210 + STATION_ID);
+  
+  // MAC Last Byte: 0x10 + ID. We can keep this logic, it doesn't strictly need to match IP.
+  // 0x10 = 16. So ID 0 has MAC ending in :10. This is fine and avoids conflicts.
+  mac[5] = 0x10 + STATION_ID; 
 
   // 2. Init Hardware
   initEthernet(fullReset);
@@ -545,27 +549,24 @@ void reconfigureNetwork(bool fullReset)
 
       for (uint8_t offset = 1; offset < 6; offset++)
       {
-        uint8_t tryID = (STATION_ID + offset) % 6;
-
-        // Temporary IP config for the check
-        // (Note: We don't strictly need to change IP to ask, but it keeps logic clean)
-        bool check = checkStationIDConflict(tryID);
-
-        if (!check)
-        {
-          // Found a free one
-          STATION_ID = tryID;
-          saveStationID(STATION_ID);
-
-          // Apply new Network settings permanently
-          ip = IPAddress(192, 168, 1, 10 + STATION_ID);
-          mac[5] = 0x10 + STATION_ID;
-          initEthernet(false); // Soft re-init
-
-          break;
-        }
-        delay(50);
-        wdt_reset();
+         uint8_t tryID = (STATION_ID + offset) % 6;
+         
+         // Temporary IP config for the check
+         bool check = checkStationIDConflict(tryID);
+         
+         if (!check) {
+            // Found a free one
+            STATION_ID = tryID;
+            saveStationID(STATION_ID);
+            
+            // UPDATED: Apply new Network settings permanently (210 + ID)
+            ip = IPAddress(192, 168, 1, 210 + STATION_ID);
+            mac[5] = 0x10 + STATION_ID;
+            initEthernet(false); // Soft re-init
+            
+            break; 
+         }
+         delay(50); wdt_reset();
       }
     }
   }
@@ -878,8 +879,17 @@ void loop()
       if (ok)
       {
         applyBitfieldLSB(dat);
-        lastCmdMs = now; // ✅ reset timer so watchdog doesn’t trigger
+        lastCmdMs = now; 
         lastCmdRecent = true;
+
+        // 🔄 DYNAMIC MASTER HANDOVER
+        // If this valid command came from a different IP (e.g., the Pi),
+        // switch loyalty to that new IP so feedbacks go to the active controller.
+        IPAddress senderIP = Udp.remoteIP();
+        if (senderIP != ipMain) {
+           ipMain = senderIP;
+           DBG(1, Serial.print(F("[NET] Master IP Changed to: ")); Serial.println(ipMain));
+        }
 
 #if HAS_TM1637
         displayMode = DISP_NORMAL;
