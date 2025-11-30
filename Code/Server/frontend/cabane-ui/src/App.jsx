@@ -1,60 +1,76 @@
+import React from 'react';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
-import { RockerSwitch } from './components/controls/RockerSwitch';
-import { HaloButton } from './components/controls/HaloButton';
+import { StationCard } from './components/StationCard';
+// ✅ FIX: Import the correct name 'PANEL_LAYOUT'
+import { PANEL_LAYOUT } from './config/stations';
 
 function Dashboard() {
-  const { systemState, toggleSwitch, takeControl, releaseControl, isConnected } = useSocket();
-  const isRemote = systemState.controller === 'USER';
+  const { systemState, takeControl, releaseToServer, releaseToCabane, isConnected, user } = useSocket();
 
-  // Helper to handle momentary buttons
-  const handleMomentary = (idx, val) => toggleSwitch(idx, val);
+  // Logic: Am I driving?
+  const canInteract = systemState.controller !== 'CABANE';
 
   return (
-    <div className="min-h-screen bg-cabane-dark text-white p-8">
+    <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8">
       {/* Header */}
-      <div className="flex justify-between items-center mb-10 border-b border-gray-700 pb-4">
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 border-b border-gray-700 pb-4 gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-wider">CABANE CONTROL</h1>
-          <div className="flex items-center gap-2 text-sm mt-1">
-            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
-            <span>{isConnected ? "Server Online" : "Connecting..."}</span>
-            <span className="text-gray-500">|</span>
-            <span className="text-yellow-500">Controller: {systemState.controller}</span>
+          <h1 className="text-3xl font-bold tracking-widest text-gray-100">CABANE CONTROL</h1>
+          <div className="flex items-center gap-3 text-sm mt-1">
+            <span className={`w-3 h-3 rounded-full shadow ${isConnected ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
+            <span className="text-gray-400 uppercase tracking-wide">{isConnected ? "Online" : "Connecting..."}</span>
+            <span className="text-gray-600">|</span>
+            <span className={`font-mono font-bold ${systemState.controller === 'CABANE' ? 'text-yellow-500' : 'text-blue-400'}`}>
+              MASTER: {systemState.controller}
+              {systemState.currentUser ? ` (${systemState.currentUser})` : ''}
+            </span>
           </div>
         </div>
 
-        <button
-          onClick={isRemote ? releaseControl : takeControl}
-          className={`px-6 py-2 rounded font-bold uppercase transition-colors ${isRemote
-            ? 'bg-red-600 hover:bg-red-700'
-            : 'bg-blue-600 hover:bg-blue-700'
-            }`}
-        >
-          {isRemote ? "Release Control" : "Take Control"}
-        </button>
+        <div className="flex gap-3">
+          {/* 1. TAKE CONTROL (Visible if I am NOT the active User) */}
+          {systemState.currentUser !== user?.username && (
+            <button
+              onClick={takeControl}
+              className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all"
+            >
+              Take Control
+            </button>
+          )}
+
+          {/* 2. RELEASE OPTIONS (Visible if I AM the active User) */}
+          {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
+            <>
+              <button
+                onClick={releaseToServer}
+                className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all"
+              >
+                Release (Hold)
+              </button>
+              <button
+                onClick={releaseToCabane}
+                className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all"
+              >
+                To Cabane
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Test Area */}
-      <div className="grid grid-cols-4 gap-8 max-w-2xl mx-auto p-6 bg-cabane-panel rounded-xl shadow-2xl">
-
-        {/* Rocker: Index 4 (ST1 - Vic T1) */}
-        <RockerSwitch
-          label="VIC T1 (ST1)"
-          isOn={!!systemState.virtualSwitches[4]}
-          physicalOn={!!systemState.physicalSwitches[4]}
-          isLocked={!isRemote}
-          onChange={(val) => toggleSwitch(4, val)}
-        />
-
-        {/* Button: Index 1 (ST1 - Transport 2) */}
-        <HaloButton
-          label="TRANSP 2"
-          color="green"
-          isLocked={!isRemote}
-          onPress={() => handleMomentary(1, true)}
-          onRelease={() => handleMomentary(1, false)}
-        />
-
+      {/* Main Grid - Updated for Row Layout */}
+      <div className="flex flex-col gap-6 max-w-7xl mx-auto">
+        {PANEL_LAYOUT.map((row) => (
+          <div key={row.id} className={`grid gap-6 ${row.cols}`}>
+            {row.cards.map((card, i) => (
+              <StationCard
+                key={i}
+                card={card}
+                isRemote={canInteract}
+              />
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -70,6 +70,7 @@ EthernetUDP Udp; // Single socket for RX/TX
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 
 // Fixed IPs per design
+IPAddress ipBroadcast(192, 168, 1, 255);
 IPAddress ipServer(192, 168, 1, 200); // Server is .200
 IPAddress ipMain(192, 168, 1, 220);   // Main Controller is .220
 IPAddress ipS0(192, 168, 1, 210);     // Station 0 is .210
@@ -688,33 +689,6 @@ inline uint8_t packBitsLSB(const bool *arr, uint8_t n)
   return v;
 }
 
-// -------------------------------------------------------------------
-// FUNCTION: sendSetFrame()
-// PURPOSE : Builds and sends 5-byte UDP command frame [AA,id,01,bits,cks]
-// INPUTS  : dst (station IP), id (station number), bits (relay bitfield)
-// -------------------------------------------------------------------
-void sendSetFrame(IPAddress dst, uint8_t id, uint8_t bits)
-{
-  uint8_t f[5];
-  f[0] = 0xAA;
-  f[1] = id;
-  f[2] = 0x01;
-  f[3] = bits;
-  f[4] = xorChecksum(f, 4);
-
-  Udp.beginPacket(dst, UDP_PORT);
-  Udp.write(f, 5);
-  Udp.endPacket();
-
-  DBG(2,
-      Serial.print(F("[TX] ST="));
-      Serial.print(id);
-      Serial.print(F(" BITS="));
-      Serial.print(bits, BIN);
-      Serial.print(F(" CKS=0x"));
-      Serial.println(f[4], HEX););
-}
-
 // ============================================================
 // 🌐 SECTION: Heartbeat & Feedback Processing
 // ============================================================
@@ -725,14 +699,14 @@ void sendSetFrame(IPAddress dst, uint8_t id, uint8_t bits)
 // ============================================================
 void processHeartbeatAndFeedback(uint32_t now)
 {
-  int packetsProcessed = 0;
+  int packetCount = 0;
   // Limit to 10 to prevent hanging the main loop if flooded,
   // but process enough to clear the W5500 buffer.
   const int MAX_PACKETS_PER_LOOP = 10;
 
-  while (Udp.parsePacket() > 0 && packetsProcessed < MAX_PACKETS_PER_LOOP)
+  while (Udp.parsePacket() > 0 && packetCount < MAX_PACKETS_PER_LOOP)
   {
-    packetsProcessed++;
+    packetCount++;
 
     uint8_t buf[16];
     int n = Udp.read(buf, sizeof(buf));
@@ -858,8 +832,12 @@ void processHeartbeatAndFeedback(uint32_t now)
           // So actually, receiving 0x00 here might not strictly be needed if you rely ONLY on buttons.
           // But it's good for state tracking.
 
-          // remoteOverrideActive = false; // Uncomment if you want auto-release
+          remoteOverrideActive = false; // Uncomment if you want auto-release
+
           DBG(1, Serial.println(F("[REMOTE] Web App released (Pending Manual Reclaim)")));
+
+          // Optional: Force an immediate update to physical state so Stations don't hang
+          sendGlobalCommands();
         }
       }
     }
@@ -945,101 +923,97 @@ void sendFeedbackRequest(uint8_t id)
 }
 
 // ============================================================
-// 🧩 FUNCTION: sendAllStations()
-// PURPOSE : Sends UDP "SET" frames to all enabled, online stations.
-//            Dynamically packs bits based on station-specific switch ranges.
-// ------------------------------------------------------------
-// NOTE: Uses the global stableState[], ipSx variables, and stationEnabled[].
+// 🌍 SEND GLOBAL COMMANDS (0xBB)
 // ============================================================
-
-void sendAllStations()
+// Sends relay states to ALL stations in one packet.
+// Structure: [BB] [Seq] [MasterID] [ST0] [ST1] [ST2] [ST3] [ST4] [ST5] [Cks]
+void sendGlobalCommands()
 {
-  // 🧩 Define IP table
-  const IPAddress stationIPs[NUM_STATIONS] = {
-      ipS0, ipS1, ipS2, ipS3, ipS4, ipS5};
+  uint8_t packet[10];
+  packet[0] = 0xBB;
+  packet[1] = 0x00; // Sequence (Optional)
+  packet[2] = 0x01; // Master ID = 1 (Main Controller)
 
+  // Iterate through all stations to calculate their command byte
   for (uint8_t st = 0; st < NUM_STATIONS; st++)
   {
-
-    // Skip disabled/offline
-    if (!stationEnabled[st] || stationOffline[st])
-      continue;
-
     bool bits[8] = {0};
     uint8_t bitCount = 0;
 
-    // 🧠 Collect all inputs belonging to this station
-    for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+    // Only calculate if station is enabled
+    if (stationEnabled[st])
     {
-      const InputMap &m = INPUT_MAP[i];
-      if (m.station == st)
+      // Loop through INPUT_MAP to find switches assigned to this station
+      for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
       {
-        bool val = stableState[m.index];
-
-#if ENABLE_THERMOSTAT
-        // Optional thermostat override block (still works)
-        for (uint8_t t = 0; t < 2; t++)
+        const InputMap &m = INPUT_MAP[i];
+        if (m.station == st)
         {
-          if (thermostatEnabled[t] && thermostatActive[t])
+
+          // Base State: From stableState (which could be Local or Remote)
+          bool val = stableState[m.index];
+
+// Thermostat Override Logic
+#if ENABLE_THERMOSTAT
+          for (uint8_t t = 0; t < 2; t++)
           {
-            for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
+            if (thermostatEnabled[t] && thermostatActive[t])
             {
-              if (m.index == TH_OVERRIDE_IDX[t][k])
+              for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
               {
-                val = true; // forced ON
-                break;
+                if (m.index == TH_OVERRIDE_IDX[t][k])
+                {
+                  val = true; // Force ON
+                  break;
+                }
               }
             }
           }
-        }
 #endif
 
-        bits[m.bit] = val;
-        bitCount = max(bitCount, m.bit + 1);
+          bits[m.bit] = val;
+          bitCount = max(bitCount, m.bit + 1);
+        }
       }
     }
-
-    // ============================================================
-    // 📨 Pack bits and send to station
-    // ============================================================
-    uint8_t packed = packBitsLSB(bits, bitCount);
-    sendSetFrame(stationIPs[st], st, packed);
-
-    DBG(3,
-        Serial.print(F("[TX→ST] "));
-        Serial.print(st);
-        Serial.print(F(" bits="));
-        Serial.println(packed, BIN););
+    // Pack bool array into a byte
+    packet[3 + st] = packBitsLSB(bits, bitCount);
   }
+
+  packet[9] = xorChecksum(packet, 9);
+
+  Udp.beginPacket(ipBroadcast, UDP_PORT);
+  Udp.write(packet, 10);
+  Udp.endPacket();
 }
 
 // ============================================================
-// 🛰️  SECTION: Send Commands to Stations
+// 📡 SEND PHYSICAL STATE (0xB1) - FIXED ALIGNMENT
 // ============================================================
-
-void sendStationCommand(uint8_t id, uint8_t bits)
+void sendPhysicalState()
 {
-  uint8_t buf[5];
-  buf[0] = 0xAA;                              // Command header
-  buf[1] = id;                                // Station ID
-  buf[2] = 0x01;                              // Command: SET
-  buf[3] = bits;                              // Bitfield (LSB→OUT0)
-  buf[4] = buf[0] ^ buf[1] ^ buf[2] ^ buf[3]; // XOR checksum
+  uint8_t payload[3] = {0, 0, 0};
 
-  // UPDATED: Compute target IP based on station ID (210 + id)
-  IPAddress ipStation(192, 168, 1, 210 + id);
+  // Pack physical inputs
+  for (int i = 0; i < 24; i++)
+  {
+    if (rawState[i])
+      payload[i / 8] |= (1 << (i % 8));
+  }
 
-  Udp.beginPacket(ipStation, 8888);
-  Udp.write(buf, 5);
+  // Structure: [B1] [ID] [Sw0] [Sw1] [Sw2] [Flag] [Cks]
+  uint8_t packet[7];
+  packet[0] = 0xB1;
+  packet[1] = 0x01; // <--- ADDED: Controller ID (Matches JS expectation)
+  packet[2] = payload[0];
+  packet[3] = payload[1];
+  packet[4] = payload[2];
+  packet[5] = remoteOverrideActive ? 0x01 : 0x00; // Flag is now at Index 5
+  packet[6] = xorChecksum(packet, 6);
+
+  Udp.beginPacket(ipBroadcast, UDP_PORT);
+  Udp.write(packet, 7);
   Udp.endPacket();
-
-  DBG(2,
-      Serial.print(F("[TX→ST] ID="));
-      Serial.print(id);
-      Serial.print(F(" bits="));
-      Serial.print(bits, BIN);
-      Serial.print(F(" CKS="));
-      Serial.println(buf[4], HEX););
 }
 
 // ============================================================
@@ -1750,12 +1724,15 @@ void loop()
   wdt_reset();
   uint32_t now = millis();
 
-  // 1. READ INPUTS (Always read physical reality)
+  // ============================================================
+  // 1. INPUT READING (Physical)
+  // ============================================================
   if (mcpIntA_Flag)
     readMcpA();
   if (mcpIntB_Flag)
     readMcpB();
 
+  // We ALWAYS read physical inputs into 'rawState'
   for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
   {
     const InputMap &m = INPUT_MAP[i];
@@ -1766,29 +1743,44 @@ void loop()
       rawState[m.index] = current;
       lastChange[m.index] = now;
     }
-    if ((now - lastChange[m.index]) > DEBOUNCE_MS)
+
+    // UPDATE LOGIC: Who owns 'stableState'?
+    // If LOCAL: Physical Inputs -> stableState
+    // If REMOTE: stableState is updated by 0xB0 packets (in processHeartbeat)
+    if (!remoteOverrideActive)
     {
-      stableState[m.index] = rawState[m.index];
+      if ((now - lastChange[m.index]) > DEBOUNCE_MS)
+      {
+        stableState[m.index] = rawState[m.index];
+      }
     }
   }
 
-  // 2. NETWORK HANDLER
+  // ============================================================
+  // 2. NETWORK & LOGIC
+  // ============================================================
   processHeartbeatAndFeedback(now);
   updateHeartbeatStatus(now);
 
-  // 3. EMERGENCY RELEASE (Manual Override)
-  // Hold Sw 0 + 1 for 2 seconds to force Main Controller back to Master
-  bool sw0 = !digitalRead(62);
-  bool sw1 = !digitalRead(63);
-  static uint32_t emergStart = 0;
+  // Handle Station Enable/Disable Buttons (Long Press)
+  handleStationEnableLongPress(now);
 
-  if (sw0 && sw1)
+  // ============================================================
+  // 3. EMERGENCY RELEASE (Manual Override)
+  // ============================================================
+  // Hold Sw 0 + 1 for 2 seconds to force Main Controller back to Master
+  if (remoteOverrideActive)
   {
-    if (emergStart == 0)
-      emergStart = now;
-    else if (now - emergStart > 2000)
+    // Read pins 62 and 63 directly (hardcoded indices 0 and 1)
+    bool sw0 = !digitalRead(62);
+    bool sw1 = !digitalRead(63);
+    static uint32_t emergStart = 0;
+
+    if (sw0 && sw1)
     {
-      if (remoteOverrideActive)
+      if (emergStart == 0)
+        emergStart = now;
+      else if (now - emergStart > 2000)
       {
         remoteOverrideActive = false; // REGAIN CONTROL
         Serial.println(F("[EMERG] Control REGAINED by Cabane"));
@@ -1803,68 +1795,54 @@ void loop()
           delay(100);
           wdt_reset();
         }
-        // Force immediate update to stations
-        sendAllStations();
+        emergStart = 0;
       }
-      emergStart = 0; // Reset timer
+    }
+    else
+    {
+      emergStart = 0;
     }
   }
-  else
-  {
-    emergStart = 0;
-  }
 
-  // 4. OUTPUTS (LEDs & Buzzer)
-  // Always update local indicators based on feedback, regardless of who is driving
+  // ============================================================
+  // 4. OUTPUT UPDATES (Visuals)
+  // ============================================================
+  // Updates LEDs based on 'stationFeedback' (from Broadcast)
   updateEthernetAndLEDs(now);
   updateBuzzerLED(now);
   updateThermostatStatus();
 
-  // 5. SEND COMMANDS TO STATIONS
-  // Only send if we are the MASTER (Not overridden)
+  // ============================================================
+  // 5. DATA BROADCASTING
+  // ============================================================
+
+  // A. BROADCAST PHYSICAL STATE (Always, 5Hz)
+  // Sends 'rawState' to Pi so it can show "Ghost" switches
+  static uint32_t tPhys = 0;
+  if (now - tPhys >= 200) // was 200
+  {
+    tPhys = now;
+    sendPhysicalState();
+  }
+
+  // B. BROADCAST GLOBAL COMMANDS (Only if Master, 10Hz)
+  // Sends 'stableState' commands to Stations
   if (!remoteOverrideActive)
   {
-    if (now - tSend >= SEND_INTERVAL_MS)
+    if (now - tSend >= 100)
     {
       tSend = now;
-      sendAllStations();
+      sendGlobalCommands();
     }
   }
 
-  // 6. BROADCAST PHYSICAL STATE TO PI
-  // We send our physical switch positions to the network so the Pi knows
-  // "What would happen if I release control right now?"
-  // Frequency: Every 200ms
-  static uint32_t tBroadcast = 0;
-  if (now - tBroadcast >= 200)
-  {
-    tBroadcast = now;
-    // Pack bits into 3 bytes
-    uint8_t payload[3] = {0, 0, 0};
-    for (int i = 0; i < 24; i++)
-    {
-      if (stableState[i])
-        payload[i / 8] |= (1 << (i % 8));
-    }
-
-    uint8_t packet[7];
-    packet[0] = 0xB1; // PHYSICAL STATE REPORT
-    packet[1] = payload[0];
-    packet[2] = payload[1];
-    packet[3] = payload[2];
-    packet[4] = remoteOverrideActive ? 0x01 : 0x00; // Status Flag
-    packet[5] = 0x00;                               // Reserved
-    packet[6] = xorChecksum(packet, 6);
-
-    Udp.beginPacket(ipServer, UDP_PORT);
-    Udp.write(packet, 7);
-    Udp.endPacket();
-  }
-
-  // Global Blink Phase
+  // ============================================================
+  // 6. GLOBAL BLINK PHASE
+  // ============================================================
   if (now - tBlink >= BLINK_INTERVAL_MS)
   {
     tBlink = now;
     blinkPhase = !blinkPhase;
   }
-} // ✅ end loop()
+
+} // End Loop

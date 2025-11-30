@@ -1,40 +1,41 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import { useLedState } from '../../hooks/useLedState';
 
-export const HaloButton = ({ label, color = 'green', isLocked, onPress, onRelease }) => {
+export const HaloButton = ({ label, idx, feedback, isLocked, isActive, onPress, onRelease }) => {
+    const ledColor = useLedState(idx, feedback);
 
     return (
-        <div className="flex flex-col items-center gap-2">
+        <div className="flex flex-col items-center gap-3 group">
             <button
                 className={clsx(
-                    "relative w-14 h-14 rounded-full border-4 border-gray-800 transition-all duration-100 flex items-center justify-center",
-                    isLocked ? "opacity-50 cursor-not-allowed bg-gray-700" : "active:scale-95",
+                    "relative w-16 h-16 rounded-full border-4 transition-all duration-100 flex items-center justify-center",
+                    // Always Dark Body
+                    "border-gray-600 bg-gray-700",
+                    !isLocked ? "cursor-pointer active:scale-95 hover:border-gray-400" : "opacity-90 cursor-not-allowed",
 
-                    // Default State
-                    !isLocked && "bg-gray-700 hover:bg-gray-600",
-
-                    // Active State (Pressing) - Make it GLOW
-                    !isLocked && color === 'green' && "active:bg-green-900 active:border-green-500 active:shadow-[0_0_20px_rgba(34,197,94,0.6)]",
-                    !isLocked && color === 'red' && "active:bg-red-900 active:border-red-500 active:shadow-[0_0_20px_rgba(239,68,68,0.6)]"
+                    // Halo Effect
+                    !isLocked && "active:shadow-xl",
+                    !isLocked && ledColor === 'green' && "active:shadow-green-500/60 active:border-green-400",
+                    !isLocked && ledColor === 'red' && "active:shadow-red-500/60 active:border-red-400"
                 )}
-
                 onPointerDown={() => !isLocked && onPress && onPress()}
                 onPointerUp={() => !isLocked && onRelease && onRelease()}
-                onPointerLeave={() => !isLocked && onRelease && onRelease()} // Safety if drag out
+                onPointerLeave={() => !isLocked && onRelease && onRelease()}
             >
-                {/* Center Light - NOW BRIGHTER */}
+                {/* Center Light */}
                 <div className={clsx(
-                    "w-8 h-8 rounded-full shadow-md transition-all duration-200",
-                    // Use same "lit" style as rocker if you want it to look "Ready"
-                    // Or if it represents status (which implies feedback):
-                    // Let's assume Green = Ready/Safe
-                    color === 'green'
-                        ? "bg-green-500 shadow-[0_0_8px_rgba(74,222,128,0.8)] border-2 border-green-800"
-                        : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)] border-2 border-red-800"
+                    "w-8 h-8 rounded-full shadow-inner transition-all duration-300 border-2",
+                    ledColor === 'green' ? "bg-green-500 border-green-300 shadow-[0_0_12px_rgba(34,197,94,0.9)]" : "bg-red-600 border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)]"
                 )} />
             </button>
 
-            <span className="text-xs font-mono text-gray-400 text-center leading-tight w-20">
+            {/* Label Update: Bigger, Bolder, Dynamic Color */}
+            <span className={clsx(
+                "text-xs font-black font-mono text-center leading-tight w-24 transition-colors whitespace-pre-line uppercase tracking-wide",
+                // Dynamic Color Logic
+                isActive ? "text-gray-900 drop-shadow-sm" : "text-gray-300 group-hover:text-white"
+            )}>
                 {label}
             </span>
         </div>
