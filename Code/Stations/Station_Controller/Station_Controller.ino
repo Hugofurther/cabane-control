@@ -1022,8 +1022,14 @@ void loop()
       fb[3] = 0x00;
       fb[4] = fb[0] ^ fb[1] ^ fb[2] ^ fb[3];
 
-      // SEND TO BROADCAST (So both Main and Pi see it)
-      Udp.beginPacket(ipBroadcast, UDP_PORT);
+      // SEND TO MAIN CONTROLLER
+      Udp.beginPacket(ipMain, UDP_PORT);
+      Udp.write(fb, 5);
+      Udp.endPacket();
+
+      // SEND TO SERVER (PI)
+      IPAddress ipServer(192, 168, 1, 200);
+      Udp.beginPacket(ipServer, UDP_PORT);
       Udp.write(fb, 5);
       Udp.endPacket();
 

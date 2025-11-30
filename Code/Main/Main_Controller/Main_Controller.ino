@@ -721,132 +721,168 @@ void sendSetFrame(IPAddress dst, uint8_t id, uint8_t bits)
 
 // 🧩 HEARTBEAT + FEEDBACK HANDLER
 // ============================================================
-// 📡 MAIN CONTROLLER: PACKET PROCESSING (Updated for Override)
+// 📡 MAIN CONTROLLER: PACKET PROCESSING (High Performance)
 // ============================================================
 void processHeartbeatAndFeedback(uint32_t now)
 {
-  int packetSize = Udp.parsePacket();
-  if (packetSize <= 0)
-    return;
+  int packetsProcessed = 0;
+  // Limit to 10 to prevent hanging the main loop if flooded,
+  // but process enough to clear the W5500 buffer.
+  const int MAX_PACKETS_PER_LOOP = 10;
 
-  uint8_t buf[16];
-  int n = Udp.read(buf, sizeof(buf));
-  if (n < 3)
-    return;
-
-  uint8_t id = 0, st = 0, cks = 0;
-
-  // 1. HEARTBEAT [0xAB]
-  if (buf[0] == 0xAB && n >= 4)
+  while (Udp.parsePacket() > 0 && packetsProcessed < MAX_PACKETS_PER_LOOP)
   {
-    id = buf[1];
-    st = buf[2];
-    cks = buf[3];
-    if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS)
+    packetsProcessed++;
+
+    uint8_t buf[16];
+    int n = Udp.read(buf, sizeof(buf));
+    if (n < 3)
+      continue; // Skip invalid/empty packets
+
+    uint8_t id = 0, st = 0, cks = 0;
+
+    // ---------------------------------------------------------
+    // 1. HEARTBEAT [0xAB] - "I am alive"
+    // ---------------------------------------------------------
+    if (buf[0] == 0xAB && n >= 4)
     {
-      lastHeartbeatMs[id] = now;
-      stationOffline[id] = false;
-      heartbeatCount[id]++;
-      if (!firstHeartbeatSeen[id])
+      id = buf[1];
+      st = buf[2];
+      cks = buf[3];
+
+      if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS)
       {
-        firstHeartbeatSeen[id] = true;
-        sendFeedbackRequest(id);
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
+        heartbeatCount[id]++;
+
+        // Sync on reconnect
+        if (!firstHeartbeatSeen[id])
+        {
+          firstHeartbeatSeen[id] = true;
+          // Send request directly to this station's IP
+          sendFeedbackRequest(id);
+        }
       }
     }
-  }
-  // 2. FEEDBACK [0xAC]
-  else if (buf[0] == 0xAC && n >= 5)
-  {
-    id = buf[1];
-    uint8_t bits = buf[2];
-    cks = buf[4];
-    if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS)
+
+    // ---------------------------------------------------------
+    // 2. FEEDBACK [0xAC] - "Here are my sensor states"
+    // ---------------------------------------------------------
+    else if (buf[0] == 0xAC && n >= 5)
     {
-      stationFeedback[id] = bits;
-      lastHeartbeatMs[id] = now;
-      stationOffline[id] = false;
-    }
-  }
-  // 3. CONFLICT CHECK [0xAE] (For Station Boot)
-  else if (buf[0] == 0xAE && n >= 3)
-  {
-    id = buf[1];
-    cks = buf[2];
-    if (cks == (buf[0] ^ buf[1]))
-    {
-      bool inUse = false;
-      if (!stationOffline[id])
+      id = buf[1];
+      uint8_t bits = buf[2];
+      cks = buf[4];
+
+      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS)
       {
-        // Active Ping Verification
-        while (Udp.parsePacket())
-          Udp.flush();
-        sendFeedbackRequest(id);
-        uint32_t tPing = millis();
-        while (millis() - tPing < 100)
+        stationFeedback[id] = bits;
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
+      }
+    }
+
+    // ---------------------------------------------------------
+    // 3. CONFLICT CHECK [0xAE] - "Can I use this ID?"
+    // ---------------------------------------------------------
+    else if (buf[0] == 0xAE && n >= 3)
+    {
+      id = buf[1];
+      cks = buf[2];
+
+      if (cks == (buf[0] ^ buf[1]))
+      {
+        bool inUse = false;
+
+        // Check if ID is logically online
+        if (!stationOffline[id])
         {
-          if (Udp.parsePacket())
+          // Active Ping Verification (Blocking briefly to verify ghost)
+          // We flush remaining buffer first to ensure we catch the reply
+          while (Udp.parsePacket())
+            Udp.flush();
+
+          sendFeedbackRequest(id);
+
+          uint32_t tPing = millis();
+          while (millis() - tPing < 100)
           {
-            uint8_t pBuf[16];
-            int pn = Udp.read(pBuf, sizeof(pBuf));
-            if (pn >= 4 && (pBuf[0] == 0xAC || pBuf[0] == 0xAB) && pBuf[1] == id)
+            if (Udp.parsePacket())
             {
-              inUse = true;
-              break;
+              uint8_t pBuf[16];
+              int pn = Udp.read(pBuf, sizeof(pBuf));
+              // Valid reply from target?
+              if (pn >= 4 && (pBuf[0] == 0xAC || pBuf[0] == 0xAB) && pBuf[1] == id)
+              {
+                inUse = true;
+                break;
+              }
             }
           }
         }
+
+        uint8_t status = inUse ? 0xFF : 0x00;
+        uint8_t reply[3] = {0xAF, id, (uint8_t)(status ^ 0xAF ^ id)};
+
+        Udp.beginPacket(Udp.remoteIP(), UDP_PORT);
+        Udp.write(reply, 3);
+        Udp.endPacket();
+
+        // If we verified it's empty, mark it offline immediately so logic knows
+        if (!inUse && !stationOffline[id])
+          stationOffline[id] = true;
       }
-      uint8_t status = inUse ? 0xFF : 0x00;
-      uint8_t reply[3] = {0xAF, id, (uint8_t)(status ^ 0xAF ^ id)};
-      Udp.beginPacket(Udp.remoteIP(), UDP_PORT);
-      Udp.write(reply, 3);
-      Udp.endPacket();
-      if (!inUse && !stationOffline[id])
-        stationOffline[id] = true;
     }
-  }
 
-  // ============================================================
-  // 4. 🕹️ REMOTE OVERRIDE COMMANDS (From Pi)
-  // ============================================================
-
-  // CONTROL MODE [0xAF, Mode, Cks]
-  // Mode: 0x01 = Take Control, 0x00 = Release Control
-  else if (buf[0] == 0xAF && n >= 3)
-  {
-    uint8_t mode = buf[1];
-    cks = buf[2];
-    if (cks == (buf[0] ^ buf[1]))
+    // ---------------------------------------------------------
+    // 4. REMOTE OVERRIDE [0xAF] - "Pi taking control"
+    // ---------------------------------------------------------
+    else if (buf[0] == 0xAF && n >= 3)
     {
-      if (mode == 0x01)
+      uint8_t mode = buf[1];
+      cks = buf[2];
+      if (cks == (buf[0] ^ buf[1]))
       {
-        remoteOverrideActive = true;
-        DBG(1, Serial.println(F("[REMOTE] Control TAKEN by Web App")));
-      }
-      else
-      {
-        remoteOverrideActive = false;
-        DBG(1, Serial.println(F("[REMOTE] Control RELEASED to Cabane")));
-      }
-    }
-  }
+        if (mode == 0x01)
+        {
+          remoteOverrideActive = true;
+          DBG(1, Serial.println(F("[REMOTE] Control TAKEN by Web App")));
+        }
+        else
+        {
+          // Note: In Dual Master mode, Pi releases control, but Main only
+          // fully regains it via Physical Button press. However, updating the flag
+          // here allows the Main Controller to know the Pi *wants* to release.
+          // Your requirement: "Main Controller regains control by pressing buttons 0+1".
+          // So actually, receiving 0x00 here might not strictly be needed if you rely ONLY on buttons.
+          // But it's good for state tracking.
 
-  // REMOTE DATA [0xB0, Byte0, Byte1, Byte2, Cks]
-  // Contains the 24 switch states from the Web App
-  else if (buf[0] == 0xB0 && n >= 5)
-  {
-    cks = buf[4];
-    if (cks == (buf[0] ^ buf[1] ^ buf[2] ^ buf[3]))
-    {
-      if (remoteOverrideActive)
-      {
-        remoteSwitchBytes[0] = buf[1];
-        remoteSwitchBytes[1] = buf[2];
-        remoteSwitchBytes[2] = buf[3];
-        lastLinkCheck = now; // Treat valid data as a heartbeat from Pi
+          // remoteOverrideActive = false; // Uncomment if you want auto-release
+          DBG(1, Serial.println(F("[REMOTE] Web App released (Pending Manual Reclaim)")));
+        }
       }
     }
-  }
+
+    // ---------------------------------------------------------
+    // 5. REMOTE DATA [0xB0] - "Pi Virtual Switch Positions"
+    // ---------------------------------------------------------
+    else if (buf[0] == 0xB0 && n >= 5)
+    {
+      cks = buf[4];
+      if (cks == (buf[0] ^ buf[1] ^ buf[2] ^ buf[3]))
+      {
+        // Only update internal state if we are actually overridden
+        if (remoteOverrideActive)
+        {
+          remoteSwitchBytes[0] = buf[1];
+          remoteSwitchBytes[1] = buf[2];
+          remoteSwitchBytes[2] = buf[3];
+          lastLinkCheck = now; // Pi is alive
+        }
+      }
+    }
+  } // End While
 }
 
 // 🧩 OFFLINE DETECTION
