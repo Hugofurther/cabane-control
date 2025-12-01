@@ -87,7 +87,12 @@ export const SocketProvider = ({ children }) => {
     };
 
     const takeControl = async () => {
-        if (!token) return;
+        // DEBUG: Alert if no token found
+        if (!token) {
+            alert("You must be logged in to Take Control.");
+            return;
+        }
+
         await axios.post(`${API_URL}/api/control/take`, {}, {
             headers: { Authorization: `Bearer ${token}` }
         });

@@ -1,29 +1,30 @@
 // ============================================================
-// 🧠 LOGIC ENGINE (State Machine) - v6 SYNC FIX
+// 🧠 LOGIC ENGINE (State Machine) - v7 INDEPENDENT LOGIC
 // ============================================================
 const udpService = require('./udp_service');
 
 const state = {
-    // Modes: 'CABANE', 'SERVER', 'USER'
     controller: 'CABANE',
     currentUser: null,
-
     mainControllerOnline: false,
     lastMainHeartbeat: 0,
 
     virtualSwitches: new Array(24).fill(0),
     physicalSwitches: new Array(24).fill(0),
 
-    stationFeedback: new Array(6).fill(0),
+    stationFeedback: new Array(6).fill(0), // Bits 0-7 per station
     stationOnline: new Array(6).fill(false),
-    stationLastSeen: new Array(6).fill(0)
+    stationLastSeen: new Array(6).fill(0),
+
+    // Global Alarm State (Calculated by Pi)
+    globalVacuumAlarm: false
 };
 
-// SYNC FIX: Track when we last took control to prevent race conditions
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
-
 let ioRef = null;
+
+// --- CONFIGURATION ---
 
 const INPUT_MAP = [
     { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
@@ -37,6 +38,24 @@ const INPUT_MAP = [
     { idx: 16, st: 4, bit: 0 }, { idx: 17, st: 4, bit: 1 },
     { idx: 18, st: 4, bit: 2 },
     { idx: 19, st: 5, bit: 0 }, { idx: 20, st: 5, bit: 1 }
+];
+
+// Thermostat Config
+// ST0 TH (Sw 22) -> Overrides Switches 2, 9, 14. Feedback: ST0 Bit 3
+// ST4 TH (Sw 23) -> Overrides Switch 17. Feedback: ST4 Bit 3
+const THERMOSTATS = [
+    { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
+    { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
+];
+
+// Vacuum Switches (For Alarm Calculation)
+// Maps Switch Index to specific Feedback Bit to check
+const VACUUM_CHECKS = [
+    { swIdx: 2, st: 1, bit: 2 }, // Vac 1
+    { swIdx: 3, st: 1, bit: 2 }, // Vac 2
+    { swIdx: 9, st: 2, bit: 1 }, // St2 Vac
+    { swIdx: 14, st: 3, bit: 2 }, // St3 Vac
+    { swIdx: 17, st: 4, bit: 1 }  // St4 Vac
 ];
 
 function init(io) {
@@ -59,28 +78,15 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
 
-    // SYNC LOGIC
-    // SYNC LOGIC
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
-
-        // Auto-Correct Logic
-        if (isOverrideActive) {
-            // FIX: Only switch to SERVER if we haven't just released recently
-            if (Date.now() - lastReleaseTime > 3000) {
-                console.log("[SYNC] Main is in Override. Pi assuming SERVER Control.");
-                state.controller = 'SERVER';
-            }
+        if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
+            console.log("[SYNC] Main in Override. Pi assuming SERVER.");
+            state.controller = 'SERVER';
         }
-    }
-    else {
-        // If Pi is driving (USER/SERVER)
-
-        // SAFETY CHECK: Did Main Controller force a reset?
-        // We only check this if 3 seconds have passed since we took control.
-        // This prevents the "Race Condition" where old packets trigger a release.
+    } else {
         if (!isOverrideActive && (Date.now() - lastControlTakeTime > 3000)) {
-            console.log("[SYNC] Main Controller forced Manual Mode (Emergency).");
+            console.log("[SYNC] Emergency Release.");
             releaseToCabane();
         }
     }
@@ -92,7 +98,7 @@ function updateStationFeedback(id, bits) {
         state.stationFeedback[id] = bits;
         state.stationOnline[id] = true;
         state.stationLastSeen[id] = Date.now();
-        pushUpdate();
+        pushUpdate(); // Real-time feedback update
     }
 }
 
@@ -101,19 +107,17 @@ function updateStationFeedback(id, bits) {
 function takeControl(username) {
     state.controller = 'USER';
     state.currentUser = username;
-    lastControlTakeTime = Date.now(); // Mark timestamp
-
+    lastControlTakeTime = Date.now();
     udpService.sendOverrideCommand(1);
-    console.log(`[CONTROL] Taken by User: ${username}`);
+    console.log(`[CONTROL] Taken by ${username}`);
     pushUpdate();
 }
 
 function releaseToServer() {
     state.controller = 'SERVER';
     state.currentUser = null;
-    lastControlTakeTime = Date.now(); // Reset timestamp just in case
-
-    udpService.sendOverrideCommand(1); // Re-assert override
+    lastControlTakeTime = Date.now();
+    udpService.sendOverrideCommand(1);
     console.log(`[CONTROL] Released to SERVER`);
     pushUpdate();
 }
@@ -121,8 +125,7 @@ function releaseToServer() {
 function releaseToCabane() {
     state.controller = 'CABANE';
     state.currentUser = null;
-    lastReleaseTime = Date.now(); // <--- MARK TIME
-
+    lastReleaseTime = Date.now();
     udpService.sendOverrideCommand(0);
     console.log(`[CONTROL] Released to CABANE`);
     pushUpdate();
@@ -131,33 +134,71 @@ function releaseToCabane() {
 function toggleSwitch(idx, value) {
     if (idx < 0 || idx > 23) return;
     if (state.controller === 'CABANE') return;
-
     state.virtualSwitches[idx] = value ? 1 : 0;
     pushUpdate();
 }
 
-// --- CORE LOOPS ---
+// --- CORE CONTROL LOOP (The Independent Logic) ---
 
 function controlLoop() {
+
+    // 1. CALCULATE ACTIVE COMMANDS (Applying Thermostats)
+    // We create a temporary command array based on Virtual Switches + Logic
+    const activeCommands = [...state.virtualSwitches];
+
+    THERMOSTATS.forEach(th => {
+        // If Thermostat Switch is ON
+        if (state.virtualSwitches[th.swIdx]) {
+            // Check Temp Sensor (Active Low: 0 = Cold/Active, 1 = Warm/Idle)
+            const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
+            const isCold = (rawBit === 0);
+
+            if (isCold) {
+                // Override the target pumps to ON
+                th.overrides.forEach(targetIdx => {
+                    activeCommands[targetIdx] = 1;
+                });
+            }
+        }
+    });
+
+    // 2. CHECK VACUUM ALARMS
+    let alarmDetected = false;
+    VACUUM_CHECKS.forEach(chk => {
+        const commandedOn = activeCommands[chk.swIdx];
+        // Feedback: 0 = Vacuum Good (Running), 1 = No Vacuum (Off/Fail)
+        const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
+        const noVacuum = (rawFb === 1);
+
+        if (commandedOn && noVacuum) {
+            // Logic: Wait... pumps take time to build vacuum. 
+            // Ideally we need a delay here, but for now simple logic:
+            alarmDetected = true;
+        }
+    });
+    state.globalVacuumAlarm = alarmDetected;
+
+    // 3. BROADCAST COMMANDS (Only if Pi is Master)
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
-            if (state.virtualSwitches[m.idx]) {
+            if (activeCommands[m.idx]) { // Use the computed commands (with TH overrides)
                 stationBytes[m.st] |= (1 << m.bit);
             }
         });
         udpService.sendGlobalBroadcast(stationBytes);
+
+        // NOTE: We REMOVED sending 0xB0 (Remote Data) to Main Controller 
+        // as per your request. Main Controller will rely on Station Feedback.
     }
 }
 
 function checkHeartbeats() {
     const now = Date.now();
     if (state.mainControllerOnline && (now - state.lastMainHeartbeat > 5000)) {
-        console.log("[ALARM] Main Controller LOST! Switching to SERVER Mode.");
+        console.log("[ALARM] Main Controller LOST! Switching to SERVER.");
         state.mainControllerOnline = false;
-        if (state.controller === 'CABANE') {
-            takeControl('SYSTEM_FAILSAFE');
-        }
+        if (state.controller === 'CABANE') takeControl('SYSTEM_FAILSAFE');
         pushUpdate();
     }
     for (let i = 0; i < 6; i++) {

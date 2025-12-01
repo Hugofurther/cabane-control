@@ -5,9 +5,9 @@ export const PANEL_LAYOUT = [
         cols: 'grid-cols-1 lg:grid-cols-12',
         cards: [
             {
-                name: "STATION 1 & TANK",
-                // INCREASED from 9 to 10
+                name: "STATION 1",
                 span: 'lg:col-span-10',
+                stationIds: [0, 1], // Check both ST0 and ST1
                 controls: [
                     { idx: 0, label: "TRANSP\n1", type: 'button', fb: { st: 1, bit: 0 } },
                     { idx: 1, label: "TRANSP\n2", type: 'button', fb: { st: 1, bit: 1 } },
@@ -21,8 +21,8 @@ export const PANEL_LAYOUT = [
             },
             {
                 name: "THERMOSTAT\nST 1-2-3",
-                // DECREASED from 3 to 2
                 span: 'lg:col-span-2',
+                stationIds: [], // CHANGED: Empty array = Always Online
                 controls: [
                     { idx: 22, label: "ENABLE", type: 'rocker', special: 'TH1' }
                 ]
@@ -38,6 +38,7 @@ export const PANEL_LAYOUT = [
             {
                 name: "STATION 2",
                 span: 'col-span-1',
+                stationIds: [2],
                 controls: [
                     { idx: 8, label: "TRANSPORT", type: 'button', fb: { st: 2, bit: 0 } },
                     { idx: 9, label: "VACUUM", type: 'rocker', fb: { st: 2, bit: 1 } },
@@ -48,6 +49,7 @@ export const PANEL_LAYOUT = [
             {
                 name: "STATION 3",
                 span: 'col-span-1',
+                stationIds: [3],
                 controls: [
                     { idx: 12, label: "TRANSP\n1", type: 'button', fb: { st: 3, bit: 0 } },
                     { idx: 13, label: "TRANSP\n2", type: 'button', fb: { st: 3, bit: 1 } },
@@ -58,15 +60,15 @@ export const PANEL_LAYOUT = [
         ]
     },
 
-    // --- ROW 3 (Refined Layout) ---
+    // --- ROW 3 ---
     {
         id: 'row3',
-        // 6 Columns Total
         cols: 'grid-cols-2 lg:grid-cols-6',
         cards: [
             {
                 name: "STATION 4",
-                span: 'col-span-2', // Takes 2/6 (Medium)
+                span: 'col-span-2',
+                stationIds: [4],
                 controls: [
                     { idx: 16, label: "TRANSPORT", type: 'button', fb: { st: 4, bit: 0 } },
                     { idx: 17, label: "VACUUM", type: 'rocker', fb: { st: 4, bit: 1 } },
@@ -75,14 +77,16 @@ export const PANEL_LAYOUT = [
             },
             {
                 name: "THERMOSTAT\nST 4-5",
-                span: 'col-span-1', // Takes 1/6 (Small)
+                span: 'col-span-1',
+                stationIds: [], // CHANGED: Always Online
                 controls: [
                     { idx: 23, label: "ENABLE", type: 'rocker', special: 'TH2' }
                 ]
             },
             {
                 name: "STATION 5",
-                span: 'col-span-2', // Takes 2/6 (Medium)
+                span: 'col-span-2',
+                stationIds: [5],
                 controls: [
                     { idx: 19, label: "TRANSPORT", type: 'button', fb: { st: 5, bit: 0 } },
                     { idx: 20, label: "VID ST5", type: 'rocker', fb: { st: 5, bit: 1 } },
@@ -90,7 +94,8 @@ export const PANEL_LAYOUT = [
             },
             {
                 name: "BAS VACUUM\nBUZZER",
-                span: 'col-span-1', // Takes 1/6 (Small)
+                span: 'col-span-1',
+                stationIds: [], // CHANGED: Always Online
                 controls: [
                     { idx: 21, label: "ENABLE", type: 'rocker', special: 'BUZZER' }
                 ]

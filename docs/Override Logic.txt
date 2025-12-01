@@ -1,0 +1,51 @@
+I did not add the '// Blink GREEN 5x to announce "I am in charge"' in the setup as the user should already know the Main Controller will regain control when rebooting.
+
+
+Here's what I need 
+
+- The system needs to be controlled by 2 different controller, but not at the same time:
+	- The Main Controller
+	- the Pi Server via an app
+
+
+
+- Switching of control:
+	1.  When the Main Controller Boots or becomes online:
+		- If the Pi Server has control, the Main controller takes control.
+		- Regardless of who has control, when the Main Controller becomes online after being offline, the Main Controller takes control.
+
+	2. When the Pi Boots:
+		- If no Main Controller detected, the Pi Server adjusts its switches position accordingly to the feedback of the stations and takes control. Green for ON. Red for OFF
+		- If a main Controller is detected, the Main Controller keeps control. The Main Controller, always broadcasting its physical switches positions, adjusts its virtual switches positions accordingly.
+
+	3. If the Main Controller becomes offline, the Pi Server automatically gains control. The same is not true if the Pi Server becomes offline because of the physical switches. The Main Controller needs to regain control by either pressing buttons index 0 and 1 for 2 seconds, or going offline and then getting back online. If when using the app, a user account has control and then logs out or becomes offline. The position of its switches are kept in the system until another user or the Main Controller gains control.
+
+
+	4. When Main Controller and Pi Server are online:
+		- the Pi Server takes control via an app. A button is clicked and a confirmation pop up is displayed to double check if this is what the user intends and requests credentials.
+		- the Main Controller regains control by pressing the pushbutton at index 0 and 1 simultaneously for 2 seconds after which all the ledPairs blink GREEN 5 times to indicate the Main Controller regained control. The Blinking doesn't occur on boot or reconnecting as the user should know the Main Controller will regain control when becoming online after being offline.
+
+
+- Syncing of the Main Controller and the Pi Server:
+	- At all time the Main Controller broadcasts the position of its switches to the Pi Server.
+	- The Pi Server never broadcasts its virtual switches position to the Main Controller as the Main Controller switches are physical and cannot switch on their own. Before the Main Controller regains control, the user is responsible to physically adjust its switches before regaining control.
+	- When the Main Controller is in control, it is the one device sending messages to the Station Controllers and the Pi Server adjusts its virtual switches to the position of the Main Controller physical switches. The Pi stops broadcasting its virtual switches positions to the Station Controller as the source of truth is the Main Controller.
+	- When the Pi Server is in control, it is the one device sending messages to the Station Controllers directly and the Main Controller stops broadcasting its physical switches positions to the Station Controllers. It controls the position of its virtual switches and indicates which switches are different from the Main Controller's physical switches, so when the user wants to release control, they are aware what the system will snap back to.
+
+	
+
+- The Station Controllers feedback
+	- At all time the Station Controllers are broadcasting their feedback to both, Main controller and Pi Server and they both adjust their ledPairs accordingly
+	- The Main Controller's ledPairs always reflect the feedback from the Station Controllers.
+	- When the Main Controller is in control, the Pi Server keeps reading the position of the Main Controller's physical switches 
+
+- Control Indication
+	- On the Main Controller, when the Pi Server has control, the 2 thermostat and the buzzer ledPairs blink GREEN.
+	- on the Pi Server, the app will display who is in control. If it's the Main Controller, the app displays "Cabane". If it's the Pi Server, a user is obviously logged in and its username is displayed.
+
+- App
+	- When a user logs in, all the GUI virtual switches take the positions of the device controlling.
+	- If anything changes all is reflected on the virtual switches live.
+	- When a user who has control logs off or becomes offline, unless they have released the controls, the Pi Server keeps control with the last switch positions the last user with control had until another user or the Main Controller takes control.
+ 
+
