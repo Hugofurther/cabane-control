@@ -10,7 +10,6 @@ const formatDuration = (ms) => {
     const seconds = Math.floor(ms / 1000);
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
-    // If > 1 hour, show 99:99 or similar
     if (m > 99) return "> 99m";
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 };
@@ -18,11 +17,9 @@ const formatDuration = (ms) => {
 export const StationCard = ({ card, isRemote }) => {
     const { systemState, toggleSwitch } = useSocket();
 
-    // Local state to force re-render every second for the timer
     const [, setTick] = useState(0);
 
     useEffect(() => {
-        // Only set up interval if something is offline to save resources
         const timer = setInterval(() => setTick(t => t + 1), 1000);
         return () => clearInterval(timer);
     }, []);
@@ -33,11 +30,9 @@ export const StationCard = ({ card, isRemote }) => {
 
     if (card.stationIds) {
         card.stationIds.forEach(id => {
-            // Check if station is logically offline
             if (!systemState.stationOnline[id]) {
                 isAnyOffline = true;
                 const lastSeen = systemState.stationLastSeen[id];
-
                 let labelText = "";
 
                 if (lastSeen === 0) {
@@ -57,7 +52,6 @@ export const StationCard = ({ card, isRemote }) => {
         offlineLabels.length === card.stationIds.length;
 
     const isThermostat = card.name.includes("THERMOSTAT");
-    // Show labels if offline AND not a thermostat
     const showOfflineLabel = isAnyOffline && !isThermostat;
 
     // --- 2. STYLING ---
@@ -78,7 +72,6 @@ export const StationCard = ({ card, isRemote }) => {
     return (
         <div className={clsx("border rounded-lg p-4 flex flex-col transition-colors duration-500 relative min-h-[160px]", bgClass, card.span)}>
 
-            {/* OFFLINE LABELS (With Timer) */}
             {showOfflineLabel && (
                 <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20">
                     {offlineLabels.map(lbl => (
@@ -106,8 +99,8 @@ export const StationCard = ({ card, isRemote }) => {
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
                     const isLocked = !isRemote || isThisControlOffline;
 
+                    // Define props WITHOUT the key
                     const props = {
-                        key: ctrl.idx,
                         label: ctrl.label,
                         idx: ctrl.idx,
                         feedback: ctrl.fb,
@@ -119,6 +112,7 @@ export const StationCard = ({ card, isRemote }) => {
                     if (ctrl.type === 'button') {
                         return (
                             <HaloButton
+                                key={ctrl.idx} // ✅ Key is explicit here
                                 {...props}
                                 onPress={() => handleToggle(ctrl.idx, true)}
                                 onRelease={() => handleToggle(ctrl.idx, false)}
@@ -127,6 +121,7 @@ export const StationCard = ({ card, isRemote }) => {
                     } else {
                         return (
                             <RockerSwitch
+                                key={ctrl.idx} // ✅ Key is explicit here
                                 {...props}
                                 isOn={virtualOn}
                                 physicalOn={physicalOn}

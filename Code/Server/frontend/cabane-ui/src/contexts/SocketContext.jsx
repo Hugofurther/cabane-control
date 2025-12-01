@@ -15,13 +15,16 @@ export const SocketProvider = ({ children }) => {
 
     // The God Object: Holds all system state
     const [systemState, setSystemState] = useState({
-        controller: 'CABANE', // 'CABANE' or 'USER'
+        controller: 'CABANE',
         currentUser: null,
         mainControllerOnline: false,
         virtualSwitches: new Array(24).fill(0),
         physicalSwitches: new Array(24).fill(0),
         stationFeedback: new Array(6).fill(0),
-        stationOnline: new Array(6).fill(false)
+        stationOnline: new Array(6).fill(false),
+        stationLastSeen: new Array(6).fill(0), // ✅ ADDED THIS
+        globalVacuumAlarm: false,              // ✅ ADDED THIS (Safe default)
+        buzzerStatus: 'OFF'                    // ✅ ADDED THIS (Safe default)
     });
 
     // Auth State
