@@ -40,11 +40,11 @@ export const RockerSwitch = ({ label, idx, feedback, special, isOn, physicalOn, 
                 )}
             </div>
 
-            {/* Label Update: Bigger, Bolder, Dynamic Color */}
+            {/* Label: Fixed height for alignment */}
             <span className={clsx(
-                "text-xs font-black font-mono text-center leading-tight w-24 transition-colors whitespace-pre-line uppercase tracking-wide",
-                // If Active (Control Mode/Light BG) -> Dark Text
-                // If Passive (Monitor Mode/Dark BG) -> Light Text
+                "text-xs font-black font-mono text-center leading-tight w-24 whitespace-pre-line uppercase tracking-wide",
+                // ALIGNMENT FIX: Fixed height (h-8) + Flex Center to handle 1 vs 2 lines
+                "h-8 flex items-start justify-center pt-1",
                 isActive ? "text-gray-900 drop-shadow-sm" : "text-gray-300 group-hover:text-white"
             )}>
                 {label}

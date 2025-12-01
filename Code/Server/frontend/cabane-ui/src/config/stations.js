@@ -7,12 +7,15 @@ export const PANEL_LAYOUT = [
             {
                 name: "STATION 1",
                 span: 'lg:col-span-10',
-                stationIds: [0, 1], // Check both ST0 and ST1
+                // ✅ UPDATED: Include both 0 and 1 so we can check both
+                stationIds: [0, 1],
                 controls: [
                     { idx: 0, label: "TRANSP\n1", type: 'button', fb: { st: 1, bit: 0 } },
                     { idx: 1, label: "TRANSP\n2", type: 'button', fb: { st: 1, bit: 1 } },
-                    { idx: 2, label: "VACUUM\n1", type: 'rocker', fb: { st: 1, bit: 2 } },
-                    { idx: 3, label: "VACUUM\n2", type: 'rocker', fb: { st: 1, bit: 2 } },
+                    // ST0 Controls (Vacuum)
+                    { idx: 2, label: "VACUUM\n1", type: 'rocker', fb: { st: 1, bit: 2 }, targetSt: 0 }, // Added targetSt hint
+                    { idx: 3, label: "VACUUM\n2", type: 'rocker', fb: { st: 1, bit: 2 }, targetSt: 0 },
+                    // ST1 Controls
                     { idx: 4, label: "VID T1", type: 'rocker', fb: { st: 1, bit: 3 } },
                     { idx: 5, label: "OUV. T2", type: 'rocker', fb: { st: 1, bit: 4 } },
                     { idx: 6, label: "VID T2", type: 'rocker', fb: { st: 1, bit: 5 } },
@@ -22,13 +25,14 @@ export const PANEL_LAYOUT = [
             {
                 name: "THERMOSTAT\nST 1-2-3",
                 span: 'lg:col-span-2',
-                stationIds: [], // CHANGED: Empty array = Always Online
+                stationIds: [0], // Depends on ST0
                 controls: [
                     { idx: 22, label: "ENABLE", type: 'rocker', special: 'TH1' }
                 ]
             }
         ]
     },
+
 
     // --- ROW 2 ---
     {
@@ -78,7 +82,8 @@ export const PANEL_LAYOUT = [
             {
                 name: "THERMOSTAT\nST 4-5",
                 span: 'col-span-1',
-                stationIds: [], // CHANGED: Always Online
+                // ✅ CHANGE: Link to Station 4 so it greys out if ST4 is offline
+                stationIds: [4],
                 controls: [
                     { idx: 23, label: "ENABLE", type: 'rocker', special: 'TH2' }
                 ]

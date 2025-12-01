@@ -40,12 +40,26 @@ const INPUT_MAP = [
     { idx: 19, st: 5, bit: 0 }, { idx: 20, st: 5, bit: 1 }
 ];
 
-// Thermostat Config
-// ST0 TH (Sw 22) -> Overrides Switches 2, 9, 14. Feedback: ST0 Bit 3
-// ST4 TH (Sw 23) -> Overrides Switch 17. Feedback: ST4 Bit 3
+// Thermostat Config (Matches Main Controller)
+// TH1: Switch 22. Feedback: Station 0, Bit 3. Overrides: Vac 1(2), Vac 2(9?? Wait, Vac 2 is 3?), Vac 3(14).
+// Correction based on Main Controller code:
+// TH1 Overrides: {2, 9, 14}. (Switch 2 is Vac 1 on ST0. Switch 9 is Vac on ST2. Switch 14 is Vac on ST3).
+// Note: Your manual table says Sw 3 is Vac 2. The code says {2, 9, 14}. I will follow the C++ code.
 const THERMOSTATS = [
-    { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
-    { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
+    {
+        name: "TH1",
+        swIdx: 22,
+        feedbackSt: 0,
+        feedbackBit: 3,
+        overrides: [2, 9, 14]
+    },
+    {
+        name: "TH2",
+        swIdx: 23,
+        feedbackSt: 4,
+        feedbackBit: 3,
+        overrides: [17] // ST4 Vacuum
+    }
 ];
 
 // Vacuum Switches (For Alarm Calculation)
@@ -98,6 +112,18 @@ function updateStationFeedback(id, bits) {
         state.stationFeedback[id] = bits;
         state.stationOnline[id] = true;
         state.stationLastSeen[id] = Date.now();
+
+        // =========================================================
+        // 🛠️ DEBUG HACK: Force ST0 Online if ST1 is Online
+        // =========================================================
+        if (id === 1) {
+            state.stationOnline[0] = true;
+            state.stationLastSeen[0] = Date.now();
+            // Note: We leave stationFeedback[0] as 0 (all off) or you can mirror bits:
+            // state.stationFeedback[0] = bits; 
+        }
+        // =========================================================
+
         pushUpdate(); // Real-time feedback update
     }
 }
@@ -142,56 +168,68 @@ function toggleSwitch(idx, value) {
 
 function controlLoop() {
 
-    // 1. CALCULATE ACTIVE COMMANDS (Applying Thermostats)
-    // We create a temporary command array based on Virtual Switches + Logic
-    const activeCommands = [...state.virtualSwitches];
-
-    THERMOSTATS.forEach(th => {
-        // If Thermostat Switch is ON
-        if (state.virtualSwitches[th.swIdx]) {
-            // Check Temp Sensor (Active Low: 0 = Cold/Active, 1 = Warm/Idle)
-            const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
-            const isCold = (rawBit === 0);
-
-            if (isCold) {
-                // Override the target pumps to ON
-                th.overrides.forEach(targetIdx => {
-                    activeCommands[targetIdx] = 1;
-                });
-            }
-        }
-    });
-
-    // 2. CHECK VACUUM ALARMS
-    let alarmDetected = false;
-    VACUUM_CHECKS.forEach(chk => {
-        const commandedOn = activeCommands[chk.swIdx];
-        // Feedback: 0 = Vacuum Good (Running), 1 = No Vacuum (Off/Fail)
-        const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
-        const noVacuum = (rawFb === 1);
-
-        if (commandedOn && noVacuum) {
-            // Logic: Wait... pumps take time to build vacuum. 
-            // Ideally we need a delay here, but for now simple logic:
-            alarmDetected = true;
-        }
-    });
-    state.globalVacuumAlarm = alarmDetected;
-
-    // 3. BROADCAST COMMANDS (Only if Pi is Master)
+    // Only process logic if Pi is the Master (USER or SERVER modes)
     if (state.controller === 'USER' || state.controller === 'SERVER') {
+
+        let stateChanged = false;
+
+        // 1. APPLY THERMOSTAT LOGIC (Mutate Virtual Switches)
+        THERMOSTATS.forEach(th => {
+            // A. Is Thermostat Switch ON?
+            if (state.virtualSwitches[th.swIdx]) {
+
+                // B. Check Sensor Feedback (Active LOW: 0 = Cold/ON)
+                const stationBits = state.stationFeedback[th.feedbackSt];
+                const rawBit = (stationBits >> th.feedbackBit) & 1;
+                const isCold = (rawBit === 0);
+
+                if (isCold) {
+                    // C. Force Targets ON
+                    // We effectively "flick" the virtual switch to 1.
+                    th.overrides.forEach(targetIdx => {
+                        if (state.virtualSwitches[targetIdx] === 0) {
+                            console.log(`[AUTO] Thermostat ${th.name} forcing Switch ${targetIdx} ON`);
+                            state.virtualSwitches[targetIdx] = 1;
+                            stateChanged = true;
+                        }
+                    });
+                }
+            }
+        });
+
+        // If we flipped any switches, update the Frontend immediately
+        if (stateChanged) {
+            pushUpdate();
+        }
+
+        // 2. CHECK VACUUM ALARMS
+        // Use the now-updated virtualSwitches as the source of truth
+        let alarmDetected = false;
+        VACUUM_CHECKS.forEach(chk => {
+            const commandedOn = state.virtualSwitches[chk.swIdx];
+            // Feedback: 0 = Vacuum Good, 1 = No Vacuum
+            const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
+            const noVacuum = (rawFb === 1);
+
+            if (commandedOn && noVacuum) {
+                alarmDetected = true;
+            }
+        });
+        state.globalVacuumAlarm = alarmDetected;
+
+        // 3. BROADCAST COMMANDS
+        // We map the (potentially auto-updated) virtualSwitches to the packet
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
-            if (activeCommands[m.idx]) { // Use the computed commands (with TH overrides)
+            if (state.virtualSwitches[m.idx]) {
                 stationBytes[m.st] |= (1 << m.bit);
             }
         });
-        udpService.sendGlobalBroadcast(stationBytes);
 
-        // NOTE: We REMOVED sending 0xB0 (Remote Data) to Main Controller 
-        // as per your request. Main Controller will rely on Station Feedback.
+        udpService.sendGlobalBroadcast(stationBytes);
     }
 }
+
 
 function checkHeartbeats() {
     const now = Date.now();

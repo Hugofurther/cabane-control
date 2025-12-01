@@ -30,10 +30,11 @@ export const HaloButton = ({ label, idx, feedback, isLocked, isActive, onPress, 
                 )} />
             </button>
 
-            {/* Label Update: Bigger, Bolder, Dynamic Color */}
+            {/* Label: Fixed height for alignment */}
             <span className={clsx(
-                "text-xs font-black font-mono text-center leading-tight w-24 transition-colors whitespace-pre-line uppercase tracking-wide",
-                // Dynamic Color Logic
+                "text-xs font-black font-mono text-center leading-tight w-24 whitespace-pre-line uppercase tracking-wide",
+                // ALIGNMENT FIX
+                "h-8 flex items-start justify-center pt-1",
                 isActive ? "text-gray-900 drop-shadow-sm" : "text-gray-300 group-hover:text-white"
             )}>
                 {label}

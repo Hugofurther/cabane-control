@@ -21,22 +21,23 @@ export function useLedState(idx, feedbackMap, specialType) {
     }
 
     // 3. Special Logic (Thermostats & Buzzer)
-    if (specialType === 'TH1') { // Station 0, Bit 3
-        const thActive = ((stationFeedback[0] >> 3) & 1) === 0;
-        // Green if Switch ON AND Temp Active. Red otherwise.
-        if (isSwitchOn) return thActive ? 'green' : 'red';
-        return 'off';
+    if (specialType === 'TH1') {
+        // Station 0, Bit 3
+        const thActive = ((stationFeedback[0] >> 3) & 1) === 0; // Active Low
+
+        if (!isSwitchOn) return 'off'; // Switch Off -> Light Off
+        return thActive ? 'green' : 'red'; // On+Cold=Green, On+Warm=Red
     }
 
-    if (specialType === 'TH2') { // Station 4, Bit 3
+    if (specialType === 'TH2') {
+        // Station 4, Bit 3
         const thActive = ((stationFeedback[4] >> 3) & 1) === 0;
-        if (isSwitchOn) return thActive ? 'green' : 'red';
-        return 'off';
+
+        if (!isSwitchOn) return 'off';
+        return thActive ? 'green' : 'red';
     }
 
     if (specialType === 'BUZZER') {
-        // Simplified: Green if Enabled, Red if Muted. 
-        // (Alarm flashing handled by CSS animation if needed later)
         return isSwitchOn ? 'green' : 'red';
     }
 
