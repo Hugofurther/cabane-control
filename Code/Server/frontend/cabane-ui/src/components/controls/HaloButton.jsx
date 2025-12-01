@@ -26,7 +26,12 @@ export const HaloButton = ({ label, idx, feedback, isLocked, isActive, onPress, 
                 {/* Center Light */}
                 <div className={clsx(
                     "w-8 h-8 rounded-full shadow-inner transition-all duration-300 border-2",
-                    ledColor === 'green' ? "bg-green-500 border-green-300 shadow-[0_0_12px_rgba(34,197,94,0.9)]" : "bg-red-600 border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)]"
+
+                    ledColor === 'green' && "bg-green-500 border-green-300 shadow-[0_0_12px_rgba(34,197,94,0.9)]",
+                    ledColor === 'red' && "bg-red-600 border-red-400 shadow-[0_0_12px_rgba(239,68,68,0.7)]",
+
+                    // ✅ NEW: Blink Red
+                    ledColor === 'blink-red' && "animate-alarm border-red-300"
                 )} />
             </button>
 

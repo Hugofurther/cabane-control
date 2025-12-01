@@ -28,9 +28,18 @@ export const RockerSwitch = ({ label, idx, feedback, special, isOn, physicalOn, 
                     {/* LED Indicator */}
                     <div className={clsx(
                         "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded shadow transition-all duration-300 w-6 h-3",
+
+                        // Green
                         ledColor === 'green' && "bg-green-500 shadow-[0_0_8px_2px_rgba(34,197,94,0.9)] border border-green-300",
+
+                        // Red (Solid)
                         ledColor === 'red' && "bg-red-600 shadow-[0_0_8px_1px_rgba(239,68,68,0.7)] border border-red-400",
-                        ledColor === 'off' && "bg-gray-900 opacity-50"
+
+                        // Off
+                        ledColor === 'off' && "bg-gray-900 opacity-50",
+
+                        // ✅ NEW: Blink Red (Alarm)
+                        ledColor === 'blink-red' && "animate-alarm border border-red-400"
                     )}></div>
                 </div>
 

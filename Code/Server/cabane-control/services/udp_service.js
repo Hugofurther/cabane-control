@@ -1,5 +1,5 @@
 // ============================================================
-// 📡 UDP SERVICE (Network Bridge) - v4 GLOBAL SYNC
+// 📡 UDP SERVICE (Network Bridge) - FIXED v5
 // ============================================================
 const dgram = require('dgram');
 const socket = dgram.createSocket('udp4');
@@ -39,18 +39,16 @@ function parsePacket(msg, rinfo) {
     const header = msg[0];
 
     // 0xAC: STATION FEEDBACK (Broadcast)
-    // [AC] [ID] [Bits] [Cks]
-    if (header === 0xAC && msg.length >= 4) { // Updated to 4 bytes
+    if (header === 0xAC && msg.length >= 4) {
         const id = msg[1];
         const bits = msg[2];
         logicEngine.updateStationFeedback(id, bits);
     }
 
     // 0xB1: MAIN CONTROLLER PHYSICAL STATE (Broadcast)
-    // [B1] [ID] [Sw0] [Sw1] [Sw2] [Flag] [Cks]
     else if (header === 0xB1 && msg.length >= 7) {
-        const switchBytes = [msg[2], msg[3], msg[4]]; // Bytes 2,3,4
-        const isOverrideActive = (msg[5] === 0x01);   // Byte 5
+        const switchBytes = [msg[2], msg[3], msg[4]];
+        const isOverrideActive = (msg[5] === 0x01);
         logicEngine.updatePhysicalState(switchBytes, isOverrideActive);
     }
 }
@@ -63,33 +61,25 @@ function xorChecksum(buf) {
     return c;
 }
 
-// 🌍 SEND GLOBAL SYNC (0xBB)
-// Sends the "Train" packet to everyone (Stations + Main)
+// 🌍 SEND GLOBAL SYNC (0xBB) -> Broadcast
 function sendGlobalBroadcast(stationBytesArray) {
-    // Packet Structure (10 Bytes):
-    // [BB] [Seq] [MasterID] [ST0] [ST1] [ST2] [ST3] [ST4] [ST5] [Cks]
-
     const packet = Buffer.alloc(10);
     packet[0] = 0xBB;
-    packet[1] = 0x00; // Seq (Optional)
-    packet[2] = 0x02; // Master ID = 2 (Pi Server)
+    packet[1] = 0x00; // Seq
+    packet[2] = 0x02; // Master ID = 2 (Pi)
 
-    // Fill Station Bytes (Indices 3 to 8)
     for (let i = 0; i < 6; i++) {
         packet[3 + i] = stationBytesArray[i] || 0;
     }
 
-    // Checksum (Index 9)
     packet[9] = xorChecksum(packet.slice(0, 9));
 
-    // Send to 192.168.1.255
     socket.send(packet, PORT, BROADCAST_IP, (err) => {
         if (err) console.error("[UDP] Global Send Error:", err);
     });
 }
 
-// 🕹️ SEND OVERRIDE COMMAND (0xAF)
-// Unicast to Main Controller (Reliability preference)
+// 🕹️ SEND OVERRIDE COMMAND (0xAF) -> Unicast to Main
 function sendOverrideCommand(mode) {
     const packet = Buffer.alloc(3);
     packet[0] = 0xAF;
@@ -98,12 +88,28 @@ function sendOverrideCommand(mode) {
 
     socket.send(packet, PORT, MAIN_CONTROLLER_IP, (err) => {
         if (err) console.error(`[UDP] Override Send Error:`, err);
-        else console.log(`[UDP] Sent Override: ${mode ? 'TAKE' : 'RELEASE'}`);
     });
 }
 
+// 💡 SEND REMOTE DATA (0xB0) -> Unicast to Main
+// This is the missing function causing your crash!
+function sendRemoteData(switchBytes) {
+    const packet = Buffer.alloc(5);
+    packet[0] = 0xB0;
+    packet[1] = switchBytes[0];
+    packet[2] = switchBytes[1];
+    packet[3] = switchBytes[2];
+    packet[4] = xorChecksum(packet.slice(0, 4));
+
+    socket.send(packet, PORT, MAIN_CONTROLLER_IP, (err) => {
+        if (err) console.error("[UDP] Remote Data Send Error:", err);
+    });
+}
+
+// ✅ EXPORT ALL FUNCTIONS
 module.exports = {
     init,
     sendGlobalBroadcast,
-    sendOverrideCommand
+    sendOverrideCommand,
+    sendRemoteData
 };
