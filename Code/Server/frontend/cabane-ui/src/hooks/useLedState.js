@@ -5,23 +5,37 @@ const VACUUM_INDICES = [2, 3, 9, 14, 17];
 
 export function useLedState(idx, feedbackMap, specialType) {
     const { systemState } = useSocket();
-    const { virtualSwitches, physicalSwitches, stationFeedback, controller, globalVacuumAlarm } = systemState;
+    const { virtualSwitches, physicalSwitches, stationFeedback, stationLastSeen, controller, globalVacuumAlarm } = systemState;
 
-    // 1. Determine Switch Position (Command)
-    // If Cabane is driving, we look at physical. If User/Server, we look at Virtual.
+    // --- 1. NEVER SEEN CHECK ---
+    // If the station has never connected since server boot, force LED OFF (Grey).
+
+    // Standard Controls with Feedback Map
+    if (feedbackMap) {
+        const { st } = feedbackMap;
+        if (stationLastSeen[st] === 0) return 'off';
+    }
+
+    // Thermostats (Hardcoded Dependencies)
+    if (specialType === 'TH1' && stationLastSeen[0] === 0) return 'off'; // ST0
+    if (specialType === 'TH2' && stationLastSeen[4] === 0) return 'off'; // ST4
+
+    // --- 2. DETERMINE SWITCH POSITION ---
+    // If Cabane is driving, look at physical. If User/Server, look at Virtual.
     const isSwitchOn = (controller === 'CABANE') ? !!physicalSwitches[idx] : !!virtualSwitches[idx];
 
-    // 2. Determine Feedback State
+    // --- 3. DETERMINE FEEDBACK STATE ---
     let isFeedbackOn = false;
 
     if (feedbackMap) {
         const { st, bit } = feedbackMap;
+        // Read the raw bit from the feedback byte
         const rawBit = (stationFeedback[st] >> bit) & 1;
-        // 0 = Active/On, 1 = Inactive/Off
+        // Logic is Active Low (0 = ON/Running, 1 = OFF/Stopped)
         isFeedbackOn = (rawBit === 0);
     }
 
-    // --- ALARM LOGIC ---
+    // --- 4. SPECIAL LOGIC (Buzzer & Thermostats) ---
 
     // A. BUZZER (Index 21)
     if (specialType === 'BUZZER') {
@@ -34,18 +48,22 @@ export function useLedState(idx, feedbackMap, specialType) {
 
     // B. THERMOSTATS
     if (specialType === 'TH1') { // ST0
+        // Check Temp Sensor on ST0 Bit 3
         const thActive = ((stationFeedback[0] >> 3) & 1) === 0;
-        if (!isSwitchOn) return 'off';
-        return thActive ? 'green' : 'red';
+
+        if (!isSwitchOn) return 'off'; // Disabled
+        return thActive ? 'green' : 'red'; // Active(Cold)=Green, Idle(Warm)=Red
     }
 
     if (specialType === 'TH2') { // ST4
+        // Check Temp Sensor on ST4 Bit 3
         const thActive = ((stationFeedback[4] >> 3) & 1) === 0;
+
         if (!isSwitchOn) return 'off';
         return thActive ? 'green' : 'red';
     }
 
-    // C. VACUUM PUMPS (Specific Alarm)
+    // --- 5. ALARM LOGIC (Vacuum Pumps) ---
     // If it's a Vacuum Switch AND Command is ON AND Feedback is OFF -> Alarm
     if (VACUUM_INDICES.includes(idx)) {
         if (isSwitchOn && !isFeedbackOn) {
@@ -53,7 +71,7 @@ export function useLedState(idx, feedbackMap, specialType) {
         }
     }
 
-    // 3. Standard Logic
+    // --- 6. STANDARD LOGIC ---
     if (isFeedbackOn) return 'green';
 
     return 'red'; // Default OFF/Standby

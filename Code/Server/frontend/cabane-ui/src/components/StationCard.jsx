@@ -1,44 +1,75 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { clsx } from 'clsx';
 import { RockerSwitch } from './controls/RockerSwitch';
 import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 
+// Helper to format duration
+const formatDuration = (ms) => {
+    if (!ms) return "00:00";
+    const seconds = Math.floor(ms / 1000);
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    // If > 1 hour, show 99:99 or similar
+    if (m > 99) return "> 99m";
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+};
+
 export const StationCard = ({ card, isRemote }) => {
     const { systemState, toggleSwitch } = useSocket();
 
+    // Local state to force re-render every second for the timer
+    const [, setTick] = useState(0);
+
+    useEffect(() => {
+        // Only set up interval if something is offline to save resources
+        const timer = setInterval(() => setTick(t => t + 1), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
     // --- 1. OFFLINE LOGIC ---
-    const offlineStations = [];
+    const offlineLabels = [];
+    let isAnyOffline = false;
 
     if (card.stationIds) {
         card.stationIds.forEach(id => {
+            // Check if station is logically offline
             if (!systemState.stationOnline[id]) {
-                offlineStations.push(`ST${id}`);
+                isAnyOffline = true;
+                const lastSeen = systemState.stationLastSeen[id];
+
+                let labelText = "";
+
+                if (lastSeen === 0) {
+                    labelText = `ST${id} NEVER CONNECTED`;
+                } else {
+                    const diff = Date.now() - lastSeen;
+                    labelText = `ST${id} OFFLINE ${formatDuration(diff)}`;
+                }
+
+                offlineLabels.push(labelText);
             }
         });
     }
 
     const isFullOffline = card.stationIds &&
         card.stationIds.length > 0 &&
-        offlineStations.length === card.stationIds.length;
+        offlineLabels.length === card.stationIds.length;
 
-    const isPartialOffline = offlineStations.length > 0 && !isFullOffline;
-
-    // Thermostat Exception: Grey out but NO label
     const isThermostat = card.name.includes("THERMOSTAT");
-    const showOfflineLabel = (isFullOffline || isPartialOffline) && !isThermostat;
+    // Show labels if offline AND not a thermostat
+    const showOfflineLabel = isAnyOffline && !isThermostat;
 
     // --- 2. STYLING ---
     let bgClass = "bg-cabane-panel border-gray-700 shadow-lg";
     let textClass = "text-gray-400 border-gray-700";
 
-    // If fully offline (or Thermostat offline), dim the card
     if (isFullOffline) {
-        bgClass = "bg-gray-800 border-gray-800 opacity-60"; // Dark & Faded
+        bgClass = "bg-gray-800 border-gray-800 opacity-60";
         textClass = "text-red-900 border-gray-800";
     }
     else if (isRemote) {
-        bgClass = "bg-gray-400 border-gray-500 shadow-xl"; // Active Control
+        bgClass = "bg-gray-400 border-gray-500 shadow-xl";
         textClass = "text-gray-900 border-gray-600";
     }
 
@@ -47,12 +78,12 @@ export const StationCard = ({ card, isRemote }) => {
     return (
         <div className={clsx("border rounded-lg p-4 flex flex-col transition-colors duration-500 relative min-h-[160px]", bgClass, card.span)}>
 
-            {/* OFFLINE LABELS (Top Right) */}
+            {/* OFFLINE LABELS (With Timer) */}
             {showOfflineLabel && (
-                <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
-                    {offlineStations.map(lbl => (
-                        <span key={lbl} className="text-red-600 text-[10px] font-black font-mono border border-red-600 px-1 rounded bg-red-900/10">
-                            {lbl} OFFLINE
+                <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20">
+                    {offlineLabels.map(lbl => (
+                        <span key={lbl} className="text-red-500 text-[10px] font-black font-mono border border-red-500/50 bg-gray-900/80 px-2 py-0.5 rounded shadow-sm whitespace-nowrap">
+                            {lbl}
                         </span>
                     ))}
                 </div>
@@ -64,29 +95,17 @@ export const StationCard = ({ card, isRemote }) => {
 
             <div className={clsx(
                 "flex flex-wrap gap-x-6 gap-y-6 justify-center items-center flex-grow my-auto",
-                // If it's a thermostat and offline, grey out content
                 (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50"
             )}>
                 {card.controls.map((ctrl) => {
 
-                    // --- 3. PER-CONTROL LOGIC ---
-                    // Determine which station this control relies on
-                    // If 'targetSt' is defined in config, use it (for Logic grouping)
-                    // Otherwise use 'fb.st' (Physical wiring)
-                    // Default to the card's first station ID if nothing else
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
-
                     const isThisControlOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
 
-                    // Calculate State:
-                    // If offline, FORCE VISUAL OFF (false) regardless of actual state
                     const virtualOn = isThisControlOffline ? false : !!systemState.virtualSwitches[ctrl.idx];
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
-
-                    // Lock if: System not remote OR this specific control is offline
                     const isLocked = !isRemote || isThisControlOffline;
 
-                    // Common Props
                     const props = {
                         key: ctrl.idx,
                         label: ctrl.label,
@@ -94,7 +113,7 @@ export const StationCard = ({ card, isRemote }) => {
                         feedback: ctrl.fb,
                         special: ctrl.special,
                         isLocked: isLocked,
-                        isActive: isRemote && !isThisControlOffline, // Only light up if healthy
+                        isActive: isRemote && !isThisControlOffline,
                     };
 
                     if (ctrl.type === 'button') {

@@ -250,7 +250,7 @@ function checkHeartbeats() {
     for (let i = 0; i < 6; i++) {
         if (state.stationOnline[i] && (now - state.stationLastSeen[i] > 3000)) {
             state.stationOnline[i] = false;
-            state.stationFeedback[i] = 0;
+            // state.stationFeedback[i] = 0;
             pushUpdate();
         }
     }
