@@ -4,7 +4,7 @@ import axios from 'axios';
 
 const SocketContext = createContext();
 
-// Production/Development URL Logic
+// API URL Logic: Use relative path in Prod (Pi), specific IP in Dev (Computer)
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 export const useSocket = () => useContext(SocketContext);
@@ -25,14 +25,15 @@ export const SocketProvider = ({ children }) => {
         stationOnline: new Array(6).fill(false),
         stationLastSeen: new Array(6).fill(0),
         globalVacuumAlarm: false,
-        buzzerStatus: 'OFF'
+        buzzerStatus: 'OFF',
+        buzzerEnabled: false
     });
 
     // Auth State
     const [token, setToken] = useState(localStorage.getItem('cabane_token'));
     const [user, setUser] = useState(null);
 
-    // --- SOCKET SETUP ---
+    // --- 1. SOCKET CONNECTION ---
     useEffect(() => {
         const newSocket = io(API_URL);
         setSocket(newSocket);
@@ -40,13 +41,18 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('connect', () => setIsConnected(true));
         newSocket.on('disconnect', () => setIsConnected(false));
 
-        newSocket.on('STATE_UPDATE', (data) => setSystemState(prev => ({ ...prev, ...data })));
-        newSocket.on('STATE_FULL', (data) => setSystemState(data));
+        newSocket.on('STATE_UPDATE', (data) => {
+            setSystemState(prev => ({ ...prev, ...data }));
+        });
+
+        newSocket.on('STATE_FULL', (data) => {
+            setSystemState(data);
+        });
 
         return () => newSocket.close();
     }, []);
 
-    // --- AUTH RESTORE ---
+    // --- 2. SESSION RESTORE ---
     useEffect(() => {
         const checkSession = async () => {
             if (!token) {
@@ -59,6 +65,7 @@ export const SocketProvider = ({ children }) => {
                 });
                 setUser(res.data);
             } catch (e) {
+                console.error("Session restore failed", e);
                 localStorage.removeItem('cabane_token');
                 setToken(null);
                 setUser(null);
@@ -69,17 +76,21 @@ export const SocketProvider = ({ children }) => {
         checkSession();
     }, [token]);
 
-    // --- ACTIONS ---
+    // --- AUTH ACTIONS ---
 
     const login = async (username, password) => {
         try {
             const res = await axios.post(`${API_URL}/api/auth/login`, { username, password });
-            const { token, role } = res.data;
+            const { token, role, settings } = res.data;
+
             localStorage.setItem('cabane_token', token);
             setToken(token);
-            setUser({ username, role });
+
+            // Optimistic user set (will be confirmed by checkSession if needed)
+            setUser({ username, role, settings });
             return true;
         } catch (e) {
+            console.error("Login error:", e);
             return false;
         }
     };
@@ -100,13 +111,23 @@ export const SocketProvider = ({ children }) => {
         window.location.reload();
     };
 
+    const updateSettings = async (newSettings) => {
+        // Optimistic Update
+        setUser(prev => ({ ...prev, settings: newSettings }));
+
+        if (token) {
+            try {
+                await axios.post(`${API_URL}/api/user/settings`, { settings: newSettings }, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+            } catch (e) { console.error("Settings save failed", e); }
+        }
+    };
+
     // --- CONTROL ACTIONS ---
 
     const takeControl = async () => {
-        if (!token) {
-            alert("Please login to take control.");
-            return;
-        }
+        if (!token) { alert("Login required"); return; }
         try {
             await axios.post(`${API_URL}/api/control/take`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
@@ -122,9 +143,7 @@ export const SocketProvider = ({ children }) => {
             await axios.post(`${API_URL}/api/control/release-server`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-        } catch (e) {
-            alert("Error: " + e.message);
-        }
+        } catch (e) { console.error(e); }
     };
 
     const releaseToCabane = async () => {
@@ -133,13 +152,11 @@ export const SocketProvider = ({ children }) => {
             await axios.post(`${API_URL}/api/control/release-cabane`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-        } catch (e) {
-            alert("Error: " + e.message);
-        }
+        } catch (e) { console.error(e); }
     };
 
     const toggleSwitch = async (index, value) => {
-        // Optimistic Update for instant feedback
+        // Optimistic Update
         setSystemState(prev => {
             const newVirtual = [...prev.virtualSwitches];
             newVirtual[index] = value ? 1 : 0;
@@ -155,9 +172,19 @@ export const SocketProvider = ({ children }) => {
 
     return (
         <SocketContext.Provider value={{
-            socket, isConnected, systemState, user, authLoading,
-            login, register, logout,
-            takeControl, releaseToServer, releaseToCabane, toggleSwitch
+            socket,
+            isConnected,
+            systemState,
+            user,
+            authLoading,
+            login,
+            register,
+            logout,
+            updateSettings,
+            takeControl,
+            releaseToServer,
+            releaseToCabane,
+            toggleSwitch
         }}>
             {children}
         </SocketContext.Provider>

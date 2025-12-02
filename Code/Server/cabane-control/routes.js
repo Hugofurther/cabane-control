@@ -1,5 +1,5 @@
 // ============================================================
-// 🛣️ API ROUTES (Express Router)
+// 🛣️ API ROUTES (Express Router) - FULL V2
 // ============================================================
 const express = require('express');
 const router = express.Router();
@@ -17,22 +17,45 @@ const db = new sqlite3.Database('./cabane.db');
 // Config
 const PUBLIC_URL = process.env.PUBLIC_URL || 'http://192.168.1.200:3000';
 
+// --- HELPERS ---
+
+// Case Insensitive Helper
+const normalize = (str) => str ? str.trim().toLowerCase() : '';
+
+// Password Validator
+const validatePassword = (pwd) => {
+    if (pwd.length < 8) return "Password must be at least 8 characters.";
+    if (!/[A-Z]/.test(pwd)) return "Password must contain an Uppercase letter.";
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) return "Password must contain a Special Character.";
+    return null;
+};
+
 // ============================================================
 // 🔐 AUTHENTICATION & RECOVERY
 // ============================================================
 
-// 1. REGISTER -> Send Verification Email
+// 1. REGISTER
 router.post('/auth/register', async (req, res) => {
     const { username, password, email } = req.body;
     if (!username || !password || !email) return res.status(400).json({ error: "Missing fields" });
+
+    // Validate Password
+    const pwdError = validatePassword(password);
+    if (pwdError) return res.status(400).json({ error: pwdError });
+
+    const userClean = normalize(username);
+    const emailClean = normalize(email);
 
     try {
         const hash = await bcrypt.hash(password, 10);
         const token = crypto.randomBytes(32).toString('hex'); // Verification Token
 
-        const stmt = db.prepare("INSERT INTO users (username, password_hash, email, status, verification_token) VALUES (?, ?, ?, 'UNVERIFIED', ?)");
+        // Default Settings
+        const defaultSettings = JSON.stringify({ soundEnabled: true, vibrationEnabled: true });
 
-        stmt.run(username, hash, email, token, async function (err) {
+        const stmt = db.prepare("INSERT INTO users (username, password_hash, email, status, verification_token, settings) VALUES (?, ?, ?, 'UNVERIFIED', ?, ?)");
+
+        stmt.run(userClean, hash, emailClean, token, defaultSettings, async function (err) {
             if (err) {
                 if (err.message.includes('UNIQUE')) return res.status(409).json({ error: "Username or Email taken" });
                 return res.status(500).json({ error: "Database error" });
@@ -40,7 +63,7 @@ router.post('/auth/register', async (req, res) => {
 
             // Send Email
             const link = `${PUBLIC_URL}/verify-email?token=${token}`;
-            await sendEmail(email, "Cabane Control - Verify your Cabane Account",
+            await sendEmail(emailClean, "Cabane Control - Verify your Cabane Account",
                 `<p>Click here to verify your email: <a href="${link}">Verify Email</a></p>`);
 
             res.json({ message: "Registration successful. Please check your email to verify." });
@@ -77,11 +100,11 @@ router.post('/auth/verify', (req, res) => {
 // 3. LOGIN
 router.post('/auth/login', (req, res) => {
     const { username, password } = req.body;
+    const inputClean = normalize(username); // Could be username or email
 
-    // Logic: Check Username OR Email
     const sql = "SELECT * FROM users WHERE username = ? OR email = ?";
 
-    db.get(sql, [username, username], async (err, user) => {
+    db.get(sql, [inputClean, inputClean], async (err, user) => {
         if (err || !user) return res.status(401).json({ error: "Invalid credentials" });
 
         // Status Checks
@@ -92,13 +115,17 @@ router.post('/auth/login', (req, res) => {
         const validPass = await bcrypt.compare(password, user.password_hash);
         if (!validPass) return res.status(401).json({ error: "Invalid credentials" });
 
+        // Parse settings
+        let userSettings = {};
+        try { userSettings = user.settings ? JSON.parse(user.settings) : {} } catch (e) { }
+
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: '12h' }
         );
 
-        res.json({ token, username: user.username, role: user.role });
+        res.json({ token, username: user.username, role: user.role, settings: userSettings });
     });
 });
 
@@ -131,9 +158,74 @@ router.post('/auth/reset-password', async (req, res) => {
     );
 });
 
-// GET /api/auth/me
+// GET ME (Reload Session)
 router.get('/auth/me', authenticateToken, (req, res) => {
-    res.json({ id: req.user.id, username: req.user.username, role: req.user.role });
+    db.get("SELECT id, username, role, email, settings FROM users WHERE id = ?", [req.user.id], (err, row) => {
+        if (!row) return res.status(404).json({ error: "User not found" });
+
+        let settings = {};
+        try { settings = row.settings ? JSON.parse(row.settings) : {} } catch (e) { }
+
+        res.json({
+            id: row.id,
+            username: row.username,
+            email: row.email,
+            role: row.role,
+            settings: settings
+        });
+    });
+});
+
+// ============================================================
+// ⚙️ USER PROFILE & SETTINGS
+// ============================================================
+
+// UPDATE SETTINGS (Sound/Vibration)
+router.post('/user/settings', authenticateToken, (req, res) => {
+    const { settings } = req.body;
+    const settingsStr = JSON.stringify(settings);
+
+    db.run("UPDATE users SET settings = ? WHERE id = ?", [settingsStr, req.user.id], (err) => {
+        if (err) return res.status(500).json({ error: "Update failed" });
+        res.json({ success: true });
+    });
+});
+
+// UPDATE PROFILE (Username/Email)
+router.post('/user/profile', authenticateToken, (req, res) => {
+    const { newUsername, newEmail } = req.body;
+    const userClean = normalize(newUsername);
+    const emailClean = normalize(newEmail);
+
+    db.run("UPDATE users SET username = ?, email = ? WHERE id = ?",
+        [userClean, emailClean, req.user.id],
+        function (err) {
+            if (err) {
+                if (err.message.includes('UNIQUE')) return res.status(409).json({ error: "Username or Email taken" });
+                return res.status(500).json({ error: "DB Error" });
+            }
+            res.json({ success: true, username: userClean, email: emailClean });
+        }
+    );
+});
+
+// CHANGE PASSWORD (Logged In)
+router.post('/user/password', authenticateToken, async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+
+    const pwdError = validatePassword(newPassword);
+    if (pwdError) return res.status(400).json({ error: pwdError });
+
+    db.get("SELECT password_hash FROM users WHERE id = ?", [req.user.id], async (err, row) => {
+        const valid = await bcrypt.compare(currentPassword, row.password_hash);
+        if (!valid) return res.status(401).json({ error: "Current password incorrect" });
+
+        const newHash = await bcrypt.hash(newPassword, 10);
+        db.run("UPDATE users SET password_hash = ? WHERE id = ?", [newHash, req.user.id], (err) => {
+            if (err) return res.status(500).json({ error: "Error updating password" });
+            res.json({ success: true });
+        });
+    });
 });
 
 // ============================================================
@@ -182,36 +274,27 @@ router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
 // POST /api/control/take
 router.post('/control/take', authenticateToken, (req, res) => {
     console.log(`API: Take Control requested by ${req.user.username}`);
-
     logicEngine.takeControl(req.user.username);
-
     db.run("INSERT INTO logs (user_id, type, message) VALUES (?, ?, ?)",
         [req.user.id, 'CONTROL', 'User took control']);
-
     res.json({ success: true });
 });
 
 // POST /api/control/release-server
 router.post('/control/release-server', authenticateToken, (req, res) => {
     console.log(`API: Release to Server requested by ${req.user.username}`);
-
     logicEngine.releaseToServer();
-
     db.run("INSERT INTO logs (user_id, type, message) VALUES (?, ?, ?)",
         [req.user.id, 'CONTROL', 'User released to Server (Holding State)']);
-
     res.json({ success: true });
 });
 
 // POST /api/control/release-cabane
 router.post('/control/release-cabane', authenticateToken, (req, res) => {
     console.log(`API: Release to Cabane requested by ${req.user.username}`);
-
     logicEngine.releaseToCabane();
-
     db.run("INSERT INTO logs (user_id, type, message) VALUES (?, ?, ?)",
         [req.user.id, 'CONTROL', 'System released to Cabane']);
-
     res.json({ success: true });
 });
 

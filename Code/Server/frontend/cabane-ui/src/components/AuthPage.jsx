@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useSocket } from '../contexts/SocketContext';
-import { Lock, User, Mail, ArrowRight, AlertTriangle, CheckCircle, Key } from 'lucide-react';
-import axios from 'axios'; // Import Axios directly for reset calls
+import { Lock, User, Mail, ArrowRight, AlertTriangle, CheckCircle, Eye, EyeOff } from 'lucide-react';
+import axios from 'axios';
 
 export const AuthPage = () => {
     const { login, register } = useSocket();
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+
+    // Get API URL for direct axios calls (Forgot/Reset/Verify)
+    const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
     // Modes: 'LOGIN', 'REGISTER', 'FORGOT', 'RESET'
     const [mode, setMode] = useState('LOGIN');
@@ -13,18 +15,18 @@ export const AuthPage = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [successMsg, setSuccessMsg] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
 
     // Form State
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [email, setEmail] = useState('');
 
-    // URL Check for Reset Token
+    // Check URL for tokens (Verification or Reset)
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         const token = params.get('token');
 
-        // Check path for verification or reset
         if (window.location.pathname === '/reset-password' && token) {
             setMode('RESET');
         } else if (window.location.pathname === '/verify-email' && token) {
@@ -37,8 +39,10 @@ export const AuthPage = () => {
             await axios.post(`${API_URL}/api/auth/verify`, { token });
             setSuccessMsg("Email verified! Waiting for Admin approval.");
             setMode('LOGIN');
+            // Clean URL
+            window.history.replaceState({}, document.title, "/");
         } catch (e) {
-            setError("Verification failed or link expired.");
+            setError(e.response?.data?.error || "Verification failed or link expired.");
         }
     };
 
@@ -48,36 +52,38 @@ export const AuthPage = () => {
         setSuccessMsg('');
         setLoading(true);
 
-        if (mode === 'REGISTER') {
-            const res = await register(username, email, password);
-            if (res.success) {
-                setSuccessMsg("Account created! Please check email to verify.");
-                setMode('LOGIN');
-                setPassword('');
-            } else setError(res.error);
-        }
-        else if (mode === 'LOGIN') {
-            const success = await login(username, password);
-            if (!success) setError("Invalid credentials or Account not approved.");
-        }
-        else if (mode === 'FORGOT') {
-            try {
+        try {
+            if (mode === 'REGISTER') {
+                const res = await register(username, email, password);
+                if (res.success) {
+                    setSuccessMsg("Account created! Please check your email to verify.");
+                    setMode('LOGIN');
+                    setPassword('');
+                } else {
+                    setError(res.error);
+                }
+            }
+            else if (mode === 'LOGIN') {
+                const success = await login(username, password);
+                if (!success) setError("Invalid credentials or Account not approved.");
+            }
+            else if (mode === 'FORGOT') {
                 await axios.post(`${API_URL}/api/auth/forgot-password`, { email });
                 setSuccessMsg("If account exists, reset link sent.");
                 setMode('LOGIN');
-            } catch (e) { setError("Request failed"); }
-        }
-        else if (mode === 'RESET') {
-            const params = new URLSearchParams(window.location.search);
-            const token = params.get('token');
-            try {
+            }
+            else if (mode === 'RESET') {
+                const params = new URLSearchParams(window.location.search);
+                const token = params.get('token');
                 await axios.post(`${API_URL}/api/auth/reset-password`, { token, newPassword: password });
                 setSuccessMsg("Password updated. Please login.");
                 setMode('LOGIN');
-                // Clear URL
                 window.history.pushState({}, document.title, "/");
-            } catch (e) { setError("Reset failed."); }
+            }
+        } catch (e) {
+            setError(e.response?.data?.error || "Request failed.");
         }
+
         setLoading(false);
     };
 
@@ -134,16 +140,32 @@ export const AuthPage = () => {
 
                     {/* PASSWORD (Login/Register/Reset Only) */}
                     {(mode !== 'FORGOT') && (
-                        <div className="relative group">
-                            <Lock className="absolute left-3 top-3 text-gray-500 group-focus-within:text-blue-400" size={20} />
-                            <input
-                                type="password"
-                                placeholder={mode === 'RESET' ? "New Password" : "Password"}
-                                value={password}
-                                onChange={e => setPassword(e.target.value)}
-                                className="w-full bg-gray-800 border border-gray-600 rounded p-3 pl-10 text-white focus:outline-none focus:border-blue-500 transition-colors"
-                                required
-                            />
+                        <div className="flex flex-col gap-1">
+                            <div className="relative group">
+                                <Lock className="absolute left-3 top-3 text-gray-500 group-focus-within:text-blue-400" size={20} />
+                                <input
+                                    type={showPassword ? "text" : "password"}
+                                    placeholder={mode === 'RESET' ? "New Password" : "Password"}
+                                    value={password}
+                                    onChange={e => setPassword(e.target.value)}
+                                    className="w-full bg-gray-800 border border-gray-600 rounded p-3 pl-10 pr-10 text-white focus:outline-none focus:border-blue-500 transition-colors"
+                                    required
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    className="absolute right-3 top-3 text-gray-500 hover:text-white focus:outline-none"
+                                >
+                                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                                </button>
+                            </div>
+
+                            {/* Validation Hint */}
+                            {(mode === 'REGISTER' || mode === 'RESET') && (
+                                <div className="text-[10px] text-gray-500 px-1">
+                                    Req: 8+ chars, 1 Uppercase, 1 Special Char.
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -171,7 +193,7 @@ export const AuthPage = () => {
                         </>
                     )}
                     {mode !== 'LOGIN' && (
-                        <button onClick={() => { setMode('LOGIN'); setError(''); }} className="text-gray-500 hover:text-white transition-colors w-full">
+                        <button onClick={() => { setMode('LOGIN'); setError(''); }} className="text-gray-500 hover:text-white transition-colors w-full text-center">
                             Back to Login
                         </button>
                     )}

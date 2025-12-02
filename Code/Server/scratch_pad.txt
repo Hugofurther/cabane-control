@@ -1,0 +1,145 @@
+{
+    "token": "
+
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJhZG1pbiIsInJvbGUiOiJBRE1JTiIsImlhdCI6MTc2NDQ1NzU0MCwiZXhwIjoxNzY0NTAwNzQwfQ.F5l0Uopjj0Sz2vL2wTxR47hUr_xSNvNwV0U5MIcRv_o
+
+",
+    "username": "admin",
+    "role": "ADMIN"
+}
+
+-ethereum -metamask -wallet -ethers
+
+First:
+<server.js terminal 1>
+[CONTROL] Taken by User: admin
+[UDP] Sent Override: TAKE
+</server.js terminal 1>
+
+<main controller monitor 1
+09:34:32.114 -> [REMOTE] Control TAKEN by Web App
+</main controller monitor 1>
+
+
+Then:
+<server.js terminal 2>
+[CONTROL] Released to CABANE
+[UDP] Sent Override: RELEASE
+[SYNC] Main is in Override. Pi assuming SERVER Control.
+</server.js terminal 2>
+
+<main controller monitor 2>
+09:34:55.689 -> [REMOTE] Web App released (Pending Manual Reclaim)
+</main controller monitor 2>
+
+-------------------------------------------------------
+-------------------------------------------------------
+
+
+Done
+
+Logging
+
+√ Delete User
+
+√ Users pending for more than 3hrs get deleted automatically.
+
+√ Can we make the username case insensitive?
+
+√ Can we have the option to see the password.
+
+√ a user should be able to change their email and password
+
+-------------------------------------------------------
+-------------------------------------------------------
+
+Requested
+
+
+
+
+
+-------------------------------------------------------
+-------------------------------------------------------
+
+- We need to setup the Pi Server to start the server.js automatically on boot.
+
+
+- To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
+
+
+
+- Changes in the switching should be logged on the server with the controlling user / device
+
+- Admin can grant a user to be able to take control or not.
+
+- If Cabane is offline and trying to release control to cabane, control goes to Server.
+
+
+
+
+- We should have the user of the logged in account displayed somewhere.
+
+- Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
+
+- Since we can, we should implement app notification when an alert is triggered. Optionally SMS / Email as well as push notification
+
+- Add Clement alarm. Input from either ST2 or ST3 -> Output to St0
+
+------------------------------------------------------------
+
+Can we make the app bi-langual ( French / English )
+
+- Can you give me a guide to fix a "Subnet Mismatch" if I do get that when I move to the another location.
+
+- 
+We need an automation system to empty the pipelines before they freeze:
+Trigger Drainage of the pipes manually
+1. Trigger Momentarily ST3 transport push buttons Index 12, 13
+2. ST3 feedback ledPair 12, 13 are Both red = ST3 transport pumps are OFF -> triggers ST3 switch index 15 + ST2 switch index 11 + momentary pushbutton index 8
+
+
+- St3 S3>S3 + St2 S3>S2 + ST2 transport + st3 vacuum 
+- When ST2 Tranp stops
+- Ferme St3 S3>S3 + St2 S3>S2 + ST2 transport
+- ST2 S2>S1 + St1 St2>St1 + ST1 transport
+- When ST1 Tranp stops = vide
+- Fermer ST2 S2>S1 + St1 St2>St1 + ST1 transport
+- St1 Cabane -> vid tuyau 2 + ST Trans 1
+- When st1 trans 1 stops
+- Vaccumm + vid t1
+
+- Vacc stops at -2˚C
+
+
+
+------------------------------------------------------------
+------------------------------------------------------------
+
+After debugging:
+services/logic_engine.js
+function updateStationFeedback() -> comment out " 🛠️ DEBUG HACK: Force ST0 Online if ST1 is Online"
+
+ALARME DU SYSTÈME
+PERTE DE VACUUM DÉTECTÉ
+
+RAPPEL
+Le système est actif mais le buzzer est muet.
+Veuillez activer l’interrupteur du buzzer.
+
+
+
+
+<console>
+
+</console>
+
+
+<Debug Box>
+
+</Debug Box>
+
+
+<server.js terminal>
+
+</server.js terminal>
