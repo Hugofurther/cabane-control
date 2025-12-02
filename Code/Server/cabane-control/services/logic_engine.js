@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE (State Machine) - v7.1 FIX
+// 🧠 LOGIC ENGINE (State Machine) - v9 STUBBORN MODE
 // ============================================================
 const udpService = require('./udp_service');
 
@@ -8,31 +8,26 @@ const state = {
     currentUser: null,
     mainControllerOnline: false,
     lastMainHeartbeat: 0,
-
     virtualSwitches: new Array(24).fill(0),
     physicalSwitches: new Array(24).fill(0),
-
     stationFeedback: new Array(6).fill(0),
     stationOnline: new Array(6).fill(false),
     stationLastSeen: new Array(6).fill(0),
-
-    // Global Alarm State
     globalVacuumAlarm: false,
     buzzerEnabled: false,
     buzzerStatus: 'OFF'
 };
 
-// --- TIMING VARIABLES ---
+// --- TIMING ---
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
-let ioRef = null;
-
-// ✅ ADDED THESE MISSING VARIABLES
 let lastChirpTime = 0;
 let alarmCycleStart = 0;
+let overrideAssertCounter = 0;
+let ioRef = null;
 
 // --- CONFIGURATION ---
-
+// (Input Map, Thermostats, Vacuum Checks remain the same)
 const INPUT_MAP = [
     { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
     { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
@@ -53,10 +48,8 @@ const THERMOSTATS = [
 ];
 
 const VACUUM_CHECKS = [
-    { swIdx: 2, st: 1, bit: 2 },
-    { swIdx: 3, st: 1, bit: 2 },
-    { swIdx: 9, st: 2, bit: 1 },
-    { swIdx: 14, st: 3, bit: 2 },
+    { swIdx: 2, st: 1, bit: 2 }, { swIdx: 3, st: 1, bit: 2 },
+    { swIdx: 9, st: 2, bit: 1 }, { swIdx: 14, st: 3, bit: 2 },
     { swIdx: 17, st: 4, bit: 1 }
 ];
 
@@ -74,22 +67,51 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
     state.mainControllerOnline = true;
     state.lastMainHeartbeat = Date.now();
 
+    // Update Physical Switches
     for (let i = 0; i < 24; i++) {
         const byteIdx = Math.floor(i / 8);
         const bitIdx = i % 8;
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
 
+    // --- SYNC LOGIC ---
+
+    // Case 1: Pi thinks CABANE is driving
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
+
+        // If Main reports it IS overridden, Pi must catch up
+        // (Wait 3s after a release command before believing this, to avoid bounce)
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
-            console.log("[SYNC] Main in Override. Pi assuming SERVER.");
+            console.log("[SYNC] Main detected in Override Mode. Pi syncing to SERVER Mode.");
             state.controller = 'SERVER';
+            state.currentUser = null;
+            lastControlTakeTime = Date.now();
         }
-    } else {
-        if (!isOverrideActive && (Date.now() - lastControlTakeTime > 3000)) {
-            console.log("[SYNC] Emergency Release.");
-            releaseToCabane();
+    }
+    // Case 2: Pi thinks PI (User/Server) is driving
+    else {
+        // --- If Pi is driving (USER/SERVER) ---
+
+        if (!isOverrideActive) {
+            // Main says: "I am NOT overridden"
+
+            const timeSinceTake = Date.now() - lastControlTakeTime;
+
+            // Check Grace Period (5 seconds)
+            if (timeSinceTake < 5000) {
+                // We are in the grace period. RETRY.
+                // Console log to prove we are trying
+                // console.log(`[SYNC] Retrying Override... (${timeSinceTake}ms elapsed)`);
+                udpService.sendOverrideCommand(1);
+            }
+            else {
+                // Timeout expired.
+                console.log(`[SYNC] REVERTING TO CABANE. Time since take: ${timeSinceTake}ms. isOverrideActive: ${isOverrideActive}`);
+
+                state.controller = 'CABANE';
+                state.currentUser = null;
+            }
         }
     }
     pushUpdate();
@@ -100,13 +122,10 @@ function updateStationFeedback(id, bits) {
         state.stationFeedback[id] = bits;
         state.stationOnline[id] = true;
         state.stationLastSeen[id] = Date.now();
-
-        // DEBUG HACK (Bridge ST0 via ST1)
-        if (id === 1) {
+        if (id === 1) { // Debug bridge
             state.stationOnline[0] = true;
             state.stationLastSeen[0] = Date.now();
         }
-
         pushUpdate();
     }
 }
@@ -117,7 +136,8 @@ function takeControl(username) {
     state.controller = 'USER';
     state.currentUser = username;
     lastControlTakeTime = Date.now();
-    udpService.sendOverrideCommand(1);
+
+    udpService.sendOverrideCommand(1); // Immediate Send
     console.log(`[CONTROL] Taken by ${username}`);
     pushUpdate();
 }
@@ -126,7 +146,8 @@ function releaseToServer() {
     state.controller = 'SERVER';
     state.currentUser = null;
     lastControlTakeTime = Date.now();
-    udpService.sendOverrideCommand(1);
+
+    udpService.sendOverrideCommand(1); // Ensure Main knows we are still boss
     console.log(`[CONTROL] Released to SERVER`);
     pushUpdate();
 }
@@ -135,7 +156,8 @@ function releaseToCabane() {
     state.controller = 'CABANE';
     state.currentUser = null;
     lastReleaseTime = Date.now();
-    udpService.sendOverrideCommand(0);
+
+    udpService.sendOverrideCommand(0); // Send explicit release
     console.log(`[CONTROL] Released to CABANE`);
     pushUpdate();
 }
@@ -166,7 +188,6 @@ function controlLoop() {
             if (isCold) {
                 th.overrides.forEach(targetIdx => {
                     if (state.virtualSwitches[targetIdx] === 0) {
-                        // console.log(`[AUTO] Thermostat forcing Switch ${targetIdx} ON`);
                         state.virtualSwitches[targetIdx] = 1;
                         stateChanged = true;
                     }
@@ -179,7 +200,7 @@ function controlLoop() {
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
         const commandedOn = state.virtualSwitches[chk.swIdx];
-        const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1; // 1 = No Vacuum
+        const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
         if (commandedOn && rawFb === 1) {
             alarmDetected = true;
         }
@@ -191,27 +212,18 @@ function controlLoop() {
         alarmCycleStart = now;
     }
 
-    // 4. CALCULATE BUZZER STATUS
+    // 4. BUZZER STATUS
     let newBuzzerStatus = 'OFF';
-
     if (state.globalVacuumAlarm) {
         if (state.buzzerEnabled) {
             const cycleTime = (now - alarmCycleStart) % 15000;
-            if (cycleTime < 5000) newBuzzerStatus = 'SIREN';
-            else newBuzzerStatus = 'OFF';
-        } else {
-            newBuzzerStatus = 'OFF';
+            newBuzzerStatus = (cycleTime < 5000) ? 'SIREN' : 'OFF';
         }
-    }
-    else {
-        if (!state.buzzerEnabled) {
-            const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
-            if (anyVacuumRunning) {
-                if (now - lastChirpTime > 60000) {
-                    newBuzzerStatus = 'CHIRP';
-                    if (now - lastChirpTime > 61000) lastChirpTime = now;
-                }
-            }
+    } else if (!state.buzzerEnabled) {
+        const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
+        if (anyVacuumRunning && (now - lastChirpTime > 60000)) {
+            newBuzzerStatus = 'CHIRP';
+            if (now - lastChirpTime > 61000) lastChirpTime = now;
         }
     }
 
@@ -222,7 +234,7 @@ function controlLoop() {
 
     if (stateChanged) pushUpdate();
 
-    // 5. BROADCAST COMMANDS
+    // 5. NETWORK OUTPUTS (If Pi is Master)
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
@@ -232,10 +244,17 @@ function controlLoop() {
         });
         udpService.sendGlobalBroadcast(stationBytes);
 
-        // Send 0xB0 to Main Controller for LED Sync
         const virtualBytes = [0, 0, 0];
         for (let i = 0; i < 24; i++) if (state.virtualSwitches[i]) virtualBytes[Math.floor(i / 8)] |= (1 << (i % 8));
         udpService.sendRemoteData(virtualBytes);
+
+        // AGGRESSIVE ASSERTION
+        // Send 0xAF (Take Control) every 500ms to ensure Main knows we are driving
+        overrideAssertCounter++;
+        if (overrideAssertCounter >= 5) {
+            udpService.sendOverrideCommand(1);
+            overrideAssertCounter = 0;
+        }
     }
 }
 
@@ -247,10 +266,11 @@ function checkHeartbeats() {
         if (state.controller === 'CABANE') takeControl('SYSTEM_FAILSAFE');
         pushUpdate();
     }
+
     for (let i = 0; i < 6; i++) {
         if (state.stationOnline[i] && (now - state.stationLastSeen[i] > 3000)) {
             state.stationOnline[i] = false;
-            // state.stationFeedback[i] = 0;
+            state.stationFeedback[i] = 0;
             pushUpdate();
         }
     }

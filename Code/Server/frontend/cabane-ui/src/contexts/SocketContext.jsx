@@ -1,19 +1,20 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 
 const SocketContext = createContext();
 
-// Get API URL from env, default to local if missing
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+// Production/Development URL Logic
+const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
+    const [authLoading, setAuthLoading] = useState(true);
 
-    // The God Object: Holds all system state
+    // System State
     const [systemState, setSystemState] = useState({
         controller: 'CABANE',
         currentUser: null,
@@ -22,56 +23,51 @@ export const SocketProvider = ({ children }) => {
         physicalSwitches: new Array(24).fill(0),
         stationFeedback: new Array(6).fill(0),
         stationOnline: new Array(6).fill(false),
-        stationLastSeen: new Array(6).fill(0), // ✅ ADDED THIS
-        globalVacuumAlarm: false,              // ✅ ADDED THIS (Safe default)
-        buzzerStatus: 'OFF'                    // ✅ ADDED THIS (Safe default)
+        stationLastSeen: new Array(6).fill(0),
+        globalVacuumAlarm: false,
+        buzzerStatus: 'OFF'
     });
 
     // Auth State
     const [token, setToken] = useState(localStorage.getItem('cabane_token'));
     const [user, setUser] = useState(null);
 
-    // --- SESSION RESTORE ---
+    // --- SOCKET SETUP ---
     useEffect(() => {
-        const checkSession = async () => {
-            if (!token) return;
-            try {
-                // Ask Server: "Who am I based on this token?"
-                const res = await axios.get(`${API_URL}/api/auth/me`, {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                setUser(res.data); // { id, username, role }
-            } catch (e) {
-                // Token invalid/expired
-                console.error("Session restore failed", e);
-                localStorage.removeItem('cabane_token');
-                setToken(null);
-                setUser(null);
-            }
-        };
-
-        checkSession();
-    }, [token]);
-
-    useEffect(() => {
-        // Initialize Socket
         const newSocket = io(API_URL);
         setSocket(newSocket);
 
         newSocket.on('connect', () => setIsConnected(true));
         newSocket.on('disconnect', () => setIsConnected(false));
 
-        // Listen for State Updates from Pi
-        newSocket.on('STATE_UPDATE', (data) => {
-            setSystemState(prev => ({ ...prev, ...data }));
-        });
-
-        newSocket.on('STATE_FULL', (data) => {
-            setSystemState(data);
-        });
+        newSocket.on('STATE_UPDATE', (data) => setSystemState(prev => ({ ...prev, ...data })));
+        newSocket.on('STATE_FULL', (data) => setSystemState(data));
 
         return () => newSocket.close();
     }, []);
+
+    // --- AUTH RESTORE ---
+    useEffect(() => {
+        const checkSession = async () => {
+            if (!token) {
+                setAuthLoading(false);
+                return;
+            }
+            try {
+                const res = await axios.get(`${API_URL}/api/auth/me`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                setUser(res.data);
+            } catch (e) {
+                localStorage.removeItem('cabane_token');
+                setToken(null);
+                setUser(null);
+            } finally {
+                setAuthLoading(false);
+            }
+        };
+        checkSession();
+    }, [token]);
 
     // --- ACTIONS ---
 
@@ -84,21 +80,40 @@ export const SocketProvider = ({ children }) => {
             setUser({ username, role });
             return true;
         } catch (e) {
-            console.error(e);
             return false;
         }
     };
 
+    const register = async (username, email, password) => {
+        try {
+            await axios.post(`${API_URL}/api/auth/register`, { username, email, password });
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.response?.data?.error || "Registration failed" };
+        }
+    };
+
+    const logout = () => {
+        localStorage.removeItem('cabane_token');
+        setToken(null);
+        setUser(null);
+        window.location.reload();
+    };
+
+    // --- CONTROL ACTIONS ---
+
     const takeControl = async () => {
-        // DEBUG: Alert if no token found
         if (!token) {
-            alert("You must be logged in to Take Control.");
+            alert("Please login to take control.");
             return;
         }
-
-        await axios.post(`${API_URL}/api/control/take`, {}, {
-            headers: { Authorization: `Bearer ${token}` }
-        });
+        try {
+            await axios.post(`${API_URL}/api/control/take`, {}, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+        } catch (e) {
+            alert("Failed to Take Control: " + (e.response?.data?.error || e.message));
+        }
     };
 
     const releaseToServer = async () => {
@@ -107,7 +122,9 @@ export const SocketProvider = ({ children }) => {
             await axios.post(`${API_URL}/api/control/release-server`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-        } catch (e) { console.error("Release to Server failed", e); }
+        } catch (e) {
+            alert("Error: " + e.message);
+        }
     };
 
     const releaseToCabane = async () => {
@@ -116,11 +133,13 @@ export const SocketProvider = ({ children }) => {
             await axios.post(`${API_URL}/api/control/release-cabane`, {}, {
                 headers: { Authorization: `Bearer ${token}` }
             });
-        } catch (e) { console.error("Release to Cabane failed", e); }
+        } catch (e) {
+            alert("Error: " + e.message);
+        }
     };
 
     const toggleSwitch = async (index, value) => {
-        // Optimistic UI update (makes it feel instant)
+        // Optimistic Update for instant feedback
         setSystemState(prev => {
             const newVirtual = [...prev.virtualSwitches];
             newVirtual[index] = value ? 1 : 0;
@@ -136,15 +155,9 @@ export const SocketProvider = ({ children }) => {
 
     return (
         <SocketContext.Provider value={{
-            socket,
-            isConnected,
-            systemState,
-            user,
-            login,
-            takeControl,
-            releaseToServer, // <--- EXPORT NEW FUNCTION
-            releaseToCabane, // <--- EXPORT NEW FUNCTION
-            toggleSwitch
+            socket, isConnected, systemState, user, authLoading,
+            login, register, logout,
+            takeControl, releaseToServer, releaseToCabane, toggleSwitch
         }}>
             {children}
         </SocketContext.Provider>

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings } from 'lucide-react';
+import { Settings, Shield, LogOut } from 'lucide-react'; // ✅ Import LogOut
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
 import { NotificationBanner } from './components/NotificationBanner';
+import { AuthPage } from './components/AuthPage';
+import { AdminPanel } from './components/AdminPanel';
 import { PANEL_LAYOUT } from './config/stations';
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
@@ -14,13 +16,17 @@ function Dashboard() {
     takeControl,
     releaseToServer,
     releaseToCabane,
+    logout, // ✅ Destructure logout
     isConnected,
     user
   } = useSocket();
 
   const canInteract = systemState.controller !== 'CABANE';
+
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const [notification, setNotification] = useState(null);
+
   const audioCtx = useRef(null);
 
   // --- HELPER: Find Alarm Source ---
@@ -91,7 +97,7 @@ function Dashboard() {
     }
   };
 
-  // --- EFFECT 1: AUDIO LOOP (Purely Sound) ---
+  // --- EFFECTS ---
   useEffect(() => {
     const status = systemState.buzzerStatus;
     if (status === 'SIREN') {
@@ -103,40 +109,29 @@ function Dashboard() {
     }
   }, [systemState.buzzerStatus]);
 
-  // --- EFFECT 2: NOTIFICATIONS (Visuals + Auto Dismiss) ---
   useEffect(() => {
-    // 1. Auto-Dismiss ALARM if condition cleared
     if (!systemState.globalVacuumAlarm) {
       setNotification(prev => (prev?.type === 'ALARM' ? null : prev));
     }
-
-    // 2. Auto-Dismiss REMINDER if Buzzer enabled
     if (systemState.buzzerEnabled) {
       setNotification(prev => (prev?.type === 'INFO' ? null : prev));
     }
-
-    // 3. Trigger ALARM Banner
     if (systemState.buzzerStatus === 'SIREN') {
       const culprits = getAlarmSources();
       const msg = culprits.length > 0
         ? `VACUUM LOSS DETECTED:\n${culprits.join('\n')}`
         : "VACUUM SYSTEM ALARM";
-
-      // Only set if not already set (prevents flickering if we wanted to be strict)
-      // But setting it every cycle ensures it reappears if user closed it but didn't fix it.
       setNotification({ type: 'ALARM', message: msg });
     }
-
-    // 4. Trigger REMINDER Banner
     if (systemState.buzzerStatus === 'CHIRP') {
       setNotification({
         type: 'INFO',
         message: "System is Active but Buzzer is MUTED.\nPlease enable the Buzzer switch."
       });
     }
-
   }, [systemState.globalVacuumAlarm, systemState.buzzerStatus, systemState.buzzerEnabled]);
 
+  // --- RENDER ---
   return (
     <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20">
 
@@ -148,7 +143,7 @@ function Dashboard() {
         />
       )}
 
-      {/* Header */}
+      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 border-b border-gray-700 pb-4 gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-widest text-gray-100">CABANE CONTROL</h1>
@@ -164,49 +159,107 @@ function Dashboard() {
         </div>
 
         <div className="flex gap-3 items-center">
-          <button onClick={() => setShowSettings(true)} className="p-3 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors">
+          {/* Admin Button */}
+          {user?.role === 'ADMIN' && (
+            <button
+              onClick={() => setShowAdmin(true)}
+              className="p-3 rounded bg-gray-700 hover:bg-blue-900 text-blue-400 hover:text-white transition-colors border border-blue-900/30"
+              title="User Management"
+            >
+              <Shield size={20} />
+            </button>
+          )}
+
+          {/* Settings Button */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-3 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+            title="Settings"
+          >
             <Settings size={20} />
           </button>
 
+          {/* Control Buttons */}
           {systemState.currentUser !== user?.username && (
-            <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all">
+            <button
+              onClick={takeControl}
+              className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all"
+            >
               Take Control
             </button>
           )}
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <>
-              <button onClick={releaseToServer} className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all">
+              <button
+                onClick={releaseToServer}
+                className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all"
+              >
                 Release (Hold)
               </button>
-              <button onClick={releaseToCabane} className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all">
+              <button
+                onClick={releaseToCabane}
+                className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all"
+              >
                 To Cabane
               </button>
             </>
           )}
+
+          {/* Logout Button */}
+          <button
+            onClick={logout}
+            className="p-3 rounded bg-gray-700 hover:bg-red-900/50 text-gray-300 hover:text-red-400 transition-colors border border-transparent hover:border-red-900/30"
+            title="Log Out"
+          >
+            <LogOut size={20} />
+          </button>
         </div>
       </div>
 
-      {/* Main Grid */}
+      {/* GRID */}
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         {PANEL_LAYOUT.map((row) => (
           <div key={row.id} className={`grid gap-6 ${row.cols}`}>
             {row.cards.map((card, i) => (
-              <StationCard key={i} card={card} isRemote={canInteract} />
+              <StationCard
+                key={i}
+                card={card}
+                isRemote={canInteract}
+              />
             ))}
           </div>
         ))}
       </div>
 
+      {/* MODALS */}
       <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <AdminPanel isOpen={showAdmin} onClose={() => setShowAdmin(false)} />
     </div>
   );
 }
 
+// --- SPLASH & LAYOUT ---
+const SplashScreen = () => (
+  <div className="min-h-screen bg-cabane-dark flex items-center justify-center">
+    <div className="flex flex-col items-center gap-4">
+      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+      <h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2>
+    </div>
+  </div>
+);
+
+const MainLayout = () => {
+  const { user, authLoading } = useSocket();
+  if (authLoading) return <SplashScreen />;
+  if (!user) return <AuthPage />;
+  return <Dashboard />;
+};
+
 export default function App() {
   return (
     <SocketProvider>
-      <Dashboard />
+      <MainLayout />
     </SocketProvider>
   );
 }
