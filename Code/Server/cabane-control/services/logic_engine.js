@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE (State Machine) - v11 BUZZER FIXED
+// 🧠 LOGIC ENGINE - v14 RECONNECTION FIX
 // ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
@@ -21,18 +21,16 @@ const state = {
     timezone: 'UTC'
 };
 
-// --- TIMING ---
+// --- TIMING & FLAGS ---
+let controlHandshakeConfirmed = false;
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
-let overrideAssertCounter = 0;
-let ioRef = null;
-
-// Buzzer Timing
 let lastChirpTime = 0;
 let alarmCycleStart = 0;
-// Track previous states to detect "Edges" (Transitions)
 let prevSirenCondition = false;
 let prevChirpCondition = false;
+let overrideAssertCounter = 0;
+let ioRef = null;
 
 // --- CONFIGURATION ---
 const INPUT_MAP = [
@@ -60,11 +58,13 @@ const VACUUM_CHECKS = [
     { swIdx: 17, st: 4, bit: 1 }
 ];
 
-// --- HELPERS ---
+// --- LOGGING ---
 function logSystemEvent(type, message) {
     const timestamp = new Date().toISOString();
     db.run("INSERT INTO logs (user_id, type, message, timestamp) VALUES (?, ?, ?, ?)",
-        [null, type, message, timestamp]);
+        [null, type, message, timestamp],
+        (err) => { if (err) console.error("DB Log Error:", err); }
+    );
     if (ioRef) {
         ioRef.emit('NEW_LOG', { id: Date.now(), timestamp, user_id: null, username: 'SYSTEM', type, message });
     }
@@ -85,7 +85,24 @@ function updateTimezone(newTz) { state.timezone = newTz; pushUpdate(); }
 // --- HANDLERS ---
 
 function updatePhysicalState(switchBytes, isOverrideActive) {
-    state.mainControllerOnline = true;
+
+    // ✅ FIX: Detect Main Controller Reconnection
+    if (!state.mainControllerOnline) {
+        console.log("[NET] Main Controller Detected Online.");
+        state.mainControllerOnline = true;
+
+        // If Pi was driving (USER/SERVER), surrender immediately.
+        if (state.controller !== 'CABANE') {
+            console.log("[SYNC] Main Controller Reconnected. Yielding Control.");
+
+            // We force release logic but skip the network command if isOverrideActive is FALSE
+            // (because Main is already released).
+            // If isOverrideActive is TRUE (Main didn't reboot, just disconnected), 
+            // we send Release(0) to be sure it resets.
+            releaseToCabane();
+        }
+    }
+
     state.lastMainHeartbeat = Date.now();
 
     for (let i = 0; i < 24; i++) {
@@ -94,17 +111,36 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
 
+    // SYNC LOGIC
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
+
+        // If Main reports it IS overridden (e.g. Pi crashed/rebooted while Main stayed active),
+        // we sync up to SERVER mode so we can take over or release.
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
-            console.log("[SYNC] Main in Override. Pi assuming SERVER.");
-            state.controller = 'SERVER'; state.currentUser = null; lastControlTakeTime = Date.now();
+            console.log("[SYNC] Main is in Override. Pi assuming SERVER Control.");
+            state.controller = 'SERVER';
+            state.currentUser = null;
+            controlHandshakeConfirmed = true;
         }
-    } else {
-        if (!isOverrideActive) {
-            if (Date.now() - lastControlTakeTime > 5000) {
-                console.log("[SYNC] Emergency Release.");
-                state.controller = 'CABANE'; state.currentUser = null;
+    }
+    else {
+        // Pi thinks it is driving
+        if (isOverrideActive) {
+            controlHandshakeConfirmed = true;
+        }
+        else {
+            // Main says "I am NOT overridden"
+            if (!controlHandshakeConfirmed) {
+                // Case A: Handshake start, packet lost. Retry.
+                udpService.sendOverrideCommand(1);
+            }
+            else {
+                // Case B: We HAD control, Main cancelled it (Buttons 0+1).
+                console.log("[SYNC] Main Controller forced Manual Mode.");
+                state.controller = 'CABANE';
+                state.currentUser = null;
+                controlHandshakeConfirmed = false;
             }
         }
     }
@@ -122,25 +158,46 @@ function updateStationFeedback(id, bits) {
 }
 
 // --- ACTIONS ---
+
 function takeControl(username) {
-    state.controller = 'USER'; state.currentUser = username; lastControlTakeTime = Date.now();
-    udpService.sendOverrideCommand(1); pushUpdate();
+    state.controller = 'USER';
+    state.currentUser = username;
+    lastControlTakeTime = Date.now();
+    controlHandshakeConfirmed = false;
+
+    udpService.sendOverrideCommand(1);
+    console.log(`[CONTROL] Taken by ${username}`);
+    pushUpdate();
 }
+
 function releaseToServer() {
-    state.controller = 'SERVER'; state.currentUser = null; lastControlTakeTime = Date.now();
-    udpService.sendOverrideCommand(1); pushUpdate();
+    state.controller = 'SERVER';
+    state.currentUser = null;
+    lastControlTakeTime = Date.now();
+    udpService.sendOverrideCommand(1);
+    console.log(`[CONTROL] Released to SERVER`);
+    pushUpdate();
 }
+
 function releaseToCabane() {
-    state.controller = 'CABANE'; state.currentUser = null; lastReleaseTime = Date.now();
-    udpService.sendOverrideCommand(0); pushUpdate();
+    state.controller = 'CABANE';
+    state.currentUser = null;
+    lastReleaseTime = Date.now();
+    controlHandshakeConfirmed = false;
+
+    udpService.sendOverrideCommand(0);
+    console.log(`[CONTROL] Released to CABANE`);
+    pushUpdate();
 }
+
 function toggleSwitch(idx, value) {
     if (idx < 0 || idx > 23) return;
     if (state.controller === 'CABANE') return;
     state.virtualSwitches[idx] = value ? 1 : 0; pushUpdate();
 }
 
-// --- CONTROL LOOP ---
+// --- CORE CONTROL LOOP ---
+
 function controlLoop() {
     const now = Date.now();
     let stateChanged = false;
@@ -154,7 +211,7 @@ function controlLoop() {
             if (rawBit === 0) {
                 th.overrides.forEach(targetIdx => {
                     if (state.virtualSwitches[targetIdx] === 0) {
-                        // logSystemEvent('AUTO', `Thermostat ${th.name} ON`);
+                        logSystemEvent('AUTO', `Thermostat ${th.name} forcing Switch ${targetIdx} ON`);
                         state.virtualSwitches[targetIdx] = 1; stateChanged = true;
                     }
                 });
@@ -175,45 +232,29 @@ function controlLoop() {
         if (alarmDetected) logSystemEvent('ALARM', "Vacuum Loss Detected");
         else logSystemEvent('INFO', "Vacuum Alarm Cleared");
         stateChanged = true;
+        alarmCycleStart = now;
     }
 
-    // 3. BUZZER LOGIC (REVISED)
-
+    // 3. BUZZER
     const isSirenCondition = state.globalVacuumAlarm && state.buzzerEnabled;
-
     const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
     const isChirpCondition = !state.globalVacuumAlarm && !state.buzzerEnabled && anyVacuumRunning;
 
-    // Detect Fresh Entry into Siren Mode
-    if (isSirenCondition && !prevSirenCondition) {
-        alarmCycleStart = now; // Reset loop
-        console.log("[BUZZER] Siren Started");
-    }
-
-    // Detect Fresh Entry into Chirp Mode (e.g., toggled buzzer off while pump running)
-    if (isChirpCondition && !prevChirpCondition) {
-        console.log("[BUZZER] Chirp Mode Entered - Scheduling Immediate Chirp");
-        // Force immediate chirp by setting last time to 5 mins ago
-        lastChirpTime = 0;
-    }
+    if (isSirenCondition && !prevSirenCondition) alarmCycleStart = now;
+    if (isChirpCondition && !prevChirpCondition) lastChirpTime = now - 300000;
 
     prevSirenCondition = isSirenCondition;
     prevChirpCondition = isChirpCondition;
 
     let newBuzzerStatus = 'OFF';
-
     if (isSirenCondition) {
         const cycleTime = (now - alarmCycleStart) % 15000;
         newBuzzerStatus = (cycleTime < 5000) ? 'SIREN' : 'OFF';
     }
     else if (isChirpCondition) {
-        // 5 Minutes (300,000 ms)
         if (now - lastChirpTime >= 300000) {
             newBuzzerStatus = 'CHIRP';
-            // Hold CHIRP for 1s so Frontend sees it
-            if (now - lastChirpTime > 301000) {
-                lastChirpTime = now;
-            }
+            if (now - lastChirpTime > 301000) lastChirpTime = now;
         }
     }
 
@@ -236,10 +277,13 @@ function controlLoop() {
         for (let i = 0; i < 24; i++) if (state.virtualSwitches[i]) virtualBytes[Math.floor(i / 8)] |= (1 << (i % 8));
         udpService.sendRemoteData(virtualBytes);
 
-        overrideAssertCounter++;
-        if (overrideAssertCounter >= 5) {
-            udpService.sendOverrideCommand(1);
-            overrideAssertCounter = 0;
+        // Gentle Retry for Handshake
+        if (!controlHandshakeConfirmed) {
+            overrideAssertCounter++;
+            if (overrideAssertCounter >= 5) {
+                udpService.sendOverrideCommand(1);
+                overrideAssertCounter = 0;
+            }
         }
     }
 }

@@ -119,6 +119,14 @@ Logging
 √ The reminder chirp is not working well anymore. Can you look into it? The first chirp should happen as soon as the buzzer switch is off and alarms stop. Let me know if you want to see my code.
 
 √ In the Header, the Master should point to the name of the user instead of showing "USER". If no user has control, but the server still has control it should display "Master: Server". If the Main Controller has control, it should keeps displaying "MASTER: CABANE".
+
+√ A user who has control granted can only control if it has control. As it is right now, which is not what is wanted, if any user or the server has control, all user can control.
+
+√ Main Controller cannot take control back when pressing 2 buttons. It can Only takes control when a user releases to cabane from the app. It appears we have broken this logic when we were having issues with the "Take Control" button, meanwhile the issue was simply the route was corrupted. Here's the logic for the Main Controller taking control:
+	- The Main Controller button index 0 and 1 pressed for 2 seconds.
+	- Main Controller reboots or simply goes offline and becomes online again.
+
+The Main Controller did not change anything in its sketch, so the issue is on the app side.
 -------------------------------------------------------
 -------------------------------------------------------
 
@@ -127,7 +135,7 @@ Requested
 
 
 
-- A user who has control granted can only control if it has control. As it is right now, which is not what is wanted, if any user or the server has control, all user can control.
+
 
 
 
@@ -137,7 +145,7 @@ Requested
 -------------------------------------------------------
 
 
-
+- Can we have in the setting the enabling/disabling of stations, like the Main Controller has?
 
 
 - for the Weather component, Can we have a rotation of multiple locations? 
@@ -154,8 +162,7 @@ Debug
 - Main Controller doesn't take control back when becoming online again after being offline.
 
 
-- Main Controller cannot take control back when pressing 2 buttons
-- Main Controller can Only takes control when the control is release to cabane from the app.
+
 
 http://192.168.1.200:3000/
 
