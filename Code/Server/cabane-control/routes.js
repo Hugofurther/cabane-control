@@ -302,11 +302,30 @@ router.post('/control/release-cabane', authenticateToken, (req, res) => {
     res.json({ success: true });
 });
 
+// POST /api/control/toggle
 router.post('/control/toggle', authenticateToken, (req, res) => {
     const { index, value } = req.body;
-    if (logicEngine.getFullState().controller === 'CABANE') return res.status(403).json({ error: "In Cabane Mode" });
+
+    const state = logicEngine.getFullState();
+
+    // 1. Check if Cabane is Master
+    if (state.controller === 'CABANE') {
+        return res.status(403).json({ error: "System is in Cabane Mode. Take control first." });
+    }
+
+    // 2. Check if Requesting User is the Current Driver
+    // If controller is SERVER, no user is driving -> Deny
+    // If controller is USER, but username doesn't match -> Deny
+    if (state.controller === 'SERVER' || state.currentUser !== req.user.username) {
+        return res.status(403).json({ error: "You are not the active controller. Please Take Control." });
+    }
+
     logicEngine.toggleSwitch(index, value, req.user.username);
-    logAction(req.io, req.user.id, req.user.username, 'SWITCH', `Toggled Switch ${index} ${value ? 'ON' : 'OFF'}`);
+
+    // Log switch change
+    // (Logic Engine logs text, but we can add structured log here too if needed)
+    // logicEngine.toggleSwitch handles the logging internally in your current setup.
+
     res.json({ success: true });
 });
 

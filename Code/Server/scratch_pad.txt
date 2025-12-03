@@ -109,17 +109,25 @@ Logging
 √ With the clock, We can remove the seconds and the timezone please. We need to save space. Also, the 
 
 √ Any search input field should respond to the key "enter"
+
+√ With the Clock display, Can we make the AM/PM small and closer to the time.
+
+√ The temperature "FEELS" and Location can be stacked on different lines.
+
+√ We should stack the themperature above the Feels and Location stack and center them all together.
+
+√ The reminder chirp is not working well anymore. Can you look into it? The first chirp should happen as soon as the buzzer switch is off and alarms stop. Let me know if you want to see my code.
+
+√ In the Header, the Master should point to the name of the user instead of showing "USER". If no user has control, but the server still has control it should display "Master: Server". If the Main Controller has control, it should keeps displaying "MASTER: CABANE".
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
-- With the Clock display, Can we make the AM/PM small and closer to the time.
-
-- The reminder chirp is not working well anymore. Can you look into it? The first chirp should happen as soon as the buzzer switch is off and alarms stop. Let me know if you want to see my code.
 
 
+- A user who has control granted can only control if it has control. As it is right now, which is not what is wanted, if any user or the server has control, all user can control.
 
 
 
@@ -132,7 +140,7 @@ Requested
 
 
 
-
+- for the Weather component, Can we have a rotation of multiple locations? 
 
 
 
@@ -144,7 +152,7 @@ LAYOUT
 
 Debug
 - Main Controller doesn't take control back when becoming online again after being offline.
-- Only when user has control the StationCards change color
+
 
 - Main Controller cannot take control back when pressing 2 buttons
 - Main Controller can Only takes control when the control is release to cabane from the app.

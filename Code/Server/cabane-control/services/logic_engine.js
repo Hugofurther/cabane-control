@@ -1,3 +1,6 @@
+// ============================================================
+// 🧠 LOGIC ENGINE (State Machine) - v11 BUZZER FIXED
+// ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./cabane.db');
@@ -15,17 +18,23 @@ const state = {
     globalVacuumAlarm: false,
     buzzerEnabled: false,
     buzzerStatus: 'OFF',
-    timezone: 'UTC' // <--- NEW: Global Timezone State
+    timezone: 'UTC'
 };
 
+// --- TIMING ---
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
-let lastChirpTime = 0;
-let alarmCycleStart = 0;
 let overrideAssertCounter = 0;
 let ioRef = null;
 
-// ... [Keep INPUT_MAP, THERMOSTATS, VACUUM_CHECKS constants exactly as they were] ...
+// Buzzer Timing
+let lastChirpTime = 0;
+let alarmCycleStart = 0;
+// Track previous states to detect "Edges" (Transitions)
+let prevSirenCondition = false;
+let prevChirpCondition = false;
+
+// --- CONFIGURATION ---
 const INPUT_MAP = [
     { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
     { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
@@ -51,7 +60,7 @@ const VACUUM_CHECKS = [
     { swIdx: 17, st: 4, bit: 1 }
 ];
 
-// --- LOGGING ---
+// --- HELPERS ---
 function logSystemEvent(type, message) {
     const timestamp = new Date().toISOString();
     db.run("INSERT INTO logs (user_id, type, message, timestamp) VALUES (?, ?, ?, ?)",
@@ -61,48 +70,41 @@ function logSystemEvent(type, message) {
     }
 }
 
-// --- INIT ---
 function init(io) {
     ioRef = io;
-
-    // Load Timezone
     db.get("SELECT value FROM system_settings WHERE key = 'timezone'", (err, row) => {
         if (row && row.value) state.timezone = row.value;
     });
-
     setInterval(checkHeartbeats, 1000);
     setInterval(controlLoop, 100);
 }
 
 function getFullState() { return state; }
+function updateTimezone(newTz) { state.timezone = newTz; pushUpdate(); }
 
-// --- SETTINGS UPDATE ---
-function updateTimezone(newTz) {
-    state.timezone = newTz;
-    pushUpdate();
-}
-
-// ... [Keep updatePhysicalState, updateStationFeedback as they were] ...
+// --- HANDLERS ---
 
 function updatePhysicalState(switchBytes, isOverrideActive) {
     state.mainControllerOnline = true;
     state.lastMainHeartbeat = Date.now();
+
     for (let i = 0; i < 24; i++) {
         const byteIdx = Math.floor(i / 8);
         const bitIdx = i % 8;
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
+
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
-            logSystemEvent('SYSTEM', "Main in Override. Syncing to SERVER mode.");
+            console.log("[SYNC] Main in Override. Pi assuming SERVER.");
             state.controller = 'SERVER'; state.currentUser = null; lastControlTakeTime = Date.now();
         }
     } else {
         if (!isOverrideActive) {
             if (Date.now() - lastControlTakeTime > 5000) {
-                logSystemEvent('SYSTEM', "Main Controller forced Manual Mode.");
-                state.controller = 'CABANE'; state.currentUser = null; pushUpdate();
+                console.log("[SYNC] Emergency Release.");
+                state.controller = 'CABANE'; state.currentUser = null;
             }
         }
     }
@@ -119,8 +121,7 @@ function updateStationFeedback(id, bits) {
     }
 }
 
-// ... [Keep takeControl, releaseToServer, releaseToCabane, toggleSwitch as they were] ...
-
+// --- ACTIONS ---
 function takeControl(username) {
     state.controller = 'USER'; state.currentUser = username; lastControlTakeTime = Date.now();
     udpService.sendOverrideCommand(1); pushUpdate();
@@ -139,20 +140,21 @@ function toggleSwitch(idx, value) {
     state.virtualSwitches[idx] = value ? 1 : 0; pushUpdate();
 }
 
-// ... [Keep controlLoop, checkHeartbeats, pushUpdate] ...
-
+// --- CONTROL LOOP ---
 function controlLoop() {
     const now = Date.now();
     let stateChanged = false;
+
     state.buzzerEnabled = !!state.virtualSwitches[21];
 
+    // 1. THERMOSTATS
     THERMOSTATS.forEach(th => {
         if (state.virtualSwitches[th.swIdx]) {
             const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
             if (rawBit === 0) {
                 th.overrides.forEach(targetIdx => {
                     if (state.virtualSwitches[targetIdx] === 0) {
-                        logSystemEvent('AUTO', `Thermostat ${th.name} forcing Switch ${targetIdx} ON`);
+                        // logSystemEvent('AUTO', `Thermostat ${th.name} ON`);
                         state.virtualSwitches[targetIdx] = 1; stateChanged = true;
                     }
                 });
@@ -160,39 +162,74 @@ function controlLoop() {
         }
     });
 
+    // 2. ALARMS
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
         const commandedOn = state.virtualSwitches[chk.swIdx];
         const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
         if (commandedOn && rawFb === 1) alarmDetected = true;
     });
+
     if (state.globalVacuumAlarm !== alarmDetected) {
         state.globalVacuumAlarm = alarmDetected;
         if (alarmDetected) logSystemEvent('ALARM', "Vacuum Loss Detected");
         else logSystemEvent('INFO', "Vacuum Alarm Cleared");
-        stateChanged = true; alarmCycleStart = now;
+        stateChanged = true;
     }
+
+    // 3. BUZZER LOGIC (REVISED)
+
+    const isSirenCondition = state.globalVacuumAlarm && state.buzzerEnabled;
+
+    const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
+    const isChirpCondition = !state.globalVacuumAlarm && !state.buzzerEnabled && anyVacuumRunning;
+
+    // Detect Fresh Entry into Siren Mode
+    if (isSirenCondition && !prevSirenCondition) {
+        alarmCycleStart = now; // Reset loop
+        console.log("[BUZZER] Siren Started");
+    }
+
+    // Detect Fresh Entry into Chirp Mode (e.g., toggled buzzer off while pump running)
+    if (isChirpCondition && !prevChirpCondition) {
+        console.log("[BUZZER] Chirp Mode Entered - Scheduling Immediate Chirp");
+        // Force immediate chirp by setting last time to 5 mins ago
+        lastChirpTime = 0;
+    }
+
+    prevSirenCondition = isSirenCondition;
+    prevChirpCondition = isChirpCondition;
 
     let newBuzzerStatus = 'OFF';
-    if (state.globalVacuumAlarm) {
-        if (state.buzzerEnabled) {
-            const cycleTime = (now - alarmCycleStart) % 15000;
-            newBuzzerStatus = (cycleTime < 5000) ? 'SIREN' : 'OFF';
-        }
-    } else if (!state.buzzerEnabled) {
-        const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
-        if (anyVacuumRunning && (now - lastChirpTime > 60000)) {
-            newBuzzerStatus = 'CHIRP'; if (now - lastChirpTime > 61000) lastChirpTime = now;
+
+    if (isSirenCondition) {
+        const cycleTime = (now - alarmCycleStart) % 15000;
+        newBuzzerStatus = (cycleTime < 5000) ? 'SIREN' : 'OFF';
+    }
+    else if (isChirpCondition) {
+        // 5 Minutes (300,000 ms)
+        if (now - lastChirpTime >= 300000) {
+            newBuzzerStatus = 'CHIRP';
+            // Hold CHIRP for 1s so Frontend sees it
+            if (now - lastChirpTime > 301000) {
+                lastChirpTime = now;
+            }
         }
     }
+
     if (state.buzzerStatus !== newBuzzerStatus) {
-        state.buzzerStatus = newBuzzerStatus; stateChanged = true;
+        state.buzzerStatus = newBuzzerStatus;
+        stateChanged = true;
     }
+
     if (stateChanged) pushUpdate();
 
+    // 4. NETWORK OUTPUTS
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
-        INPUT_MAP.forEach(m => { if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit); });
+        INPUT_MAP.forEach(m => {
+            if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit);
+        });
         udpService.sendGlobalBroadcast(stationBytes);
 
         const virtualBytes = [0, 0, 0];
@@ -200,7 +237,10 @@ function controlLoop() {
         udpService.sendRemoteData(virtualBytes);
 
         overrideAssertCounter++;
-        if (overrideAssertCounter >= 5) { udpService.sendOverrideCommand(1); overrideAssertCounter = 0; }
+        if (overrideAssertCounter >= 5) {
+            udpService.sendOverrideCommand(1);
+            overrideAssertCounter = 0;
+        }
     }
 }
 
@@ -215,7 +255,6 @@ function checkHeartbeats() {
     for (let i = 0; i < 6; i++) {
         if (state.stationOnline[i] && (now - state.stationLastSeen[i] > 3000)) {
             state.stationOnline[i] = false;
-            // state.stationFeedback[i] = 0; // Removed to keep last state
             pushUpdate();
         }
     }
@@ -225,6 +264,5 @@ function pushUpdate() { if (ioRef) ioRef.emit('STATE_UPDATE', state); }
 
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback,
-    takeControl, releaseToServer, releaseToCabane, toggleSwitch,
-    updateTimezone // <--- EXPORT THIS NEW FUNCTION
+    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone
 };

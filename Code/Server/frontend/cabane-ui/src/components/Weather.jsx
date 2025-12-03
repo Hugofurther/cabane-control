@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { CloudSun, Loader2, Thermometer } from 'lucide-react';
+import { CloudSun, Loader2, Thermometer, MapPin } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 
 export const Weather = () => {
@@ -8,7 +8,6 @@ export const Weather = () => {
     const [weather, setWeather] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    // Check User Preference (Default C)
     const isF = user?.settings?.tempUnit === 'F';
 
     useEffect(() => {
@@ -17,7 +16,6 @@ export const Weather = () => {
 
             setLoading(true);
             try {
-                // Always fetch Celsius from API
                 const url = `https://api.open-meteo.com/v1/forecast?latitude=${siteSettings.weather_lat}&longitude=${siteSettings.weather_lon}&current=temperature_2m,apparent_temperature&temperature_unit=celsius`;
                 const res = await axios.get(url);
                 setWeather(res.data.current);
@@ -35,7 +33,6 @@ export const Weather = () => {
 
     if (!siteSettings.weather_lat) return null;
 
-    // Helper to format
     const formatTemp = (tempC) => {
         if (tempC === undefined) return '--';
         const val = isF ? (tempC * 9 / 5) + 32 : tempC;
@@ -47,16 +44,25 @@ export const Weather = () => {
             {loading && !weather ? (
                 <Loader2 className="animate-spin text-gray-500" size={20} />
             ) : weather ? (
-                <>
-                    <div className="flex items-center gap-2 text-2xl font-black text-white tracking-widest">
-                        <Thermometer size={24} className="text-orange-500" />
+                <div className="flex items-center gap-3">
+                    {/* Main Temp */}
+                    <div className="flex items-center text-3xl font-black text-white tracking-widest">
+                        <Thermometer size={28} className="text-orange-500 mr-1" />
                         {formatTemp(weather.temperature_2m)}°{isF ? 'F' : 'C'}
                     </div>
-                    <div className="text-[10px] font-bold uppercase text-gray-500 tracking-wider flex items-center gap-1">
-                        <CloudSun size={12} />
-                        Feels {formatTemp(weather.apparent_temperature)}° | {siteSettings.weather_city?.split(',')[0]}
+
+                    {/* Stacked Info */}
+                    <div className="flex flex-col items-start justify-center border-l border-gray-600 pl-3 h-10">
+                        <div className="text-[10px] font-bold uppercase text-gray-400 tracking-wider flex items-center gap-1">
+                            <CloudSun size={10} />
+                            Feels {formatTemp(weather.apparent_temperature)}°
+                        </div>
+                        <div className="text-[10px] font-bold uppercase text-blue-400 tracking-wider flex items-center gap-1">
+                            <MapPin size={10} />
+                            {siteSettings.weather_city?.split(',')[0]}
+                        </div>
                     </div>
-                </>
+                </div>
             ) : (
                 <span className="text-xs text-red-900">Weather Error</span>
             )}
