@@ -102,7 +102,8 @@ export const SocketProvider = ({ children }) => {
             axios.get(`${API_URL}/api/system/settings`, {
                 headers: { Authorization: `Bearer ${token}` }
             }).then(res => {
-                if (res.data.timezone) setSiteSettings(res.data);
+                // Save ALL settings (timezone + weather) to state
+                setSiteSettings(res.data);
             }).catch(console.error);
         }
     }, [token]);

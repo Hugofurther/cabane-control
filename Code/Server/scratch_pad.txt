@@ -99,6 +99,8 @@ Logging
 √ Also, we should have a user settings for the clock to display 24hrs or 12hrs.
 
 √ Clicking outside a pop-up panel should dismiss the panel.
+
+√ Can we fetch on the internet the temperature of a set location by the admin?
 -------------------------------------------------------
 -------------------------------------------------------
 
@@ -106,15 +108,22 @@ Requested
 
 
 
+- With the clock, We can remove the seconds and the timezone please. We need to save space. Also, the 
+
+- Can we add the option to display Celsius or Farenheight
+
+- Display the Pi Server disk usage in admin panel
+
+- Any search input field should respond to the key "enter"
 -------------------------------------------------------
 -------------------------------------------------------
 
 
 
-- Display the disk usage in admin panel
 
 
-Can we fetch on the internet the temperature of a set location by the admin?
+
+
 
 
 LAYOUT

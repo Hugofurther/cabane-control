@@ -9,6 +9,8 @@ import { AdminPanel } from './components/AdminPanel';
 import { LogViewer } from './components/LogViewer';
 import { Clock } from './components/Clock';
 import { PANEL_LAYOUT } from './config/stations';
+import { Weather } from './components/Weather';
+
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 
@@ -123,6 +125,7 @@ function Dashboard() {
         {/* CENTER: Clock */}
         <div className="flex-grow flex justify-center">
           <Clock />
+          <Weather />
         </div>
 
         {/* RIGHT: Actions */}

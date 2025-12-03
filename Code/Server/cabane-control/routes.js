@@ -148,26 +148,47 @@ router.get('/auth/me', authenticateToken, (req, res) => {
 // ⚙️ SYSTEM & USER SETTINGS
 // ============================================================
 
-// GET SYSTEM TIMEZONE
-router.get('/system/timezone', authenticateToken, (req, res) => {
-    db.get("SELECT value FROM system_settings WHERE key = 'timezone'", (err, row) => {
+// GET ALL SYSTEM SETTINGS (Timezone, Weather, etc.)
+router.get('/system/settings', authenticateToken, (req, res) => {
+    db.all("SELECT key, value FROM system_settings", [], (err, rows) => {
         if (err) return res.status(500).json({ error: "DB Error" });
-        res.json({ timezone: row ? row.value : 'UTC' });
+
+        // Convert array [{key:'a', value:'b'}] -> object {a:'b'}
+        const settings = {};
+        rows.forEach(row => settings[row.key] = row.value);
+        res.json(settings);
     });
 });
 
-// SET SYSTEM TIMEZONE (Admin Only)
-router.post('/system/timezone', authenticateToken, requireAdmin, (req, res) => {
-    const { timezone } = req.body;
-    if (!timezone) return res.status(400).json({ error: "Missing timezone" });
+// UPDATE SYSTEM SETTINGS (Admin Only) - GENERIC HANDLER
+router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
+    const settings = req.body; // { timezone: '...', weather_lat: '...', ... }
+    const keys = Object.keys(settings);
 
-    db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('timezone', ?)", [timezone], (err) => {
-        if (err) return res.status(500).json({ error: "Update failed" });
+    if (keys.length === 0) return res.status(400).json({ error: "No settings provided" });
 
-        // 🔥 UPDATE LOGIC ENGINE SO CLOCK UPDATES INSTANTLY
-        if (logicEngine.updateTimezone) logicEngine.updateTimezone(timezone);
+    let completed = 0;
+    let errors = 0;
 
-        res.json({ success: true });
+    keys.forEach(key => {
+        db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)",
+            [key, String(settings[key])],
+            (err) => {
+                if (err) errors++;
+                completed++;
+
+                if (completed === keys.length) {
+                    // If Timezone changed, update Logic Engine immediately
+                    if (settings.timezone) {
+                        // Check if logicEngine has the method before calling (safety)
+                        if (logicEngine.updateTimezone) logicEngine.updateTimezone(settings.timezone);
+                    }
+
+                    if (errors > 0) res.status(500).json({ error: "Some settings failed to save" });
+                    else res.json({ success: true });
+                }
+            }
+        );
     });
 });
 
