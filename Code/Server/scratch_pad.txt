@@ -50,28 +50,47 @@ Logging
 
 √ a user should be able to change their email and password
 
+√ We need to setup the Pi Server to start the server.js automatically on boot.
+
+√ boot automatically with watchdog
+
+√ Admin can grant a user to be able to take control or not.
+
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
+- Changes in the switching should be logged on the server with the controlling user / device
+
+- Grant or deny user access to logs.
+
 
 
 
 -------------------------------------------------------
 -------------------------------------------------------
 
-- We need to setup the Pi Server to start the server.js automatically on boot.
+Debug
+- Reminder to turn alarm on.
+- Main Controller doesn't take control back when becoming online again after being offline.
+- Only when user has control the StationCards change color.
 
+http://192.168.1.200:3000/
+
+
+- Give a way to search the logs and to expert .csv
+
+- Add a clock
+
+- Give time based on (EST) Montreal time
 
 - To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
 
+- A user without control access should have the "Take Control" button greyed out or hidden.
 
 
-- Changes in the switching should be logged on the server with the controlling user / device
-
-- Admin can grant a user to be able to take control or not.
 
 - If Cabane is offline and trying to release control to cabane, control goes to Server.
 

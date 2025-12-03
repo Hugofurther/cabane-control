@@ -2,6 +2,8 @@
 // 🧠 LOGIC ENGINE (State Machine) - v9 STUBBORN MODE
 // ============================================================
 const udpService = require('./udp_service');
+const sqlite3 = require('sqlite3').verbose();
+const db = new sqlite3.Database('./cabane.db');
 
 const state = {
     controller: 'CABANE',
@@ -71,8 +73,16 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
     for (let i = 0; i < 24; i++) {
         const byteIdx = Math.floor(i / 8);
         const bitIdx = i % 8;
-        state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
+        const newVal = (switchBytes[byteIdx] >> bitIdx) & 1;
+
+        // DETECT CHANGE
+        if (state.physicalSwitches[i] !== newVal) {
+            logSwitchChange(i, newVal, "Cabane (Physical)");
+        }
+
+        state.physicalSwitches[i] = newVal;
     }
+
 
     // --- SYNC LOGIC ---
 
@@ -162,10 +172,24 @@ function releaseToCabane() {
     pushUpdate();
 }
 
-function toggleSwitch(idx, value) {
+function toggleSwitch(idx, value, username) { // Added username arg
     if (idx < 0 || idx > 23) return;
     if (state.controller === 'CABANE') return;
-    state.virtualSwitches[idx] = value ? 1 : 0;
+
+    if (state.virtualSwitches[idx] !== (value ? 1 : 0)) {
+        state.virtualSwitches[idx] = value ? 1 : 0;
+
+        // Log the change
+        const actor = username || "System";
+        const action = value ? "ON" : "OFF";
+        const msg = `${actor} turned Switch ${idx} ${action}`;
+
+        // Determine User ID for log (Optional optimization: look up ID, or just log text)
+        // For simplicity/speed in Logic Engine, we just log text or use a specific SQL if we had the ID.
+        // Let's just log the text description for now.
+        db.run("INSERT INTO logs (type, message) VALUES ('SWITCH', ?)", [msg]);
+    }
+
     pushUpdate();
 }
 
@@ -188,10 +212,17 @@ function controlLoop() {
             if (isCold) {
                 th.overrides.forEach(targetIdx => {
                     if (state.virtualSwitches[targetIdx] === 0) {
+                        console.log(`[AUTO] Thermostat ${th.name} forcing Switch ${targetIdx} ON`);
+
+                        // LOG IT
+                        db.run("INSERT INTO logs (type, message) VALUES ('AUTO', ?)",
+                            [`Thermostat ${th.name} forced Switch ${targetIdx} ON`]);
+
                         state.virtualSwitches[targetIdx] = 1;
                         stateChanged = true;
                     }
                 });
+
             }
         }
     });
@@ -278,6 +309,16 @@ function checkHeartbeats() {
 
 function pushUpdate() {
     if (ioRef) ioRef.emit('STATE_UPDATE', state);
+}
+
+function logSwitchChange(idx, newVal, source) {
+    const switchName = `Switch ${idx}`; // You could map this to names if you want
+    const action = newVal ? "ON" : "OFF";
+    const msg = `${source} turned ${switchName} ${action}`;
+
+    // We use ID 0 or NULL for system/cabane logs
+    db.run("INSERT INTO logs (user_id, type, message) VALUES (?, 'SWITCH', ?)",
+        [null, msg], (err) => { if (err) console.error(err); });
 }
 
 module.exports = {

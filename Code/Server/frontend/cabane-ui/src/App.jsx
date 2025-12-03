@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Shield, LogOut } from 'lucide-react'; // ✅ Import LogOut
+import { Settings, Shield, LogOut, ScrollText } from 'lucide-react'; // Add ScrollText
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
@@ -7,6 +7,7 @@ import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
 import { AdminPanel } from './components/AdminPanel';
 import { PANEL_LAYOUT } from './config/stations';
+import { LogViewer } from './components/LogViewer'; // Add Component
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 
@@ -26,6 +27,8 @@ function Dashboard() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [notification, setNotification] = useState(null);
+
+  const [showLogs, setShowLogs] = useState(false);
 
   const audioCtx = useRef(null);
 
@@ -179,14 +182,33 @@ function Dashboard() {
             <Settings size={20} />
           </button>
 
-          {/* Control Buttons */}
-          {systemState.currentUser !== user?.username && (
+          {/* Logs Button */}
+          {(user?.can_view_logs || user?.role === 'ADMIN') && (
             <button
-              onClick={takeControl}
-              className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all"
+              onClick={() => setShowLogs(true)}
+              className="p-3 rounded bg-gray-700 hover:bg-gray-600 text-yellow-500 transition-colors"
+              title="View Logs"
             >
-              Take Control
+              <ScrollText size={20} />
             </button>
+          )}
+
+          {/* Control Buttons */}
+          {/* 1. TAKE CONTROL */}
+          {/* Visible if: Not Current Driver AND User has Permission */}
+          {systemState.currentUser !== user?.username && (
+            user?.can_control ? (
+              <button
+                onClick={takeControl}
+                className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all"
+              >
+                Take Control
+              </button>
+            ) : (
+              <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed" title="Ask Admin for access">
+                View Only
+              </div>
+            )
           )}
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
@@ -235,6 +257,7 @@ function Dashboard() {
       {/* MODALS */}
       <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <AdminPanel isOpen={showAdmin} onClose={() => setShowAdmin(false)} />
+      <LogViewer isOpen={showLogs} onClose={() => setShowLogs(false)} />
     </div>
   );
 }

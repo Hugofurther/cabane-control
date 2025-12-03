@@ -158,23 +158,35 @@ router.post('/auth/reset-password', async (req, res) => {
     );
 });
 
-// GET ME (Reload Session)
+// GET ME (Reload Session)// GET /api/auth/me (Reload Session)
 router.get('/auth/me', authenticateToken, (req, res) => {
-    db.get("SELECT id, username, role, email, settings FROM users WHERE id = ?", [req.user.id], (err, row) => {
+    // Select all profile and permission fields
+    const sql = "SELECT id, username, role, email, settings, can_control, can_view_logs FROM users WHERE id = ?";
+
+    db.get(sql, [req.user.id], (err, row) => {
         if (!row) return res.status(404).json({ error: "User not found" });
 
+        // Parse settings JSON (handle nulls safely)
         let settings = {};
-        try { settings = row.settings ? JSON.parse(row.settings) : {} } catch (e) { }
+        try {
+            settings = row.settings ? JSON.parse(row.settings) : {};
+        } catch (e) {
+            console.error("Error parsing user settings:", e);
+        }
 
         res.json({
             id: row.id,
             username: row.username,
             email: row.email,
             role: row.role,
-            settings: settings
+            settings: settings,
+            // Convert SQLite integers (0/1) to JavaScript Booleans (false/true)
+            can_control: !!row.can_control,
+            can_view_logs: !!row.can_view_logs
         });
     });
 });
+
 
 // ============================================================
 // ⚙️ USER PROFILE & SETTINGS
@@ -233,7 +245,8 @@ router.post('/user/password', authenticateToken, async (req, res) => {
 // ============================================================
 
 router.get('/users', authenticateToken, requireAdmin, (req, res) => {
-    db.all("SELECT id, username, email, role, status, created_at FROM users", [], (err, rows) => {
+    db.all("SELECT id, username, email, role, status, can_control, can_view_logs, created_at FROM users", [], (err, rows) => {
+
         if (err) return res.status(500).json({ error: "DB Error" });
         res.json(rows);
     });
@@ -255,6 +268,24 @@ router.post('/users/approve', authenticateToken, requireAdmin, (req, res) => {
     });
 });
 
+// TOGGLE PERMISSIONS
+router.post('/users/permission', authenticateToken, requireAdmin, (req, res) => {
+    const { userId, type, value } = req.body; // type: 'control' or 'logs'
+
+    let column = '';
+    if (type === 'control') column = 'can_control';
+    else if (type === 'logs') column = 'can_view_logs';
+    else return res.status(400).json({ error: "Invalid permission type" });
+
+    // Securely interpolate column name (whitelisted above)
+    const sql = `UPDATE users SET ${column} = ? WHERE id = ?`;
+
+    db.run(sql, [value ? 1 : 0, userId], (err) => {
+        if (err) return res.status(500).json({ error: "Update failed" });
+        res.json({ success: true });
+    });
+});
+
 // DELETE USER
 router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
     const { userId } = req.body;
@@ -273,11 +304,20 @@ router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
 
 // POST /api/control/take
 router.post('/control/take', authenticateToken, (req, res) => {
-    console.log(`API: Take Control requested by ${req.user.username}`);
-    logicEngine.takeControl(req.user.username);
-    db.run("INSERT INTO logs (user_id, type, message) VALUES (?, ?, ?)",
-        [req.user.id, 'CONTROL', 'User took control']);
-    res.json({ success: true });
+    // CHECK PERMISSION
+    db.get("SELECT can_control FROM users WHERE id = ?", [req.user.id], (err, row) => {
+        if (!row || !row.can_control) {
+            return res.status(403).json({ error: "You do not have permission to take control." });
+        }
+
+        console.log(`API: Take Control requested by ${req.user.username}`);
+        logicEngine.takeControl(req.user.username);
+
+        db.run("INSERT INTO logs (user_id, type, message) VALUES (?, ?, ?)",
+            [req.user.id, 'CONTROL', 'User took control']);
+
+        res.json({ success: true });
+    });
 });
 
 // POST /api/control/release-server
@@ -301,13 +341,14 @@ router.post('/control/release-cabane', authenticateToken, (req, res) => {
 // POST /api/control/toggle
 router.post('/control/toggle', authenticateToken, (req, res) => {
     const { index, value } = req.body;
-
     const state = logicEngine.getFullState();
+
     if (state.controller === 'CABANE') {
-        return res.status(403).json({ error: "System is in Cabane Mode. Take control first." });
+        return res.status(403).json({ error: "System is in Cabane Mode." });
     }
 
-    logicEngine.toggleSwitch(index, value);
+    // Pass username for logging
+    logicEngine.toggleSwitch(index, value, req.user.username);
     res.json({ success: true });
 });
 
@@ -339,6 +380,27 @@ router.post('/messages', authenticateToken, (req, res) => {
         res.json({ success: true, id: this.lastID });
     });
     stmt.finalize();
+});
+
+// GET SYSTEM LOGS
+router.get('/logs', authenticateToken, (req, res) => {
+    // Check Permission
+    db.get("SELECT can_view_logs FROM users WHERE id = ?", [req.user.id], (err, row) => {
+        if (!row || !row.can_view_logs) return res.status(403).json({ error: "Access Denied" });
+
+        // Fetch last 100 logs
+        const sql = `
+      SELECT l.id, l.timestamp, l.type, l.message, u.username 
+      FROM logs l 
+      LEFT JOIN users u ON l.user_id = u.id 
+      ORDER BY l.timestamp DESC LIMIT 100
+    `;
+
+        db.all(sql, [], (err, rows) => {
+            if (err) return res.status(500).json({ error: "DB Error" });
+            res.json(rows);
+        });
+    });
 });
 
 module.exports = router;
