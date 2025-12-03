@@ -1,5 +1,5 @@
 // ============================================================
-// 🛣️ API ROUTES - FULL PRODUCTION
+// 🛣️ API ROUTES - FULL PRODUCTION (vFinal)
 // ============================================================
 const express = require('express');
 const router = express.Router();
@@ -54,7 +54,7 @@ router.post('/auth/register', async (req, res) => {
     try {
         const hash = await bcrypt.hash(password, 10);
         const token = crypto.randomBytes(32).toString('hex');
-        const defaultSettings = JSON.stringify({ soundEnabled: true, vibrationEnabled: true });
+        const defaultSettings = JSON.stringify({ soundEnabled: true, vibrationEnabled: true, clockFormat: '24h' });
 
         const stmt = db.prepare("INSERT INTO users (username, password_hash, email, status, verification_token, settings) VALUES (?, ?, ?, 'UNVERIFIED', ?, ?)");
         stmt.run(userClean, hash, emailClean, token, defaultSettings, async function (err) {
@@ -148,23 +148,27 @@ router.get('/auth/me', authenticateToken, (req, res) => {
 // ⚙️ SYSTEM & USER SETTINGS
 // ============================================================
 
-router.get('/system/settings', authenticateToken, (req, res) => {
-    db.all("SELECT key, value FROM system_settings", [], (err, rows) => {
+// GET SYSTEM TIMEZONE
+router.get('/system/timezone', authenticateToken, (req, res) => {
+    db.get("SELECT value FROM system_settings WHERE key = 'timezone'", (err, row) => {
         if (err) return res.status(500).json({ error: "DB Error" });
-        const settings = {};
-        rows.forEach(row => settings[row.key] = row.value);
-        res.json(settings);
+        res.json({ timezone: row ? row.value : 'UTC' });
     });
 });
 
-router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
+// SET SYSTEM TIMEZONE (Admin Only)
+router.post('/system/timezone', authenticateToken, requireAdmin, (req, res) => {
     const { timezone } = req.body;
-    if (timezone) {
-        db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('timezone', ?)", [timezone], (err) => {
-            if (err) return res.status(500).json({ error: "Update failed" });
-            res.json({ success: true });
-        });
-    } else res.status(400).json({ error: "No settings" });
+    if (!timezone) return res.status(400).json({ error: "Missing timezone" });
+
+    db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('timezone', ?)", [timezone], (err) => {
+        if (err) return res.status(500).json({ error: "Update failed" });
+
+        // 🔥 UPDATE LOGIC ENGINE SO CLOCK UPDATES INSTANTLY
+        if (logicEngine.updateTimezone) logicEngine.updateTimezone(timezone);
+
+        res.json({ success: true });
+    });
 });
 
 router.post('/user/settings', authenticateToken, (req, res) => {
@@ -198,21 +202,6 @@ router.post('/user/password', authenticateToken, async (req, res) => {
             res.json({ success: true });
         });
     });
-});
-
-// POST /api/settings/timezone
-router.post('/settings/timezone', authenticateToken, requireAdmin, (req, res) => {
-    const { timezone } = req.body;
-    if (timezone) {
-        db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES ('timezone', ?)", [timezone], (err) => {
-            if (err) return res.status(500).json({ error: "Update failed" });
-
-            // ✅ UPDATE LOGIC ENGINE IMMEDIATELY
-            logicEngine.updateTimezone(timezone);
-
-            res.json({ success: true });
-        });
-    } else res.status(400).json({ error: "No settings" });
 });
 
 // ============================================================
@@ -258,8 +247,10 @@ router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
 // ============================================================
 
 router.post('/control/take', authenticateToken, (req, res) => {
+    // Verify Permission First
     db.get("SELECT can_control FROM users WHERE id = ?", [req.user.id], (err, row) => {
         if (!row || !row.can_control) return res.status(403).json({ error: "Permission denied" });
+
         logicEngine.takeControl(req.user.username);
         logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Took Control');
         res.json({ success: true });
@@ -308,8 +299,9 @@ router.get('/messages', authenticateToken, (req, res) => {
 router.post('/messages', authenticateToken, (req, res) => {
     const { content, recipientId } = req.body;
     const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, content) VALUES (?, ?, ?)");
-    stmt.run(req.user.id, recipientId || null, content, function () {
-        res.json({ success: true });
+    stmt.run(req.user.id, recipientId || null, content, function (err) {
+        if (err) return res.status(500).json({ error: "Send failed" });
+        res.json({ success: true, id: this.lastID });
     });
     stmt.finalize();
 });

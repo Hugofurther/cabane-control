@@ -85,6 +85,20 @@ Logging
 √ The LogViewer isn't updating as fast as the switches on the interface. Is there a way to make it as responsive as the interface?
 
 √ Since the user settings is now accessible via the username button, we don't need the gear icon anymore.
+
+√ In the LogViewer, for the date, we are missing the "range" (from [date] to [date]
+
+√ In the AdminPanel, the system settings' layout is not configured properly. Also, clicking the Save configuration should dismiss the panel. 
+
+√ Is the Pi Server adjusting its clock to the internet time? -> Yes
+
+√ You did not respond to the "I changed the time zone, but the clock did not update.". Can we have a more extensive list of timezones. It must include "Montréal, QC (EST)", "Drummondville, QC (EST)" and "Sainte-Brigitte-des-Saults, QC (EST)"
+
+√ For the logviewer. I need a reset button to reset all filters. I also need the sort by timestamp Ascending or Descending button we used to have.
+
+√ Also, we should have a user settings for the clock to display 24hrs or 12hrs.
+
+√ Clicking outside a pop-up panel should dismiss the panel.
 -------------------------------------------------------
 -------------------------------------------------------
 
@@ -92,30 +106,12 @@ Requested
 
 
 
-- In the LogViewer, for the date, we are missing the "range" (from [date] to [date]
-
-- In the AdminPanel, the system settings' layout is not configured properly. Also, clicking the Save configuration should dismiss the panel. 
-
-- the clock is still not adapting to the saved timezone. Is it not saving? Or is the clock not reading the timezone it should be?
-
-- Is the Pi Server adjusting its clock to the internet time?
-
----
-
-
-
-
-
-
-
-- You did not respond to the "I changed the time zone, but the clock did not update.". Can we have a more extensive list of timezones. It must include "Montréal, QC (EST)", "Drummondville, QC (EST)" and "Sainte-Brigitte-des-Saults, QC (EST)"
-
 -------------------------------------------------------
 -------------------------------------------------------
 
-- For the logviewer. I need a reset button to reset all filters. I also need the sort by timestamp Ascending or Descending button we used to have.
 
-- Clicking outside a pop-up panel should dismiss the panel.
+
+- Display the disk usage in admin panel
 
 
 Can we fetch on the internet the temperature of a set location by the admin?
