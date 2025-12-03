@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, X, Volume2, BellOff, Smartphone, Clock } from 'lucide-react'; // Added Clock icon
+import { Settings, X, Volume2, BellOff, Smartphone, Clock, Thermometer } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import axios from 'axios';
 
@@ -109,6 +109,24 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                         onClick={() => handleSettingChange('clockFormat', '24h')}
                                         className={`px-3 py-1 rounded text-xs font-bold ${user.settings?.clockFormat !== '12h' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}
                                     >24h</button>
+                                </div>
+                            </div>
+
+                            {/* Temperature Unit */}
+                            <div className="flex justify-between items-center border-t border-gray-700 pt-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-full bg-orange-900/50 text-orange-400"><Thermometer size={20} /></div>
+                                    <div><div className="font-bold text-gray-200">Temperature</div></div>
+                                </div>
+                                <div className="flex bg-gray-900 rounded p-1 border border-gray-700">
+                                    <button
+                                        onClick={() => handleSettingChange('tempUnit', 'C')}
+                                        className={`px-3 py-1 rounded text-xs font-bold ${user.settings?.tempUnit !== 'F' ? 'bg-orange-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                                    >°C</button>
+                                    <button
+                                        onClick={() => handleSettingChange('tempUnit', 'F')}
+                                        className={`px-3 py-1 rounded text-xs font-bold ${user.settings?.tempUnit === 'F' ? 'bg-orange-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                                    >°F</button>
                                 </div>
                             </div>
 

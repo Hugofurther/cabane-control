@@ -10,6 +10,7 @@ const sqlite3 = require('sqlite3').verbose();
 const logicEngine = require('./services/logic_engine');
 const { authenticateToken, requireAdmin } = require('./middleware/auth');
 const { sendEmail } = require('./services/email_service');
+const { exec } = require('child_process');
 
 const db = new sqlite3.Database('./cabane.db');
 const PUBLIC_URL = process.env.PUBLIC_URL || 'http://192.168.1.200:3000';
@@ -23,6 +24,17 @@ const validatePassword = (pwd) => {
     if (!/[!@#$%^&*(),.?":{}|<>]/.test(pwd)) return "Password must contain a Special Character.";
     return null;
 };
+
+// GET SYSTEM STATUS (Disk Usage)
+router.get('/system/status', authenticateToken, requireAdmin, (req, res) => {
+    // Run 'df -h' on root, take last line, print 5th column (Use%)
+    exec("df -h / | tail -1 | awk '{print $5}'", (error, stdout, stderr) => {
+        if (error) {
+            return res.json({ diskUsage: "Unknown" });
+        }
+        res.json({ diskUsage: stdout.trim() });
+    });
+});
 
 // Helper to Log & Emit
 const logAction = (io, userId, username, type, message) => {

@@ -101,20 +101,30 @@ Logging
 √ Clicking outside a pop-up panel should dismiss the panel.
 
 √ Can we fetch on the internet the temperature of a set location by the admin?
+
+√ Can we add the option to display Celsius or Farenheight
+
+√ Display the Pi Server disk usage in admin panel
+
+√ With the clock, We can remove the seconds and the timezone please. We need to save space. Also, the 
+
+√ Any search input field should respond to the key "enter"
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
+- With the Clock display, Can we make the AM/PM small and closer to the time.
 
-- With the clock, We can remove the seconds and the timezone please. We need to save space. Also, the 
+- The reminder chirp is not working well anymore. Can you look into it? The first chirp should happen as soon as the buzzer switch is off and alarms stop. Let me know if you want to see my code.
 
-- Can we add the option to display Celsius or Farenheight
 
-- Display the Pi Server disk usage in admin panel
 
-- Any search input field should respond to the key "enter"
+
+
+
+
 -------------------------------------------------------
 -------------------------------------------------------
 
@@ -133,7 +143,6 @@ LAYOUT
 - ( after messaging )Can I have a dropdown list of which users are online.
 
 Debug
-- Reminder to turn alarm on.
 - Main Controller doesn't take control back when becoming online again after being offline.
 - Only when user has control the StationCards change color
 
