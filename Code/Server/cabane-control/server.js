@@ -4,50 +4,62 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const sqlite3 = require('sqlite3').verbose(); // For Cleanup Task
+
+// Services
 const udpService = require('./services/udp_service');
 const logicEngine = require('./services/logic_engine');
-const path = require('path');
+const apiRoutes = require('./routes'); // Import Routes ONCE
 
-// --- Configuration ---
+// Configuration
 const PORT = process.env.PORT || 3000;
 
-// --- Express App ---
+// Express App
 const app = express();
-const apiRoutes = require('./routes');
 app.use(cors());
 app.use(express.json());
 
-app.use('/api', apiRoutes);
-
-// --- SERVE FRONTEND (React App) ---
-// 1. Serve static files (js, css, images) from the 'public' folder
-app.use(express.static(path.join(__dirname, 'public')));
-
-// 2. Handle React Routing (SPA Fallback)
-// We use 'app.use' without a path to catch ALL remaining requests
-// that weren't handled by the API or Static files above.
-app.use((req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// --- HTTP Server & WebSockets ---
+// HTTP & WebSocket Server
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// --- Initialize Core Services ---
-// Pass the socket instance to the Logic Engine so it can push updates to UI
+// --- INITIALIZE SERVICES ---
+// 1. Start Logic Engine (needs IO to emit updates)
 logicEngine.init(io);
+
+// 2. Start UDP Service (needs Logic Engine to pass data)
 udpService.init(logicEngine);
 
-// --- Socket.io Connection Handler ---
+// --- MIDDLEWARE ---
+// Inject 'io' into every API request so routes can emit logs
+app.use((req, res, next) => {
+    req.io = io;
+    next();
+});
+
+// --- ROUTING ---
+// 1. API Routes
+app.use('/api', apiRoutes);
+
+// 2. Serve Static Frontend (React App)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 3. SPA Fallback (Handle React Routing)
+// Any request not caught by API or Static Files gets index.html
+app.use((req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// --- WEBSOCKETS ---
 io.on('connection', (socket) => {
     console.log(`[WS] Client Connected: ${socket.id}`);
 
-    // Send immediate state snapshot on connect
+    // Send immediate full state on connect
     socket.emit('STATE_FULL', logicEngine.getFullState());
 
     socket.on('disconnect', () => {
@@ -55,31 +67,19 @@ io.on('connection', (socket) => {
     });
 });
 
-// ============================================================
-// 🧹 AUTO-CLEANUP TASK
-// ============================================================
-const sqlite3 = require('sqlite3').verbose();
+// --- BACKGROUND TASKS ---
+// Auto-Cleanup: Delete unverified users older than 3 hours
 const cleanupDb = new sqlite3.Database('./cabane.db');
-
-// Run every 1 hour (3600000 ms)
 setInterval(() => {
-    console.log("[CLEANUP] Checking for expired unverified accounts...");
-
-    // Delete users who are 'UNVERIFIED' and created > 3 hours ago
-    // SQLite modifier: '-3 hours'
-    const sql = `DELETE FROM users 
-               WHERE status = 'UNVERIFIED' 
-               AND created_at < datetime('now', '-3 hours')`;
-
+    console.log("[CLEANUP] Checking for expired accounts...");
+    const sql = `DELETE FROM users WHERE status = 'UNVERIFIED' AND created_at < datetime('now', '-3 hours')`;
     cleanupDb.run(sql, function (err) {
         if (err) console.error("[CLEANUP] Error:", err);
-        else if (this.changes > 0) {
-            console.log(`[CLEANUP] Removed ${this.changes} expired registration(s).`);
-        }
+        else if (this.changes > 0) console.log(`[CLEANUP] Removed ${this.changes} expired users.`);
     });
-}, 3600000);
+}, 3600000); // Run every 1 hour
 
-// --- Start Server ---
+// --- START SERVER ---
 server.listen(PORT, () => {
     console.log(`\n=========================================`);
     console.log(`🌲 CABANE SERVER RUNNING ON PORT ${PORT}`);

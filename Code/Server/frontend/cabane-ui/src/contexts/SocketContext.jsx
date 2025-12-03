@@ -13,6 +13,7 @@ export const SocketProvider = ({ children }) => {
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
+    const [siteSettings, setSiteSettings] = useState({ timezone: 'UTC' });
 
     // System State
     const [systemState, setSystemState] = useState({
@@ -93,6 +94,28 @@ export const SocketProvider = ({ children }) => {
             console.error("Login error:", e);
             return false;
         }
+    };
+
+    // Load Site Settings on Mount (after auth check)
+    useEffect(() => {
+        if (token) {
+            axios.get(`${API_URL}/api/system/settings`, {
+                headers: { Authorization: `Bearer ${token}` }
+            }).then(res => {
+                if (res.data.timezone) setSiteSettings(res.data);
+            }).catch(console.error);
+        }
+    }, [token]);
+
+    // Helper to update settings
+    const updateSiteSettings = async (newSettings) => {
+        try {
+            await axios.post(`${API_URL}/api/system/settings`, newSettings, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setSiteSettings(prev => ({ ...prev, ...newSettings }));
+            return true;
+        } catch (e) { return false; }
     };
 
     const register = async (username, email, password) => {
@@ -184,7 +207,10 @@ export const SocketProvider = ({ children }) => {
             takeControl,
             releaseToServer,
             releaseToCabane,
-            toggleSwitch
+            toggleSwitch,
+            siteSettings,      // <--- Export this
+            updateSiteSettings // <--- Export this
+
         }}>
             {children}
         </SocketContext.Provider>

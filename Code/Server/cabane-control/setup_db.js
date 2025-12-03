@@ -49,7 +49,20 @@ db.serialize(() => {
   )`);
   console.log("✔ Messages Table Ready");
 
-  // 4. Create Default Admin Account
+  // 4. SYSTEM SETTINGS Table (New)
+  // Key: 'timezone', Value: 'America/New_York'
+  db.run(`CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  )`);
+
+  // Insert Default Timezone if missing
+  db.run("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('timezone', 'UTC')");
+
+  console.log("✔ Settings Table Ready");
+
+
+  // 5. Create Default Admin Account
   const adminName = 'admin';
   const adminPass = 'cabane'; // Change immediately after login
   const adminEmail = process.env.ADMIN_EMAIL || 'hugofurther@gmail.com';

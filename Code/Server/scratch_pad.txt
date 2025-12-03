@@ -56,35 +56,92 @@ Logging
 
 √ Admin can grant a user to be able to take control or not.
 
+√ Changes in the switching should be logged on the server with the controlling user / device
+
+√ Grant or deny user access to logs.
+
+√ Add a clock
+
+√ We should have the user of the logged in account displayed somewhere.
+
+√ Give a way to search and sort the logs
+
+√ Allow export logs to expert .csv
+
+√ Search logs should be more like a filter for each column. If you click on filter button an input field appears above each column to insert a filter condition (e.g. > 12/3/25 (calendar or input field )| System ( dropbox menu ) | Type Dropbox
+
+√ I feel like the username should be placed between the "Take Control" button and the "logout" button.
+
+√ The Clock should be bigger.
+
+√ Can we have the log window updating live?
+
+√ In admin panel, add a way to set the time zone.
+
+√ The user settings should be accessible by clicking on the username just left of the logout instead of the gear icon.
+
+√ in the LogViewer, for the date, can we add the option to select a specific date / range of dates / later or earlier than a specific date.
+
+√ The LogViewer isn't updating as fast as the switches on the interface. Is there a way to make it as responsive as the interface?
+
+√ Since the user settings is now accessible via the username button, we don't need the gear icon anymore.
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
-- Changes in the switching should be logged on the server with the controlling user / device
 
-- Grant or deny user access to logs.
+- In the LogViewer, for the date, we are missing the "range" (from [date] to [date]
+
+- In the AdminPanel, the system settings' layout is not configured properly. Also, clicking the Save configuration should dismiss the panel. 
+
+- the clock is still not adapting to the saved timezone. Is it not saving? Or is the clock not reading the timezone it should be?
+
+- Is the Pi Server adjusting its clock to the internet time?
+
+---
 
 
 
+
+
+
+
+- You did not respond to the "I changed the time zone, but the clock did not update.". Can we have a more extensive list of timezones. It must include "Montréal, QC (EST)", "Drummondville, QC (EST)" and "Sainte-Brigitte-des-Saults, QC (EST)"
 
 -------------------------------------------------------
 -------------------------------------------------------
+
+- For the logviewer. I need a reset button to reset all filters. I also need the sort by timestamp Ascending or Descending button we used to have.
+
+- Clicking outside a pop-up panel should dismiss the panel.
+
+
+Can we fetch on the internet the temperature of a set location by the admin?
+
+
+LAYOUT
+
+- Can we have the buttons and font to resize smaller before the switches get displayed differently
+
+- ( after messaging )Can I have a dropdown list of which users are online.
 
 Debug
 - Reminder to turn alarm on.
 - Main Controller doesn't take control back when becoming online again after being offline.
-- Only when user has control the StationCards change color.
+- Only when user has control the StationCards change color
+
+- Main Controller cannot take control back when pressing 2 buttons
+- Main Controller can Only takes control when the control is release to cabane from the app.
 
 http://192.168.1.200:3000/
 
 
-- Give a way to search the logs and to expert .csv
+- When a app user takes control, only that user should be able to control, not the other users that are logged in.
 
-- Add a clock
 
-- Give time based on (EST) Montreal time
+
 
 - To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
 
@@ -97,7 +154,7 @@ http://192.168.1.200:3000/
 
 
 
-- We should have the user of the logged in account displayed somewhere.
+
 
 - Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
 
