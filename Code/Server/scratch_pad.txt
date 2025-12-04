@@ -168,12 +168,14 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ In the Group chat window, there should be a truncated list of the members below the name of the group. When clicking on the truncated list, it expands fully.
 
+√ I notices when a user takes control, another user cannot control the switches which is great, but the StationCard background becomes light colored like if it had control. Can we keep it dark if the user doesn't have control? The only time the StationCard gets the light background is when the current user has control.
+
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
-- I notices when a user takes control, another user cannot control the switches which is great, but the StationCard background becomes light colored like if it had control. Can we keep it dark if the user doesn't have control? The only time the StationCard gets the light background is when the current user has control.
+
 
 
 
@@ -197,9 +199,10 @@ MESSAGIN
 
 - A user should have the option to remove themselves from a group. When the group is empty, the group gets deleted, but the messages remain.
 
-- A user should have the option to delete a sent message.
+- A user should have the option to delete a message they sent. Not other users messages.
 
 - Is the date displayed with the time of a message when more than one day? If yesterday, mark yesterday otherwise the date.
+- The date should be displayed with he timestamp of the message if it's 
 
 - Clicking on an "Urgent Message" dismisses it's urgency and the message return to a normal color.
 
