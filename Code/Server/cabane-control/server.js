@@ -55,15 +55,35 @@ app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// --- ONLINE USER TRACKING ---
+const onlineUsers = new Map(); // Maps socket.id -> username
+
 // --- WEBSOCKETS ---
 io.on('connection', (socket) => {
     console.log(`[WS] Client Connected: ${socket.id}`);
 
-    // Send immediate full state on connect
+    // Send immediate full state
     socket.emit('STATE_FULL', logicEngine.getFullState());
+    // Send current online list immediately
+    socket.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
 
+    // 1. Handle User Identification
+    socket.on('IDENTIFY', (username) => {
+        if (username) {
+            onlineUsers.set(socket.id, username);
+            // Broadcast updated list to EVERYONE
+            io.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
+        }
+    });
+
+    // 2. Handle Disconnect
     socket.on('disconnect', () => {
         console.log(`[WS] Client Disconnected: ${socket.id}`);
+        if (onlineUsers.has(socket.id)) {
+            onlineUsers.delete(socket.id);
+            // Broadcast updated list
+            io.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
+        }
     });
 });
 

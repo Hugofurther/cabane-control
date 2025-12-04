@@ -156,6 +156,14 @@ router.get('/auth/me', authenticateToken, (req, res) => {
     });
 });
 
+// GET /api/users/directory (Visible to all logged-in users)
+router.get('/users/directory', authenticateToken, (req, res) => {
+    db.all("SELECT id, username, role, status, created_at FROM users WHERE status = 'ACTIVE'", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.json(rows);
+    });
+});
+
 // ============================================================
 // ⚙️ SYSTEM & USER SETTINGS
 // ============================================================
@@ -342,19 +350,62 @@ router.get('/logs', authenticateToken, (req, res) => {
 });
 
 router.get('/messages', authenticateToken, (req, res) => {
-    const sql = `SELECT m.*, u.username as sender FROM messages m JOIN users u ON m.sender_id = u.id 
-               WHERE m.recipient_id IS NULL OR m.recipient_id = ? OR m.sender_id = ? ORDER BY m.timestamp DESC LIMIT 50`;
+    const sql = `
+    SELECT m.id, m.content, m.timestamp, m.priority, m.is_read, m.recipient_id, u.username as sender, m.sender_id 
+    FROM messages m 
+    JOIN users u ON m.sender_id = u.id
+    WHERE m.recipient_id IS NULL OR m.recipient_id = ? OR m.sender_id = ?
+    ORDER BY m.timestamp DESC LIMIT 50
+  `;
     db.all(sql, [req.user.id, req.user.id], (err, rows) => res.json(rows.reverse()));
 });
 
+// POST /api/messages
 router.post('/messages', authenticateToken, (req, res) => {
-    const { content, recipientId } = req.body;
-    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, content) VALUES (?, ?, ?)");
-    stmt.run(req.user.id, recipientId || null, content, function (err) {
+    const { content, recipientId, priority } = req.body; // Added priority
+
+    const finalPriority = priority === 'URGENT' ? 'URGENT' : 'NORMAL';
+    // If recipient is self, it's a Note, implies Read? No, keep unread so it acts as reminder.
+
+    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, content, priority) VALUES (?, ?, ?, ?)");
+    stmt.run(req.user.id, recipientId || null, content, finalPriority, function (err) {
         if (err) return res.status(500).json({ error: "Send failed" });
+
+        // Emit Socket Event
+        if (req.io) {
+            req.io.emit('NEW_MESSAGE', {
+                id: this.lastID,
+                timestamp: new Date().toISOString(),
+                sender_id: req.user.id,
+                sender: req.user.username,
+                recipient_id: recipientId,
+                content,
+                priority: finalPriority,
+                is_read: 0
+            });
+        }
+
         res.json({ success: true, id: this.lastID });
     });
     stmt.finalize();
+});
+
+// MARK MESSAGES READ
+router.post('/messages/read', authenticateToken, (req, res) => {
+    const { messageIds } = req.body; // Array of IDs
+    if (!messageIds || messageIds.length === 0) return res.json({ success: true });
+
+    // Securely construct placeholders
+    const placeholders = messageIds.map(() => '?').join(',');
+    const sql = `UPDATE messages SET is_read = 1 WHERE id IN (${placeholders}) AND (recipient_id = ? OR recipient_id IS NULL)`;
+
+    // Append User ID to the params list for security (can only mark own messages read)
+    const params = [...messageIds, req.user.id];
+
+    db.run(sql, params, (err) => {
+        if (err) return res.status(500).json({ error: "Update failed" });
+        res.json({ success: true });
+    });
 });
 
 module.exports = router;

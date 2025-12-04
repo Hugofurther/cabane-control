@@ -142,6 +142,19 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ Can we have in the setting the enabling/disabling of stations, like the Main Controller has?
 
 √ Can we make the weather component update every minute? Or have a setting to set the update frequency?
+
+√ Let's add Wind Speed and Precipitation to the weather component.
+
+√ Let's implement the messaging system
+	- Messages should pop-up on the screen in a Message Panel.
+	- User setting
+		- dismiss messages after x minutes
+
+√ Clicking outside of the Chat Panel should dismiss it.
+
+√ We should assign different colors for each of the users to differenciate them.
+
+√ Where could we put the list of users indicating which ones are online and the one offline.
 -------------------------------------------------------
 -------------------------------------------------------
 
@@ -149,8 +162,23 @@ Requested
 
 
 
+
+
+- The current user's messages should be displayed aligned to the right and others should be aligned the left as they are. 
+
+
+
 -------------------------------------------------------
 -------------------------------------------------------
+
+MESSAGIN
+
+- When a user opens the chats, display starting at the first message unread. This means we need to keep track of the messages that were read.
+
+
+WEATHER
+
+- when clicking on the Weather a weather panel shows up with the forecast
 
 
 
@@ -164,11 +192,11 @@ LAYOUT
 - ( after messaging )Can I have a dropdown list of which users are online.
 
 
-- To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
+
 
 
 ARDUINO
-
+- 
 - Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
 - Add Clement alarm. Input from either ST2 or ST3 -> Output to St0
 
@@ -182,6 +210,8 @@ IOS
 ------------------------------------------------------------
 
 Can we make the app bi-langual ( French / English )
+
+- Get an complete and updated "setup_db.js" file with all additions to the database.
 
 - Can you give me a guide to fix a "Subnet Mismatch" if I do get that when I move to the another location.
 

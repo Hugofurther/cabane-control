@@ -13,6 +13,9 @@ export const Weather = () => {
 
     // 1. Parse Locations
     const locations = React.useMemo(() => {
+        // SAFETY CHECK: If siteSettings is null/undefined, return empty
+        if (!siteSettings) return [];
+
         if (siteSettings.weather_locations) {
             try { return JSON.parse(siteSettings.weather_locations); } catch (e) { return []; }
         }
@@ -22,9 +25,8 @@ export const Weather = () => {
         return [];
     }, [siteSettings]);
 
-    const rotIntervalMs = (parseInt(siteSettings.weather_rotation_interval) || 10) * 1000;
-    const updateIntervalMs = (parseInt(siteSettings.weather_update_interval) || 15) * 60 * 1000;
-
+    const rotIntervalMs = (parseInt(siteSettings?.weather_rotation_interval) || 10) * 1000;
+    const updateIntervalMs = (parseInt(siteSettings?.weather_update_interval) || 15) * 60 * 1000;
     const currentLoc = locations[locIndex];
 
     // 2. Rotation Logic
