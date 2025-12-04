@@ -133,21 +133,21 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ When a user has control and releases control to the Main Controller, If the Main Controller is offline, the control should automatically go to the Server. Right now, the control is released to the Main Controller even if it is not online.
 
 √ There should be an option in the user settings to display the status of the Main Controller on the main page.
+
+
+√ for the Weather component:
+	- Does it update the temperature automatically?
+	- Can we have one location or a rotation of multiple locations?
+
+√ Can we have in the setting the enabling/disabling of stations, like the Main Controller has?
+
+√ Can we make the weather component update every minute? Or have a setting to set the update frequency?
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
-- for the Weather component:
-	- Does it update the temperature automatically?
-	- Can we have one location or a rotation of multiple locations?
-
-- Can we have in the setting the enabling/disabling of stations, like the Main Controller has?
-
----
-
-- Can we make the weather component update every minute? Or have a setting to set the update frequency?
 
 -------------------------------------------------------
 -------------------------------------------------------
