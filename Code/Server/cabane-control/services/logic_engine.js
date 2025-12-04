@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - v14 RECONNECTION FIX
+// 🧠 LOGIC ENGINE - v19 STABILITY FIX (Crash Resolved)
 // ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
@@ -29,7 +29,10 @@ let lastChirpTime = 0;
 let alarmCycleStart = 0;
 let prevSirenCondition = false;
 let prevChirpCondition = false;
+
+// ✅ DEFINED VARIABLES (Fixing the crash)
 let overrideAssertCounter = 0;
+let isForcingRelease = false;
 let ioRef = null;
 
 // --- CONFIGURATION ---
@@ -86,20 +89,26 @@ function updateTimezone(newTz) { state.timezone = newTz; pushUpdate(); }
 
 function updatePhysicalState(switchBytes, isOverrideActive) {
 
-    // ✅ FIX: Detect Main Controller Reconnection
+    // 1. RECONNECTION DETECTION (Absolute Priority)
+    // If the Main Controller was offline and just came back, we force a release.
     if (!state.mainControllerOnline) {
         console.log("[NET] Main Controller Detected Online.");
+        logSystemEvent('SYSTEM', "Main Controller Reconnected.");
         state.mainControllerOnline = true;
 
-        // If Pi was driving (USER/SERVER), surrender immediately.
+        // If Pi was driving, trigger the Force Release Sequence
         if (state.controller !== 'CABANE') {
-            console.log("[SYNC] Main Controller Reconnected. Yielding Control.");
+            console.log("[SYNC] Main Reconnected. Starting Force Release.");
 
-            // We force release logic but skip the network command if isOverrideActive is FALSE
-            // (because Main is already released).
-            // If isOverrideActive is TRUE (Main didn't reboot, just disconnected), 
-            // we send Release(0) to be sure it resets.
-            releaseToCabane();
+            state.controller = 'CABANE';
+            state.currentUser = null;
+            lastReleaseTime = Date.now();
+            controlHandshakeConfirmed = false;
+
+            isForcingRelease = true; // Start the hammer
+            udpService.sendOverrideCommand(0);
+            pushUpdate();
+            return;
         }
     }
 
@@ -111,32 +120,45 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
 
-    // SYNC LOGIC
+    // 2. FORCE RELEASE LOGIC
+    if (isForcingRelease) {
+        if (isOverrideActive) {
+            // Main hasn't heard us yet. Resend.
+            // console.log("[SYNC] ... Retrying Release Command");
+            udpService.sendOverrideCommand(0);
+        } else {
+            // Success. Main is back in charge.
+            console.log("[SYNC] Main Controller Release Confirmed.");
+            isForcingRelease = false;
+        }
+        return; // Stop processing standard sync
+    }
+
+    // 3. STANDARD SYNC LOGIC
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
 
-        // If Main reports it IS overridden (e.g. Pi crashed/rebooted while Main stayed active),
-        // we sync up to SERVER mode so we can take over or release.
+        // Headless Recovery: If Main reports Override and we aren't forcing release -> Sync to Server
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
-            console.log("[SYNC] Main is in Override. Pi assuming SERVER Control.");
+            console.log("[SYNC] Main in Override. Pi assuming SERVER.");
             state.controller = 'SERVER';
             state.currentUser = null;
             controlHandshakeConfirmed = true;
         }
     }
     else {
-        // Pi thinks it is driving
+        // Pi Driving
         if (isOverrideActive) {
             controlHandshakeConfirmed = true;
         }
         else {
-            // Main says "I am NOT overridden"
+            // Main says "Not Overridden"
             if (!controlHandshakeConfirmed) {
-                // Case A: Handshake start, packet lost. Retry.
+                // Handshake Retry
                 udpService.sendOverrideCommand(1);
             }
             else {
-                // Case B: We HAD control, Main cancelled it (Buttons 0+1).
+                // Main asserted Manual Control (Emergency Buttons)
                 console.log("[SYNC] Main Controller forced Manual Mode.");
                 state.controller = 'CABANE';
                 state.currentUser = null;
@@ -164,7 +186,6 @@ function takeControl(username) {
     state.currentUser = username;
     lastControlTakeTime = Date.now();
     controlHandshakeConfirmed = false;
-
     udpService.sendOverrideCommand(1);
     console.log(`[CONTROL] Taken by ${username}`);
     pushUpdate();
@@ -185,7 +206,10 @@ function releaseToCabane() {
     lastReleaseTime = Date.now();
     controlHandshakeConfirmed = false;
 
+    // Trigger aggressive release
+    isForcingRelease = true;
     udpService.sendOverrideCommand(0);
+
     console.log(`[CONTROL] Released to CABANE`);
     pushUpdate();
 }
@@ -277,7 +301,6 @@ function controlLoop() {
         for (let i = 0; i < 24; i++) if (state.virtualSwitches[i]) virtualBytes[Math.floor(i / 8)] |= (1 << (i % 8));
         udpService.sendRemoteData(virtualBytes);
 
-        // Gentle Retry for Handshake
         if (!controlHandshakeConfirmed) {
             overrideAssertCounter++;
             if (overrideAssertCounter >= 5) {
@@ -293,6 +316,7 @@ function checkHeartbeats() {
     if (state.mainControllerOnline && (now - state.lastMainHeartbeat > 5000)) {
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
         state.mainControllerOnline = false;
+        // Headless take-over logic
         if (state.controller === 'CABANE') takeControl('SYSTEM_FAILSAFE');
         pushUpdate();
     }

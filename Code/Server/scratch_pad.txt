@@ -134,7 +134,7 @@ Requested
 
 
 
-
+- When the Main Controller becomes online again, it should regain control automatically disregard of who has control at the moment or who had control when the Main Controller lost control.
 
 
 
@@ -142,6 +142,14 @@ Requested
 
 
 -------------------------------------------------------
+-------------------------------------------------------
+
+√ Main controller control -> disconnect -> reconnects before Server Failsafe
+
+√ Main controller control -> disconnect -> reconnects After Server Failsafe
+
+- Main controller Slave -> disconnect -> reconnects After Server Failsafe
+
 -------------------------------------------------------
 
 
@@ -158,24 +166,8 @@ LAYOUT
 
 - ( after messaging )Can I have a dropdown list of which users are online.
 
-Debug
-- Main Controller doesn't take control back when becoming online again after being offline.
-
-
-
-
-http://192.168.1.200:3000/
-
-
-- When a app user takes control, only that user should be able to control, not the other users that are logged in.
-
-
-
 
 - To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
-
-- A user without control access should have the "Take Control" button greyed out or hidden.
-
 
 
 - If Cabane is offline and trying to release control to cabane, control goes to Server.
