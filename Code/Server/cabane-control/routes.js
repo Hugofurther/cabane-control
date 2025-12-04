@@ -18,6 +18,9 @@ const PUBLIC_URL = process.env.PUBLIC_URL || 'http://192.168.1.200:3000';
 // --- HELPERS ---
 const normalize = (str) => str ? str.trim().toLowerCase() : '';
 
+const weatherService = require('./services/weather_service'); // <--- Import
+
+
 const validatePassword = (pwd) => {
     if (pwd.length < 8) return "Password must be at least 8 characters.";
     if (!/[A-Z]/.test(pwd)) return "Password must contain an Uppercase letter.";
@@ -204,6 +207,11 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                     if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
                     if (settings.timezone) logicEngine.updateTimezone(settings.timezone);
 
+                    // Check if weather settings changed
+                    if (settings.weather_locations || settings.weather_update_interval) {
+                        weatherService.reloadSettings(); // <--- Trigger Reload
+                    }
+
                     res.json({ success: true });
                 }
             }
@@ -349,23 +357,23 @@ router.get('/logs', authenticateToken, (req, res) => {
     });
 });
 
-// GET MESSAGES (Context Aware + Per-User Read Status)
+// GET MESSAGES (Context + Read Status + Urgency Ack)
 router.get('/messages', authenticateToken, (req, res) => {
     const { type, targetId } = req.query;
     const userId = req.user.id;
 
-    // SQL: Join with message_reads to see if THIS user has read the message
-    // We return '1' as is_read_by_me if a record exists, else '0'
     let sql = `
     SELECT m.*, u.username as sender,
-    CASE WHEN mr.read_at IS NOT NULL THEN 1 ELSE 0 END as is_read_by_me
+    CASE WHEN mr.read_at IS NOT NULL THEN 1 ELSE 0 END as is_read_by_me,
+    CASE WHEN mua.ack_at IS NOT NULL THEN 1 ELSE 0 END as is_ack_by_me
     FROM messages m 
     JOIN users u ON m.sender_id = u.id 
     LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = ?
+    LEFT JOIN message_urgency_acks mua ON m.id = mua.message_id AND mua.user_id = ?
     WHERE 
   `;
 
-    let params = [userId]; // First param is for the LEFT JOIN
+    let params = [userId, userId]; // Params for the two JOINS
 
     if (type === 'GLOBAL') {
         sql += `m.recipient_id IS NULL AND m.group_id IS NULL`;
@@ -421,7 +429,8 @@ router.post('/messages', authenticateToken, (req, res) => {
                 group_id: gId,
                 content,
                 priority,
-                is_read_by_me: 0
+                is_read_by_me: 0,
+                is_ack_by_me: 0
             });
         }
         res.json({ success: true, id: this.lastID });
@@ -557,17 +566,21 @@ router.post('/messages/delete', authenticateToken, (req, res) => {
     });
 });
 
-// DOWNGRADE URGENCY
+// ACKNOWLEDGE URGENCY (Per User)
 router.post('/messages/downgrade', authenticateToken, (req, res) => {
     const { messageId } = req.body;
 
-    db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [messageId], (err) => {
-        if (err) return res.status(500).json({ error: "Update failed" });
+    // Insert into Acknowledgment table
+    db.run("INSERT OR IGNORE INTO message_urgency_acks (message_id, user_id) VALUES (?, ?)",
+        [messageId, req.user.id],
+        (err) => {
+            if (err) return res.status(500).json({ error: "Update failed" });
 
-        // Emit update event
-        if (req.io) req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
-        res.json({ success: true });
-    });
+            // Note: We do NOT emit a socket event here because this is a private action.
+            // Only the user who clicked it should see the color change.
+            res.json({ success: true });
+        }
+    );
 });
 
 module.exports = router;

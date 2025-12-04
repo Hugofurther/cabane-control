@@ -176,14 +176,20 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ A user should have the option to remove themselves from a group. When the group is empty, the group gets deleted, but the messages remain.
 
+√ I'm still getting stubborn badges that should not be present on the message icon on the main page. Could it be due to some elements that should be flushed?
+
+√ Clicking on an "Urgent Message" dismisses it's urgency and the message return to a normal color.
+
+√ Set weather to update once per update frequency to avoid 429 (too many requests)
+
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
-- I'm still getting stubborn badges that should not be present on the message icon on the main page. Could it be due to some elements that should be flushed?
 
-- Clicking on an "Urgent Message" dismisses it's urgency and the message return to a normal color.
+
+
 
 
 -------------------------------------------------------

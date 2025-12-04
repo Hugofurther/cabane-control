@@ -86,7 +86,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const markReadIds = async (ids) => {
         if (ids.length === 0) return;
         const token = localStorage.getItem('cabane_token');
-        // Optimistic Update
         setMessages(prev => prev.map(m => ids.includes(m.id) ? { ...m, is_read_by_me: 1 } : m));
         try {
             await axios.post(`${API_URL}/api/messages/read`, { messageIds: ids }, { headers: { Authorization: `Bearer ${token}` } });
@@ -95,7 +94,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     const handleAutoMarkRead = () => {
         if (!user || !isOpen) return;
-        // Find messages in CURRENT view that are unread
         const unreadIds = messages.filter(m => {
             if (m.is_read_by_me || String(m.sender_id) === String(user.id)) return false;
 
@@ -112,17 +110,15 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         markReadIds(unreadIds);
     };
 
-    // --- FLUSH BUTTON (Fix Stuck Badges) ---
     const handleMarkAllRead = () => {
         if (!user) return;
-        // Mark EVERYTHING loaded as read (except my own)
         const allUnreadIds = messages
             .filter(m => !m.is_read_by_me && String(m.sender_id) !== String(user.id))
             .map(m => m.id);
         markReadIds(allUnreadIds);
     };
 
-    // --- SOCKETS ---
+    // --- POLLING & SOCKETS ---
     useEffect(() => {
         if (isOpen) fetchData();
         const interval = setInterval(fetchData, 4000);
@@ -134,26 +130,25 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         const handleNew = (msg) => {
             setMessages(prev => {
                 if (prev.some(p => p.id === msg.id)) return prev;
-                // New messages are unread by default
-                return [...prev, { ...msg, is_read_by_me: 0 }];
+                // Default ack is false for incoming
+                return [...prev, { ...msg, is_read_by_me: 0, is_ack_by_me: 0 }];
             });
-            if (isOpen) setTimeout(handleAutoMarkRead, 500); // Small delay to allow render
+            if (isOpen) setTimeout(handleAutoMarkRead, 500);
         };
 
         const handleDelete = ({ id }) => setMessages(prev => prev.filter(m => m.id !== id));
-        const handleUpdate = ({ id, priority }) => setMessages(prev => prev.map(m => m.id === id ? { ...m, priority } : m));
+
+        // We removed global 'UPDATE_MESSAGE' listener because acknowledgments are now private/local only.
 
         socket.on('NEW_MESSAGE', handleNew);
         socket.on('DELETE_MESSAGE', handleDelete);
-        socket.on('UPDATE_MESSAGE', handleUpdate);
         return () => {
             socket.off('NEW_MESSAGE', handleNew);
             socket.off('DELETE_MESSAGE', handleDelete);
-            socket.off('UPDATE_MESSAGE', handleUpdate);
         };
     }, [socket, isOpen, activeTab, selectedTarget]);
 
-    // Trigger auto-read when view changes
+    // Trigger auto-read
     useEffect(() => {
         if (isOpen) {
             handleAutoMarkRead();
@@ -186,7 +181,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         return { counts, dmCounts, groupCounts };
     }, [messages, user]);
 
-    // Sync to Parent
     useEffect(() => {
         if (onUnreadChange) onUnreadChange(badges.counts.total, badges.counts.notes);
     }, [badges.counts.total, badges.counts.notes]);
@@ -197,6 +191,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         e.preventDefault();
         if (!input.trim()) return;
         const token = localStorage.getItem('cabane_token');
+
         const payload = { content: input, priority: isUrgent ? 'URGENT' : 'NORMAL' };
         if (activeTab === 'NOTES') payload.recipientId = user.id;
         if (activeTab === 'USERS' && selectedTarget) payload.recipientId = selectedTarget.id;
@@ -213,8 +208,10 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             priority: payload.priority,
             timestamp: new Date().toISOString(),
             is_read_by_me: 0,
+            is_ack_by_me: 0, // Default not acked
             isOptimistic: true
         };
+
         setMessages(prev => [...prev, optimisticMsg]);
         setInput(''); setIsUrgent(false);
 
@@ -227,8 +224,25 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         }
     };
 
-    const handleCreateGroup = async () => { /* ... same as before ... */ };
-    const handleLeaveGroup = async () => { /* ... same as before ... */ };
+    const handleCreateGroup = async () => {
+        if (!newGroupName) return;
+        const token = localStorage.getItem('cabane_token');
+        try {
+            await axios.post(`${API_URL}/api/groups`, { name: newGroupName, memberIds: newGroupMembers }, { headers: { Authorization: `Bearer ${token}` } });
+            setNewGroupName(''); setNewGroupMembers([]); setIsCreatingGroup(false);
+            fetchData();
+        } catch (e) { alert("Failed to create group"); }
+    };
+
+    const handleLeaveGroup = async () => {
+        if (!selectedTarget || activeTab !== 'GROUPS') return;
+        if (!confirm(`Leave group "${selectedTarget.name}"?`)) return;
+        const token = localStorage.getItem('cabane_token');
+        try {
+            await axios.post(`${API_URL}/api/groups/leave`, { groupId: selectedTarget.id }, { headers: { Authorization: `Bearer ${token}` } });
+            setSelectedTarget(null); fetchData();
+        } catch (e) { alert("Failed to leave group"); }
+    };
 
     const handleDeleteMessage = async (id) => {
         if (!confirm("Delete this message?")) return;
@@ -239,13 +253,16 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     const handleDowngradeUrgency = async (id) => {
         const token = localStorage.getItem('cabane_token');
+
+        // Optimistic update: Mark as ACKED by ME (change color locally instantly)
+        setMessages(prev => prev.map(m => m.id === id ? { ...m, is_ack_by_me: 1 } : m));
+
         try { await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); }
-        catch (e) { }
+        catch (e) { console.error("Ack failed"); }
     };
 
     // --- RENDER CHAT ---
 
-    // Filter Logic
     const currentMessages = messages.filter(m => {
         if (activeTab === 'GLOBAL') return !m.recipient_id && !m.group_id;
         if (activeTab === 'NOTES') return String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(user.id);
@@ -263,7 +280,10 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             {currentMessages.length === 0 && <div className="text-center text-gray-500 text-xs italic mt-4">No messages yet.</div>}
             {currentMessages.map(msg => {
                 const isMe = user && (String(msg.sender_id) === String(user.id));
-                const isUrgentMsg = msg.priority === 'URGENT';
+
+                // ✅ URGENT LOGIC: Only Urgent if PRIORITY=URGENT AND I haven't acked it yet
+                const isUrgentActive = msg.priority === 'URGENT' && !msg.is_ack_by_me;
+
                 const userColorClass = getUserColor(msg.sender);
 
                 return (
@@ -271,16 +291,19 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                         {!isMe && activeTab !== 'NOTES' && <span className="text-[10px] text-gray-500 ml-1 mb-0.5">{msg.sender}</span>}
 
                         <div
-                            onClick={() => isUrgentMsg && handleDowngradeUrgency(msg.id)}
+                            // Only allow clicking to dismiss if it is currently active urgent
+                            onClick={() => isUrgentActive && handleDowngradeUrgency(msg.id)}
                             className={clsx(
                                 "max-w-[85%] p-3 rounded-lg text-sm border shadow-sm relative break-words transition-all",
-                                isUrgentMsg && "cursor-pointer hover:scale-[1.02]",
-                                isMe && !isUrgentMsg && "bg-blue-600 border-blue-500 text-white rounded-br-none text-right",
-                                !isMe && !isUrgentMsg && clsx("rounded-bl-none border-l-4 text-gray-200 bg-gray-800", userColorClass),
-                                isUrgentMsg && "bg-red-900/80 border-red-500 text-white animate-pulse",
+                                isUrgentActive && "cursor-pointer hover:scale-[1.02]",
+
+                                isMe && !isUrgentActive && "bg-blue-600 border-blue-500 text-white rounded-br-none text-right",
+                                !isMe && !isUrgentActive && clsx("rounded-bl-none border-l-4 text-gray-200 bg-gray-800", userColorClass),
+
+                                isUrgentActive && "bg-red-900/80 border-red-500 text-white animate-pulse",
                                 msg.isOptimistic && "opacity-70"
                             )}>
-                            {isUrgentMsg && <div className="flex items-center gap-1 text-[10px] font-bold text-red-300 mb-1"><AlertTriangle size={10} /> URGENT (Tap to Ack)</div>}
+                            {isUrgentActive && <div className="flex items-center gap-1 text-[10px] font-bold text-red-300 mb-1"><AlertTriangle size={10} /> URGENT (Tap to Ack)</div>}
                             {msg.content}
                             {msg.isOptimistic && <span className="absolute bottom-1 right-1 text-[8px] text-gray-300"><Clock size={8} /></span>}
                         </div>
@@ -307,7 +330,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 {/* HEADER */}
                 <div className="p-4 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
                     <div className="flex gap-2">
-                        {/* TABS ... */}
                         {['GLOBAL', 'USERS', 'GROUPS', 'NOTES'].map(t => (
                             <button key={t} onClick={() => { setActiveTab(t); setSelectedTarget(null); setIsCreatingGroup(false); setSearchQuery(''); setIsHeaderExpanded(false); }}
                                 className={clsx("px-2 py-1 rounded text-[10px] font-bold uppercase transition-colors relative", activeTab === t ? "bg-gray-700 text-blue-400 border border-blue-500/50" : "text-gray-500 hover:text-white")}>
@@ -317,20 +339,27 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                         ))}
                     </div>
                     <div className="flex gap-2">
-                        {/* MARK ALL READ BUTTON */}
                         <button onClick={handleMarkAllRead} className="text-gray-500 hover:text-green-400" title="Mark All Read"><CheckCheck size={18} /></button>
                         <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button>
                     </div>
                 </div>
 
-                {/* SUB-HEADER & CONTENT (Keep existing logic for Directories/Chat) */}
+                {/* SUB-HEADER */}
                 {selectedTarget && (
-                    <div className="bg-gray-800 border-b border-gray-700 p-3 flex items-start gap-2 cursor-pointer hover:bg-gray-750 transition-colors" onClick={() => activeTab === 'GROUPS' ? setIsHeaderExpanded(!isHeaderExpanded) : null}>
+                    <div className="bg-gray-800 border-b border-gray-700 p-3 flex items-start gap-2 cursor-pointer hover:bg-gray-750 transition-colors"
+                        onClick={() => activeTab === 'GROUPS' ? setIsHeaderExpanded(!isHeaderExpanded) : null}>
                         <button onClick={(e) => { e.stopPropagation(); setSelectedTarget(null); }} className="mt-0.5"><ArrowLeft size={18} className="text-gray-400 hover:text-white" /></button>
                         <div className="flex-grow overflow-hidden">
                             <div className="font-bold text-sm text-white flex justify-between items-center">
                                 <span>{selectedTarget.username || selectedTarget.name}</span>
-                                {activeTab === 'GROUPS' && (isHeaderExpanded ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />)}
+                                {activeTab === 'GROUPS' && (
+                                    <div className="flex items-center gap-2">
+                                        <button onClick={(e) => { e.stopPropagation(); handleLeaveGroup(); }} className="text-[10px] text-red-400 border border-red-900/50 px-1.5 py-0.5 rounded hover:bg-red-900/30 flex items-center gap-1">
+                                            <LogOut size={10} /> Leave
+                                        </button>
+                                        {isHeaderExpanded ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
+                                    </div>
+                                )}
                             </div>
                             {activeTab === 'GROUPS' && selectedTarget.members && (
                                 <div className={clsx("text-xs text-gray-400 mt-1 transition-all duration-300", isHeaderExpanded ? "whitespace-normal" : "truncate")}>
@@ -341,31 +370,32 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     </div>
                 )}
 
-                {/* BODY */}
+                {/* CONTENT AREA */}
                 <div className="flex-grow flex flex-col overflow-hidden">
                     {((activeTab === 'GLOBAL' || activeTab === 'NOTES') || selectedTarget) && !isCreatingGroup && renderChat()}
-                    {/* ... (Keep Directory / New Group Logic from previous file, it was correct) ... */}
-
-                    {/* Note: For brevity, I am assuming you keep the Directory logic. 
-               If you need the Full File with Directory logic included again, ask. 
-               I just replaced the top section and renderChat here. */}
 
                     {!selectedTarget && (activeTab === 'USERS' || activeTab === 'GROUPS') && (
                         isCreatingGroup ? (
-                            // ... New Group Form ...
                             <div className="p-4 space-y-4 bg-cabane-dark h-full">
-                                {/* Same as before */}
+                                <div className="flex items-center gap-2 mb-4"><button onClick={() => setIsCreatingGroup(false)}><ArrowLeft size={16} className="text-white" /></button><h3 className="font-bold text-white">New Group</h3></div>
+                                <input type="text" placeholder="Group Name" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm" />
+                                <div className="space-y-1 max-h-64 overflow-y-auto border border-gray-700 rounded p-2">
+                                    <label className="text-xs text-gray-500 font-bold block mb-2">SELECT MEMBERS:</label>
+                                    {userList.filter(u => u.id !== user?.id).map(u => (
+                                        <div key={u.id} onClick={() => setNewGroupMembers(p => p.includes(u.id) ? p.filter(i => i !== u.id) : [...p, u.id])} className={`p-2 rounded border text-xs cursor-pointer flex justify-between items-center mb-1 ${newGroupMembers.includes(u.id) ? 'bg-blue-900/30 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>
+                                            {u.username} {newGroupMembers.includes(u.id) && <Check size={14} className="text-blue-400" />}
+                                        </div>
+                                    ))}
+                                </div>
+                                <button onClick={handleCreateGroup} className="w-full py-2 bg-blue-600 rounded font-bold text-white text-sm">Create Group</button>
                             </div>
                         ) : (
-                            // ... List Views ...
                             <div className="flex-col p-2 space-y-2 overflow-y-auto h-full bg-cabane-dark overscroll-contain">
-                                {/* Same as before */}
                                 {activeTab === 'GROUPS' && <button onClick={() => setIsCreatingGroup(true)} className="w-full py-2 bg-blue-900/30 border border-blue-500/50 text-blue-300 rounded text-xs font-bold flex items-center justify-center gap-2 hover:bg-blue-900/50 mb-2"><Plus size={14} /> New Group</button>}
                                 <div className="relative mb-2">
                                     <Search className="absolute left-2 top-2 text-gray-500" size={14} />
                                     <input type="text" placeholder="Search..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded pl-8 p-1.5 text-sm text-white focus:border-blue-500 outline-none" />
                                 </div>
-
                                 {(activeTab === 'USERS' ? userList : groupList)
                                     .filter(i => (i.username || i.name).toLowerCase().includes(searchQuery.toLowerCase()) && i.id !== user?.id)
                                     .map(item => {
@@ -397,7 +427,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     )}
                 </div>
 
-                {/* INPUT */}
+                {/* INPUT FOOTER */}
                 {((activeTab === 'GLOBAL' || activeTab === 'NOTES') || selectedTarget) && !isCreatingGroup && (
                     <form onSubmit={handleSend} className="p-4 bg-gray-800 border-t border-gray-700">
                         <div className="flex gap-2 mb-2">

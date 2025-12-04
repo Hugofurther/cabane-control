@@ -13,6 +13,8 @@ const sqlite3 = require('sqlite3').verbose(); // For Cleanup Task
 const udpService = require('./services/udp_service');
 const logicEngine = require('./services/logic_engine');
 const apiRoutes = require('./routes'); // Import Routes ONCE
+const weatherService = require('./services/weather_service'); // <--- Import
+
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -34,6 +36,9 @@ logicEngine.init(io);
 
 // 2. Start UDP Service (needs Logic Engine to pass data)
 udpService.init(logicEngine);
+
+weatherService.init(io); // <--- Init
+
 
 // --- MIDDLEWARE ---
 // Inject 'io' into every API request so routes can emit logs
@@ -67,6 +72,8 @@ io.on('connection', (socket) => {
     // Send current online list immediately
     socket.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
 
+    weatherService.sendCurrentTo(socket);
+
     // 1. Handle User Identification
     socket.on('IDENTIFY', (username) => {
         if (username) {
@@ -85,6 +92,8 @@ io.on('connection', (socket) => {
             io.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
         }
     });
+
+
 });
 
 // --- BACKGROUND TASKS ---

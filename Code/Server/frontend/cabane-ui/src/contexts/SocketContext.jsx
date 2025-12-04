@@ -29,8 +29,9 @@ export const SocketProvider = ({ children }) => {
         timezone: 'UTC'
     });
 
-    // Settings State
+    // Settings & Weather State
     const [siteSettings, setSiteSettings] = useState({ timezone: 'UTC' });
+    const [weatherData, setWeatherData] = useState([]); // ✅ NEW: Stores weather list from server
 
     // Auth State
     const [token, setToken] = useState(localStorage.getItem('cabane_token'));
@@ -49,17 +50,20 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('STATE_FULL', (data) => setSystemState(data));
         newSocket.on('ONLINE_USERS', (users) => setOnlineList(users || []));
 
+        // ✅ NEW: Listen for Weather Updates from Server
+        newSocket.on('WEATHER_UPDATE', (data) => {
+            // Ensure data is always an array to prevent crashes
+            setWeatherData(Array.isArray(data) ? data : []);
+        });
+
         return () => newSocket.close();
     }, []);
 
     // --- SESSION RESTORE ---
     useEffect(() => {
         const checkSession = async () => {
-            // Load Site Settings (Public/Protected mixed)
+            // Fetch Settings
             try {
-                // Even if not logged in, we might want basic settings, but API implies auth.
-                // If you want weather on login screen, this route needs to be public. 
-                // For now, assuming auth.
                 if (token) {
                     const resSettings = await axios.get(`${API_URL}/api/system/settings`, {
                         headers: { Authorization: `Bearer ${token}` }
@@ -88,7 +92,7 @@ export const SocketProvider = ({ children }) => {
         checkSession();
     }, [token]);
 
-    // Identify on socket when user changes
+    // Identify
     useEffect(() => {
         if (socket && user?.username) {
             socket.emit('IDENTIFY', user.username);
@@ -96,7 +100,6 @@ export const SocketProvider = ({ children }) => {
     }, [socket, user]);
 
     // --- ACTIONS ---
-
     const login = async (username, password) => {
         try {
             const res = await axios.post(`${API_URL}/api/auth/login`, { username, password });
@@ -144,12 +147,10 @@ export const SocketProvider = ({ children }) => {
     };
 
     // --- CONTROL ---
-
     const takeControl = async () => {
         if (!token) { alert("Login required"); return; }
-        try {
-            await axios.post(`${API_URL}/api/control/take`, {}, { headers: { Authorization: `Bearer ${token}` } });
-        } catch (e) { alert("Failed to Take Control: " + (e.response?.data?.error || e.message)); }
+        try { await axios.post(`${API_URL}/api/control/take`, {}, { headers: { Authorization: `Bearer ${token}` } }); }
+        catch (e) { alert("Failed: " + (e.response?.data?.error || e.message)); }
     };
 
     const releaseToServer = async () => {
@@ -176,10 +177,11 @@ export const SocketProvider = ({ children }) => {
         <SocketContext.Provider value={{
             socket, isConnected, systemState,
             user, authLoading, onlineList,
-            siteSettings, // ✅ ADDED BACK
+            siteSettings,
+            weatherData, // ✅ CRITICAL: THIS MUST BE EXPORTED
 
             login, register, logout,
-            updateSettings, updateSiteSettings, // ✅ ADDED BACK
+            updateSettings, updateSiteSettings,
 
             takeControl, releaseToServer, releaseToCabane, toggleSwitch
         }}>
