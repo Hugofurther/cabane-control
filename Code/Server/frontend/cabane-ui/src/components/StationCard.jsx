@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { clsx } from 'clsx';
 import { RockerSwitch } from './controls/RockerSwitch';
 import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 
-// Helper to format duration
 const formatDuration = (ms) => {
     if (!ms) return "00:00";
     const seconds = Math.floor(ms / 1000);
@@ -15,8 +14,7 @@ const formatDuration = (ms) => {
 };
 
 export const StationCard = ({ card, isRemote }) => {
-    const { systemState, toggleSwitch } = useSocket();
-
+    const { systemState, siteSettings, toggleSwitch } = useSocket();
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -24,37 +22,34 @@ export const StationCard = ({ card, isRemote }) => {
         return () => clearInterval(timer);
     }, []);
 
-    // --- 1. OFFLINE LOGIC ---
+    // Parse Disabled List
+    const disabledList = useMemo(() => {
+        try { return JSON.parse(siteSettings.disabled_stations || '[]'); } catch (e) { return []; }
+    }, [siteSettings.disabled_stations]);
+
+    // Offline / Disabled Logic
     const offlineLabels = [];
     let isAnyOffline = false;
 
     if (card.stationIds) {
         card.stationIds.forEach(id => {
-            if (!systemState.stationOnline[id]) {
+            if (disabledList.includes(id)) {
+                offlineLabels.push(`ST${id} DISABLED`);
+                isAnyOffline = true;
+            }
+            else if (!systemState.stationOnline[id]) {
                 isAnyOffline = true;
                 const lastSeen = systemState.stationLastSeen[id];
-                let labelText = "";
-
-                if (lastSeen === 0) {
-                    labelText = `ST${id} NEVER CONNECTED`;
-                } else {
-                    const diff = Date.now() - lastSeen;
-                    labelText = `ST${id} OFFLINE ${formatDuration(diff)}`;
-                }
-
+                let labelText = lastSeen === 0 ? `ST${id} NEVER CONNECTED` : `ST${id} OFFLINE ${formatDuration(Date.now() - lastSeen)}`;
                 offlineLabels.push(labelText);
             }
         });
     }
 
-    const isFullOffline = card.stationIds &&
-        card.stationIds.length > 0 &&
-        offlineLabels.length === card.stationIds.length;
-
+    const isFullOffline = card.stationIds && card.stationIds.length > 0 && offlineLabels.length === card.stationIds.length;
     const isThermostat = card.name.includes("THERMOSTAT");
     const showOfflineLabel = isAnyOffline && !isThermostat;
 
-    // --- 2. STYLING ---
     let bgClass = "bg-cabane-panel border-gray-700 shadow-lg";
     let textClass = "text-gray-400 border-gray-700";
 
@@ -75,7 +70,7 @@ export const StationCard = ({ card, isRemote }) => {
             {showOfflineLabel && (
                 <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20">
                     {offlineLabels.map(lbl => (
-                        <span key={lbl} className="text-red-500 text-[10px] font-black font-mono border border-red-500/50 bg-gray-900/80 px-2 py-0.5 rounded shadow-sm whitespace-nowrap">
+                        <span key={lbl} className={`text-[10px] font-black font-mono border px-2 py-0.5 rounded shadow-sm whitespace-nowrap ${lbl.includes("DISABLED") ? "text-orange-500 border-orange-500/50 bg-orange-900/20" : "text-red-500 border-red-500/50 bg-gray-900/80"}`}>
                             {lbl}
                         </span>
                     ))}
@@ -86,48 +81,31 @@ export const StationCard = ({ card, isRemote }) => {
                 {card.name}
             </h3>
 
-            <div className={clsx(
-                "flex flex-wrap gap-x-6 gap-y-6 justify-center items-center flex-grow my-auto",
-                (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50"
-            )}>
+            <div className={clsx("flex flex-wrap gap-x-6 gap-y-6 justify-center items-center flex-grow my-auto", (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50")}>
                 {card.controls.map((ctrl) => {
-
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
-                    const isThisControlOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
+                    // Check if this specific control's station is disabled or offline
+                    const isDisabled = targetSt !== undefined && disabledList.includes(targetSt);
+                    const isOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
+                    const isControlUnavailable = isDisabled || isOffline;
 
-                    const virtualOn = isThisControlOffline ? false : !!systemState.virtualSwitches[ctrl.idx];
+                    const virtualOn = isControlUnavailable ? false : !!systemState.virtualSwitches[ctrl.idx];
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
-                    const isLocked = !isRemote || isThisControlOffline;
+                    const isLocked = !isRemote || isControlUnavailable;
 
-                    // Define props WITHOUT the key
                     const props = {
                         label: ctrl.label,
                         idx: ctrl.idx,
                         feedback: ctrl.fb,
                         special: ctrl.special,
                         isLocked: isLocked,
-                        isActive: isRemote && !isThisControlOffline,
+                        isActive: isRemote && !isControlUnavailable,
                     };
 
                     if (ctrl.type === 'button') {
-                        return (
-                            <HaloButton
-                                key={ctrl.idx} // ✅ Key is explicit here
-                                {...props}
-                                onPress={() => handleToggle(ctrl.idx, true)}
-                                onRelease={() => handleToggle(ctrl.idx, false)}
-                            />
-                        );
+                        return <HaloButton key={ctrl.idx} {...props} onPress={() => handleToggle(ctrl.idx, true)} onRelease={() => handleToggle(ctrl.idx, false)} />;
                     } else {
-                        return (
-                            <RockerSwitch
-                                key={ctrl.idx} // ✅ Key is explicit here
-                                {...props}
-                                isOn={virtualOn}
-                                physicalOn={physicalOn}
-                                onChange={(val) => handleToggle(ctrl.idx, val)}
-                            />
-                        );
+                        return <RockerSwitch key={ctrl.idx} {...props} isOn={virtualOn} physicalOn={physicalOn} onChange={(val) => handleToggle(ctrl.idx, val)} />;
                     }
                 })}
             </div>

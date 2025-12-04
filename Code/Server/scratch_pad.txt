@@ -129,37 +129,30 @@ Logging
 The Main Controller did not change anything in its sketch, so the issue is on the app side.
 
 √ When the Main Controller becomes online again, it should regain control automatically disregard of who has control at the moment or who had control when the Main Controller lost control.
+
+√ When a user has control and releases control to the Main Controller, If the Main Controller is offline, the control should automatically go to the Server. Right now, the control is released to the Main Controller even if it is not online.
+
+√ There should be an option in the user settings to display the status of the Main Controller on the main page.
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
-- When a user has control and releases control to the Main Controller, If the Main Controller is offline, the control should automatically go to the Server. Right now, the control is released to the Main Controller even if it is not online.
-
-- There should be an option in the user settings to display the status of the Main Controller on the main page.
-
-
----
-
-
-
-
-
-
-
-
-
-
--------------------------------------------------------
--------------------------------------------------------
-
 - for the Weather component:
 	- Does it update the temperature automatically?
 	- Can we have one location or a rotation of multiple locations?
 
-
 - Can we have in the setting the enabling/disabling of stations, like the Main Controller has?
+
+---
+
+- Can we make the weather component update every minute? Or have a setting to set the update frequency?
+
+-------------------------------------------------------
+-------------------------------------------------------
+
+
 
 
 
@@ -174,18 +167,17 @@ LAYOUT
 - To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
 
 
-
-
-
-
-
-
+ARDUINO
 
 - Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
+- Add Clement alarm. Input from either ST2 or ST3 -> Output to St0
+
+
+IOS
 
 - Since we can, we should implement app notification when an alert is triggered. Optionally SMS / Email as well as push notification
 
-- Add Clement alarm. Input from either ST2 or ST3 -> Output to St0
+
 
 ------------------------------------------------------------
 

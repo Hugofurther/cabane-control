@@ -190,14 +190,13 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 completed++;
 
                 if (completed === keys.length) {
-                    // If Timezone changed, update Logic Engine immediately
-                    if (settings.timezone) {
-                        // Check if logicEngine has the method before calling (safety)
-                        if (logicEngine.updateTimezone) logicEngine.updateTimezone(settings.timezone);
-                    }
+                    // Reload ALL settings into logic engine
+                    // (Ideally, logicEngine should have a .reloadSettings() method)
+                    // For now, simple restart or specialized update:
+                    if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
+                    if (settings.timezone) logicEngine.updateTimezone(settings.timezone);
 
-                    if (errors > 0) res.status(500).json({ error: "Some settings failed to save" });
-                    else res.json({ success: true });
+                    res.json({ success: true });
                 }
             }
         );
