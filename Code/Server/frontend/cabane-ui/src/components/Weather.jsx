@@ -11,34 +11,33 @@ export const Weather = () => {
 
     const isF = user?.settings?.tempUnit === 'F';
 
-    // Parse locations (Support legacy single fields or new JSON array)
+    // 1. Parse Locations
     const locations = React.useMemo(() => {
         if (siteSettings.weather_locations) {
             try { return JSON.parse(siteSettings.weather_locations); } catch (e) { return []; }
         }
-        // Fallback to legacy single location if array doesn't exist
         if (siteSettings.weather_lat) {
-            return [{
-                name: siteSettings.weather_city,
-                lat: siteSettings.weather_lat,
-                lon: siteSettings.weather_lon
-            }];
+            return [{ name: siteSettings.weather_city, lat: siteSettings.weather_lat, lon: siteSettings.weather_lon }];
         }
         return [];
     }, [siteSettings]);
 
+    // 2. Parse Settings (Rotation & Update)
+    const rotIntervalMs = (parseInt(siteSettings.weather_rotation_interval) || 10) * 1000;
+    const updateIntervalMs = (parseInt(siteSettings.weather_update_interval) || 15) * 60 * 1000;
+
     const currentLoc = locations[locIndex];
 
-    // 1. Cycle Locations (Every 10 seconds)
+    // 3. Rotation Logic
     useEffect(() => {
         if (locations.length <= 1) return;
         const timer = setInterval(() => {
             setLocIndex(prev => (prev + 1) % locations.length);
-        }, 10000);
+        }, rotIntervalMs); // Dynamic Interval
         return () => clearInterval(timer);
-    }, [locations]);
+    }, [locations, rotIntervalMs]);
 
-    // 2. Fetch Weather (When Location Changes or every 15 mins)
+    // 4. Fetch Logic
     useEffect(() => {
         const fetchWeather = async () => {
             if (!currentLoc) return;
@@ -56,9 +55,9 @@ export const Weather = () => {
         };
 
         fetchWeather();
-        const timer = setInterval(fetchWeather, 15 * 60 * 1000); // 15 min refresh
+        const timer = setInterval(fetchWeather, updateIntervalMs); // Dynamic Interval
         return () => clearInterval(timer);
-    }, [currentLoc]);
+    }, [currentLoc, updateIntervalMs]);
 
     if (!currentLoc) return null;
 
@@ -84,8 +83,7 @@ export const Weather = () => {
                             <CloudSun size={10} />
                             Feels {formatTemp(weather.apparent_temperature)}°
                         </div>
-                        <div className="text-[10px] font-bold uppercase text-blue-400 tracking-wider flex items-center gap-1 truncate max-w-[120px]">
-                            <MapPin size={10} />
+                        <div className="text-[10px] font-bold uppercase text-blue-400 tracking-wider flex items-center gap-1 truncate max-w-[250px]">                            <MapPin size={10} />
                             {currentLoc.name?.split(',')[0]}
                         </div>
                     </div>
