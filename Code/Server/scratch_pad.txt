@@ -127,14 +127,24 @@ Logging
 	- Main Controller reboots or simply goes offline and becomes online again.
 
 The Main Controller did not change anything in its sketch, so the issue is on the app side.
+
+√ When the Main Controller becomes online again, it should regain control automatically disregard of who has control at the moment or who had control when the Main Controller lost control.
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
+- When a user has control and releases control to the Main Controller, If the Main Controller is offline, the control should automatically go to the Server. Right now, the control is released to the Main Controller even if it is not online.
 
-- When the Main Controller becomes online again, it should regain control automatically disregard of who has control at the moment or who had control when the Main Controller lost control.
+- There should be an option in the user settings to display the status of the Main Controller on the main page.
+
+
+---
+
+
+
+
 
 
 
@@ -144,19 +154,13 @@ Requested
 -------------------------------------------------------
 -------------------------------------------------------
 
-√ Main controller control -> disconnect -> reconnects before Server Failsafe
-
-√ Main controller control -> disconnect -> reconnects After Server Failsafe
-
-- Main controller Slave -> disconnect -> reconnects After Server Failsafe
-
--------------------------------------------------------
+- for the Weather component:
+	- Does it update the temperature automatically?
+	- Can we have one location or a rotation of multiple locations?
 
 
 - Can we have in the setting the enabling/disabling of stations, like the Main Controller has?
 
-
-- for the Weather component, Can we have a rotation of multiple locations? 
 
 
 
@@ -170,7 +174,7 @@ LAYOUT
 - To improve the performance of the system, should we get the Station Controller to broadcast on a different port?
 
 
-- If Cabane is offline and trying to release control to cabane, control goes to Server.
+
 
 
 

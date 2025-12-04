@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Shield, LogOut, ScrollText, User } from 'lucide-react';
+import { Settings, Shield, LogOut, ScrollText, User, Activity } from 'lucide-react';
 import axios from 'axios';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
@@ -129,23 +129,38 @@ function Dashboard() {
 
       {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
 
-      {/* Header */}
+      {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6">
 
         {/* LEFT: Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
-          <h1 className="text-3xl font-black tracking-widest text-gray-100">CABANE CONTROL</h1>
-          <div className="flex items-center gap-3 text-sm">
-            <span className={`w-3 h-3 rounded-full shadow ${isConnected ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
-            <span className="text-gray-400 uppercase tracking-wide">{isConnected ? "Online" : "Connecting..."}</span>
-            <span className="text-gray-600">|</span>
-            <span className={`font-mono font-bold ${systemState.controller === 'CABANE' ? 'text-yellow-500' : 'text-blue-400'}`}>
-              MASTER: {
-                systemState.controller === 'USER'
-                  ? (systemState.currentUser || 'USER')
-                  : systemState.controller
-              }
-            </span>
+          <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
+
+          {/* ROW 1: Connectivity Statuses (Side by Side) */}
+          <div className="flex items-center gap-3 text-xs font-bold tracking-wider uppercase">
+
+            {/* Cabane (Main Controller) Status */}
+            {user?.settings?.showMainStatus && (
+              <>
+                <div className={`flex items-center gap-1 ${systemState.mainControllerOnline ? 'text-green-400' : 'text-red-500 animate-pulse'}`}>
+                  <Activity size={12} />
+                  {systemState.mainControllerOnline ? "CABANE ONLINE" : "CABANE OFFLINE"}
+                </div>
+                {/* Separator */}
+                <span className="text-gray-700">|</span>
+              </>
+            )}
+
+            {/* Server/User Connection Status */}
+            <div className="flex items-center gap-2 text-gray-400">
+              <span className={`w-2 h-2 rounded-full shadow ${isConnected ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
+              <span>{isConnected ? "USER ONLINE" : "CONNECTING..."}</span>
+            </div>
+          </div>
+
+          {/* ROW 2: Master Status (Stacked Below) */}
+          <div className={`font-mono font-bold text-sm mt-1 ${systemState.controller === 'CABANE' ? 'text-yellow-500' : 'text-blue-400'}`}>
+            MASTER: {systemState.controller === 'USER' ? (systemState.currentUser || 'USER') : systemState.controller}
           </div>
         </div>
 

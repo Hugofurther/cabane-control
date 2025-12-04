@@ -201,15 +201,22 @@ function releaseToServer() {
 }
 
 function releaseToCabane() {
+    // SAFETY CHECK: Is Main Controller actually there?
+    if (!state.mainControllerOnline) {
+        console.log("[CONTROL] Cannot release to Cabane (Offline). Switching to SERVER mode.");
+        logSystemEvent('CONTROL', "Release to Cabane blocked (Offline). Holding in Server Mode.");
+
+        // Redirect to Server Mode logic
+        releaseToServer();
+        return;
+    }
+
     state.controller = 'CABANE';
     state.currentUser = null;
     lastReleaseTime = Date.now();
     controlHandshakeConfirmed = false;
 
-    // Trigger aggressive release
-    isForcingRelease = true;
     udpService.sendOverrideCommand(0);
-
     console.log(`[CONTROL] Released to CABANE`);
     pushUpdate();
 }

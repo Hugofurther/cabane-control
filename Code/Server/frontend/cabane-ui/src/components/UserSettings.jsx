@@ -76,6 +76,23 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
                     {activeTab === 'GENERAL' ? (
                         <div className="flex flex-col gap-6">
+                            {/* Main Controller Status Toggle */}
+                            <div className="flex justify-between items-center border-t border-gray-700 pt-4">
+                                <div className="flex items-center gap-3">
+                                    {/* Use 'Cpu' icon or similar */}
+                                    <div className="p-2 rounded-full bg-blue-900/50 text-blue-400"><Settings size={20} /></div>
+                                    <div>
+                                        <div className="font-bold text-gray-200">Main Controller Status</div>
+                                        <div className="text-xs text-gray-500">Show Online/Offline badge on dashboard</div>
+                                    </div>
+                                </div>
+                                <input
+                                    type="checkbox"
+                                    className="w-6 h-6 cursor-pointer"
+                                    checked={!!user.settings?.showMainStatus}
+                                    onChange={e => handleSettingChange('showMainStatus', e.target.checked)}
+                                />
+                            </div>
                             {/* Audio Toggle */}
                             <div className="flex justify-between items-center">
                                 <div className="flex items-center gap-3">
