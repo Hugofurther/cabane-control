@@ -21,7 +21,9 @@ function Dashboard() {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user
   } = useSocket();
 
-  const canInteract = systemState.controller !== 'CABANE';
+  // Strict Logic: "Active Mode" only if I am the specific user driving
+  const canInteract = systemState.controller === 'USER' &&
+    systemState.currentUser === user?.username;
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
@@ -223,7 +225,13 @@ function Dashboard() {
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         {PANEL_LAYOUT.map((row) => (
           <div key={row.id} className={`grid gap-6 ${row.cols}`}>
-            {row.cards.map((card, i) => <StationCard key={i} card={card} isRemote={canInteract} />)}
+            {row.cards.map((card, i) => (
+              <StationCard
+                key={i}
+                card={card}
+                isRemote={canInteract} // <--- This now carries the strict logic
+              />
+            ))}
           </div>
         ))}
       </div>

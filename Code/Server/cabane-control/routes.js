@@ -349,62 +349,173 @@ router.get('/logs', authenticateToken, (req, res) => {
     });
 });
 
+// GET MESSAGES (Context Aware + Per-User Read Status)
 router.get('/messages', authenticateToken, (req, res) => {
-    const sql = `
-    SELECT m.id, m.content, m.timestamp, m.priority, m.is_read, m.recipient_id, u.username as sender, m.sender_id 
+    const { type, targetId } = req.query;
+    const userId = req.user.id;
+
+    // SQL: Join with message_reads to see if THIS user has read the message
+    // We return '1' as is_read_by_me if a record exists, else '0'
+    let sql = `
+    SELECT m.*, u.username as sender,
+    CASE WHEN mr.read_at IS NOT NULL THEN 1 ELSE 0 END as is_read_by_me
     FROM messages m 
-    JOIN users u ON m.sender_id = u.id
-    WHERE m.recipient_id IS NULL OR m.recipient_id = ? OR m.sender_id = ?
-    ORDER BY m.timestamp DESC LIMIT 50
+    JOIN users u ON m.sender_id = u.id 
+    LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = ?
+    WHERE 
   `;
-    db.all(sql, [req.user.id, req.user.id], (err, rows) => res.json(rows.reverse()));
+
+    let params = [userId]; // First param is for the LEFT JOIN
+
+    if (type === 'GLOBAL') {
+        sql += `m.recipient_id IS NULL AND m.group_id IS NULL`;
+    }
+    else if (type === 'NOTES') {
+        sql += `m.recipient_id = ? AND m.sender_id = ?`;
+        params.push(userId, userId);
+    }
+    else if (type === 'DM') {
+        sql += `((m.sender_id = ? AND m.recipient_id = ?) OR (m.sender_id = ? AND m.recipient_id = ?)) AND m.group_id IS NULL`;
+        params.push(userId, targetId, targetId, userId);
+    }
+    else if (type === 'GROUP') {
+        sql += `m.group_id = ?`;
+        params.push(targetId);
+    }
+    else {
+        // DEFAULT FEED
+        sql += `(m.recipient_id IS NULL AND m.group_id IS NULL) 
+            OR (m.recipient_id = ? OR m.sender_id = ?) 
+            OR (m.group_id IN (SELECT group_id FROM group_members WHERE user_id = ?))`;
+        params.push(userId, userId, userId);
+    }
+
+    sql += ` ORDER BY m.timestamp DESC LIMIT 100`;
+
+    db.all(sql, params, (err, rows) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        res.json(rows.reverse());
+    });
 });
 
 // POST /api/messages
 router.post('/messages', authenticateToken, (req, res) => {
-    const { content, recipientId, priority } = req.body; // Added priority
+    const { content, recipientId, groupId, priority } = req.body;
 
-    const finalPriority = priority === 'URGENT' ? 'URGENT' : 'NORMAL';
-    // If recipient is self, it's a Note, implies Read? No, keep unread so it acts as reminder.
+    // Validation: Can't have both recipient and group
+    const rId = recipientId || null;
+    const gId = groupId || null;
 
-    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, content, priority) VALUES (?, ?, ?, ?)");
-    stmt.run(req.user.id, recipientId || null, content, finalPriority, function (err) {
+    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority) VALUES (?, ?, ?, ?, ?)");
+    stmt.run(req.user.id, rId, gId, content, priority || 'NORMAL', function (err) {
         if (err) return res.status(500).json({ error: "Send failed" });
 
-        // Emit Socket Event
+        // Emit real-time event (Frontend needs to filter if it belongs in current view)
         if (req.io) {
             req.io.emit('NEW_MESSAGE', {
                 id: this.lastID,
                 timestamp: new Date().toISOString(),
                 sender_id: req.user.id,
                 sender: req.user.username,
-                recipient_id: recipientId,
+                recipient_id: rId,
+                group_id: gId,
                 content,
-                priority: finalPriority,
-                is_read: 0
+                priority,
+                is_read_by_me: 0
             });
         }
-
         res.json({ success: true, id: this.lastID });
     });
     stmt.finalize();
 });
 
-// MARK MESSAGES READ
+// MARK MESSAGES READ (Per User)
 router.post('/messages/read', authenticateToken, (req, res) => {
-    const { messageIds } = req.body; // Array of IDs
+    const { messageIds } = req.body;
     if (!messageIds || messageIds.length === 0) return res.json({ success: true });
 
-    // Securely construct placeholders
-    const placeholders = messageIds.map(() => '?').join(',');
-    const sql = `UPDATE messages SET is_read = 1 WHERE id IN (${placeholders}) AND (recipient_id = ? OR recipient_id IS NULL)`;
+    const userId = req.user.id;
 
-    // Append User ID to the params list for security (can only mark own messages read)
-    const params = [...messageIds, req.user.id];
+    // Use a transaction for speed/safety
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+        const stmt = db.prepare("INSERT OR IGNORE INTO message_reads (message_id, user_id) VALUES (?, ?)");
 
-    db.run(sql, params, (err) => {
-        if (err) return res.status(500).json({ error: "Update failed" });
-        res.json({ success: true });
+        messageIds.forEach(msgId => {
+            stmt.run(msgId, userId);
+        });
+
+        stmt.finalize();
+        db.run("COMMIT", (err) => {
+            if (err) return res.status(500).json({ error: "Update failed" });
+            res.json({ success: true });
+        });
+    });
+});
+
+// GET CONVERSATIONS (Inbox List with Members)
+router.get('/conversations', authenticateToken, (req, res) => {
+    const userId = req.user.id;
+    const conversations = [];
+
+    // 1. Fixed Contexts
+    conversations.push({ type: 'GLOBAL', name: 'Global Chat', id: 'global' });
+    conversations.push({ type: 'NOTES', name: 'My Notes', id: 'notes' });
+
+    // 2. Fetch Groups with Member Names
+    const groupSql = `
+    SELECT g.id, g.name, GROUP_CONCAT(u.username, ', ') as members 
+    FROM groups g 
+    JOIN group_members gm ON g.id = gm.group_id 
+    JOIN users u ON gm.user_id = u.id
+    WHERE g.id IN (SELECT group_id FROM group_members WHERE user_id = ?)
+    GROUP BY g.id
+  `;
+
+    db.all(groupSql, [userId], (err, groups) => {
+        if (err) console.error(err);
+        if (groups) groups.forEach(g => conversations.push({
+            type: 'GROUP',
+            name: g.name,
+            id: g.id,
+            members: g.members // Added members string
+        }));
+
+        // 3. Fetch Recent DMs
+        const dmSql = `
+      SELECT DISTINCT u.id, u.username 
+      FROM users u
+      JOIN messages m ON (m.sender_id = u.id AND m.recipient_id = ?) 
+                      OR (m.recipient_id = u.id AND m.sender_id = ?)
+      WHERE u.id != ?
+    `;
+
+        db.all(dmSql, [userId, userId, userId], (err, users) => {
+            if (users) users.forEach(u => conversations.push({ type: 'DM', name: u.username, id: u.id }));
+            res.json(conversations);
+        });
+    });
+});
+
+// CREATE GROUP
+router.post('/groups', authenticateToken, (req, res) => {
+    const { name, memberIds } = req.body; // memberIds = array of user IDs
+    if (!name) return res.status(400).json({ error: "Name required" });
+
+    db.run("INSERT INTO groups (name) VALUES (?)", [name], function (err) {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        const groupId = this.lastID;
+
+        // Add Creator
+        db.run("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)", [groupId, req.user.id]);
+
+        // Add Members
+        if (Array.isArray(memberIds)) {
+            memberIds.forEach(uid => {
+                db.run("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)", [groupId, uid]);
+            });
+        }
+        res.json({ success: true, groupId });
     });
 });
 
