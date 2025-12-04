@@ -519,4 +519,55 @@ router.post('/groups', authenticateToken, (req, res) => {
     });
 });
 
+// LEAVE GROUP
+router.post('/groups/leave', authenticateToken, (req, res) => {
+    const { groupId } = req.body;
+    const userId = req.user.id;
+
+    db.serialize(() => {
+        // 1. Remove Member
+        db.run("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", [groupId, userId]);
+
+        // 2. Check if empty
+        db.get("SELECT COUNT(*) as count FROM group_members WHERE group_id = ?", [groupId], (err, row) => {
+            if (row && row.count === 0) {
+                // Group is empty, delete the group entry (Messages remain as orphans with group_id)
+                db.run("DELETE FROM groups WHERE id = ?", [groupId]);
+            }
+            res.json({ success: true });
+        });
+    });
+});
+
+// DELETE MESSAGE (Own messages only)
+router.post('/messages/delete', authenticateToken, (req, res) => {
+    const { messageId } = req.body;
+
+    // Check ownership first
+    db.get("SELECT sender_id FROM messages WHERE id = ?", [messageId], (err, row) => {
+        if (!row) return res.status(404).json({ error: "Not found" });
+        if (row.sender_id !== req.user.id) return res.status(403).json({ error: "Cannot delete others' messages" });
+
+        db.run("DELETE FROM messages WHERE id = ?", [messageId], (err) => {
+            if (err) return res.status(500).json({ error: "Delete failed" });
+            // Emit deletion event so clients remove it instantly
+            if (req.io) req.io.emit('DELETE_MESSAGE', { id: messageId });
+            res.json({ success: true });
+        });
+    });
+});
+
+// DOWNGRADE URGENCY
+router.post('/messages/downgrade', authenticateToken, (req, res) => {
+    const { messageId } = req.body;
+
+    db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [messageId], (err) => {
+        if (err) return res.status(500).json({ error: "Update failed" });
+
+        // Emit update event
+        if (req.io) req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
+        res.json({ success: true });
+    });
+});
+
 module.exports = router;
