@@ -1,26 +1,18 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { X, Send, AlertTriangle, StickyNote, Users, User, Plus, ArrowLeft, Search, MessageSquare, Check, ChevronDown, ChevronUp, RefreshCw, Clock, Trash2, LogOut, CheckCheck } from 'lucide-react';
+import { X, Send, AlertTriangle, StickyNote, Users, User, Plus, ArrowLeft, Search, MessageSquare, Check, ChevronDown, ChevronUp, RefreshCw, Clock, Trash2, LogOut, CheckCheck, ArrowDown } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { clsx } from 'clsx';
+import { FlashViewer } from './FlashViewer';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-// --- COLOR HELPER ---
+// --- HELPERS ---
 const getUserColor = (username) => {
     if (!username) return 'border-gray-500 text-gray-400 bg-gray-800';
-    const colors = [
-        'border-emerald-500 text-emerald-400 bg-emerald-900/10',
-        'border-purple-500 text-purple-400 bg-purple-900/10',
-        'border-orange-500 text-orange-400 bg-orange-900/10',
-        'border-pink-500 text-pink-400 bg-pink-900/10',
-        'border-cyan-500 text-cyan-400 bg-cyan-900/10',
-        'border-indigo-500 text-indigo-400 bg-indigo-900/10',
-    ];
+    const colors = ['border-emerald-500 text-emerald-400 bg-emerald-900/10', 'border-purple-500 text-purple-400 bg-purple-900/10', 'border-orange-500 text-orange-400 bg-orange-900/10', 'border-pink-500 text-pink-400 bg-pink-900/10', 'border-cyan-500 text-cyan-400 bg-cyan-900/10', 'border-indigo-500 text-indigo-400 bg-indigo-900/10'];
     let hash = 0;
-    for (let i = 0; i < username.length; i++) {
-        hash = username.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
     return colors[Math.abs(hash) % colors.length];
 };
 
@@ -54,8 +46,17 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     const [newGroupName, setNewGroupName] = useState('');
     const [newGroupMembers, setNewGroupMembers] = useState([]);
+    const [zoomedMessage, setZoomedMessage] = useState(null);
 
+    // Scroll & Logic State
+    const [showScrollButton, setShowScrollButton] = useState(false);
     const messagesEndRef = useRef(null);
+    const chatContainerRef = useRef(null);
+
+    // Refs to track state without re-rendering
+    const isAtBottomRef = useRef(true);
+    const hasInitialScrolledRef = useRef(false);
+    const prevMessagesLength = useRef(0);
 
     // --- SCROLL LOCK ---
     useEffect(() => {
@@ -63,6 +64,13 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         else document.body.style.overflow = '';
         return () => { document.body.style.overflow = ''; };
     }, [isOpen]);
+
+    // Reset logic on view change
+    useEffect(() => {
+        hasInitialScrolledRef.current = false;
+        isAtBottomRef.current = true;
+        setShowScrollButton(false);
+    }, [activeTab, selectedTarget, isOpen]);
 
     // --- FETCH DATA ---
     const fetchData = async () => {
@@ -82,32 +90,21 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         } catch (e) { console.error(e); }
     };
 
-    // --- MARK READ LOGIC ---
-    const markReadIds = async (ids) => {
-        if (ids.length === 0) return;
-        const token = localStorage.getItem('cabane_token');
-        setMessages(prev => prev.map(m => ids.includes(m.id) ? { ...m, is_read_by_me: 1 } : m));
-        try {
-            await axios.post(`${API_URL}/api/messages/read`, { messageIds: ids }, { headers: { Authorization: `Bearer ${token}` } });
-        } catch (e) { console.error("Read Sync Failed"); }
-    };
-
-    const handleAutoMarkRead = () => {
-        if (!user || !isOpen) return;
-        const unreadIds = messages.filter(m => {
+    const handleMarkRead = async (msgs) => {
+        if (!user) return;
+        const unreadIds = msgs.filter(m => {
             if (m.is_read_by_me || String(m.sender_id) === String(user.id)) return false;
-
-            if (activeTab === 'GLOBAL') return !m.recipient_id && !m.group_id;
-            if (activeTab === 'NOTES') return String(m.recipient_id) === String(user.id) && String(m.sender_id) === String(user.id);
-
-            if (selectedTarget) {
-                if (activeTab === 'USERS') return String(m.sender_id) === String(selectedTarget.id) && !m.group_id;
-                if (activeTab === 'GROUPS') return String(m.group_id) === String(selectedTarget.id);
-            }
-            return false;
+            return true;
         }).map(m => m.id);
 
-        markReadIds(unreadIds);
+        if (unreadIds.length > 0) {
+            const token = localStorage.getItem('cabane_token');
+            // Optimistic Update
+            setMessages(prev => prev.map(m => unreadIds.includes(m.id) ? { ...m, is_read_by_me: 1 } : m));
+            try {
+                await axios.post(`${API_URL}/api/messages/read`, { messageIds: unreadIds }, { headers: { Authorization: `Bearer ${token}` } });
+            } catch (e) { }
+        }
     };
 
     const handleMarkAllRead = () => {
@@ -115,10 +112,21 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         const allUnreadIds = messages
             .filter(m => !m.is_read_by_me && String(m.sender_id) !== String(user.id))
             .map(m => m.id);
-        markReadIds(allUnreadIds);
+        if (allUnreadIds.length > 0) {
+            const token = localStorage.getItem('cabane_token');
+            axios.post(`${API_URL}/api/messages/read`, { messageIds: allUnreadIds }, { headers: { Authorization: `Bearer ${token}` } });
+            setMessages(prev => prev.map(m => allUnreadIds.includes(m.id) ? { ...m, is_read_by_me: 1 } : m));
+        }
     };
 
-    // --- POLLING & SOCKETS ---
+    const handleDismissUrgency = async (id) => {
+        setMessages(prev => prev.map(m => m.id === id ? { ...m, priority: 'NORMAL' } : m));
+        const token = localStorage.getItem('cabane_token');
+        try { await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); }
+        catch (e) { }
+    };
+
+    // --- SOCKETS ---
     useEffect(() => {
         if (isOpen) fetchData();
         const interval = setInterval(fetchData, 4000);
@@ -130,33 +138,125 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         const handleNew = (msg) => {
             setMessages(prev => {
                 if (prev.some(p => p.id === msg.id)) return prev;
-                // Default ack is false for incoming
                 return [...prev, { ...msg, is_read_by_me: 0, is_ack_by_me: 0 }];
             });
-            if (isOpen) setTimeout(handleAutoMarkRead, 500);
+            // 🛑 FIX: REMOVED Automatic Mark Read. 
+            // We let the Scroll/View logic decide when to read.
         };
-
         const handleDelete = ({ id }) => setMessages(prev => prev.filter(m => m.id !== id));
-
-        // We removed global 'UPDATE_MESSAGE' listener because acknowledgments are now private/local only.
+        const handleUpdate = ({ id, priority }) => setMessages(prev => prev.map(m => m.id === id ? { ...m, priority } : m));
+        const handleRead = ({ userId, messageIds }) => {
+            if (String(userId) === String(user.id)) {
+                setMessages(prev => prev.map(m => messageIds.includes(m.id) ? { ...m, is_read_by_me: 1 } : m));
+            }
+        };
 
         socket.on('NEW_MESSAGE', handleNew);
         socket.on('DELETE_MESSAGE', handleDelete);
+        socket.on('UPDATE_MESSAGE', handleUpdate);
+        socket.on('MESSAGES_READ', handleRead);
+
         return () => {
             socket.off('NEW_MESSAGE', handleNew);
             socket.off('DELETE_MESSAGE', handleDelete);
+            socket.off('UPDATE_MESSAGE', handleUpdate);
+            socket.off('MESSAGES_READ', handleRead);
         };
-    }, [socket, isOpen, activeTab, selectedTarget]);
+    }, [socket, isOpen, user]);
 
-    // Trigger auto-read
-    useEffect(() => {
-        if (isOpen) {
-            handleAutoMarkRead();
-            messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // --- VIEW FILTER ---
+    const currentMessages = useMemo(() => {
+        return messages.filter(m => {
+            if (activeTab === 'GLOBAL') return !m.recipient_id && !m.group_id;
+            if (activeTab === 'NOTES') return String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(user.id);
+            if (activeTab === 'USERS' && selectedTarget) return ((String(m.sender_id) === String(selectedTarget.id) && String(m.recipient_id) === String(user.id)) || (String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(selectedTarget.id)));
+            if (activeTab === 'GROUPS' && selectedTarget) return String(m.group_id) === String(selectedTarget.id);
+            return false;
+        }).sort((a, b) => {
+            if (a.isOptimistic && !b.isOptimistic) return 1;
+            if (!a.isOptimistic && b.isOptimistic) return -1;
+            return new Date(a.timestamp) - new Date(b.timestamp);
+        });
+    }, [messages, activeTab, selectedTarget, user]);
+
+
+    // --- ✅ SCROLL & READ LOGIC ---
+    useLayoutEffect(() => {
+        if (!isOpen || !chatContainerRef.current || currentMessages.length === 0) return;
+
+        const container = chatContainerRef.current;
+        const isNewMessage = currentMessages.length > prevMessagesLength.current;
+
+        // 1. FIRST LOAD
+        if (!hasInitialScrolledRef.current) {
+            const firstUnread = currentMessages.find(m => !m.is_read_by_me && String(m.sender_id) !== String(user.id));
+
+            if (firstUnread) {
+                // Jump to unread
+                const el = document.getElementById(`msg-${firstUnread.id}`);
+                if (el) {
+                    el.scrollIntoView({ block: 'center', behavior: 'auto' });
+                    setShowScrollButton(true);
+                    isAtBottomRef.current = false;
+                } else {
+                    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+                    isAtBottomRef.current = true;
+                }
+            } else {
+                // No unread, bottom
+                messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+                isAtBottomRef.current = true;
+            }
+            hasInitialScrolledRef.current = true;
+
+            // Delayed read logic to allow user to perceive "Unread" state
+            // Only mark read if we ended up at the bottom
+            if (isAtBottomRef.current) {
+                setTimeout(() => handleMarkRead(currentMessages), 1000);
+            }
         }
-    }, [activeTab, selectedTarget, isOpen, messages.length]);
 
-    // --- BADGES ---
+        // 2. NEW MESSAGE ARRIVED
+        else if (isNewMessage) {
+            const lastMsg = currentMessages[currentMessages.length - 1];
+            const isMyMessage = lastMsg && String(lastMsg.sender_id) === String(user?.id);
+
+            // Auto-scroll ONLY if we were already at the bottom
+            if (isMyMessage || isAtBottomRef.current) {
+                container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+                setShowScrollButton(false);
+                isAtBottomRef.current = true;
+                if (!isMyMessage) handleMarkRead([lastMsg]);
+            } else {
+                // Scrolled up -> Show Badge
+                setShowScrollButton(true);
+            }
+        }
+
+        prevMessagesLength.current = currentMessages.length;
+    }, [currentMessages, isOpen, activeTab, selectedTarget]);
+
+    // Manual Scroll Handler
+    const handleScroll = () => {
+        if (!chatContainerRef.current) return;
+        const container = chatContainerRef.current;
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 150;
+
+        isAtBottomRef.current = isNearBottom;
+        if (isNearBottom) {
+            setShowScrollButton(false);
+            handleMarkRead(currentMessages);
+        }
+    };
+
+    const scrollToBottom = () => {
+        chatContainerRef.current?.scrollTo({ top: chatContainerRef.current.scrollHeight, behavior: 'smooth' });
+        setShowScrollButton(false);
+        handleMarkRead(currentMessages);
+        isAtBottomRef.current = true;
+    };
+
+    // --- BADGES (Memoized) ---
     const badges = useMemo(() => {
         const counts = { global: 0, users: 0, groups: 0, notes: 0, total: 0 };
         const dmCounts = {};
@@ -165,6 +265,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         if (user) {
             messages.forEach(m => {
                 if (m.is_read_by_me || String(m.sender_id) === String(user.id)) return;
+
                 if (!m.recipient_id && !m.group_id) counts.global++;
                 else if (String(m.recipient_id) === String(user.id) && String(m.sender_id) === String(user.id)) counts.notes++;
                 else if (String(m.recipient_id) === String(user.id) && !m.group_id) {
@@ -181,6 +282,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         return { counts, dmCounts, groupCounts };
     }, [messages, user]);
 
+    // ✅ FIX: Safe Parent Update in Effect
     useEffect(() => {
         if (onUnreadChange) onUnreadChange(badges.counts.total, badges.counts.notes);
     }, [badges.counts.total, badges.counts.notes]);
@@ -199,127 +301,68 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
         const tempId = 'temp-' + Date.now();
         const optimisticMsg = {
-            id: tempId,
-            sender_id: user.id,
-            sender: user.username,
-            recipient_id: payload.recipientId || null,
-            group_id: payload.groupId || null,
-            content: input,
-            priority: payload.priority,
-            timestamp: new Date().toISOString(),
-            is_read_by_me: 0,
-            is_ack_by_me: 0, // Default not acked
-            isOptimistic: true
+            id: tempId, sender_id: user.id, sender: user.username, recipient_id: payload.recipientId || null, group_id: payload.groupId || null, content: input, priority: payload.priority, timestamp: new Date().toISOString(), is_read_by_me: 1, is_ack_by_me: 0, isOptimistic: true
         };
 
         setMessages(prev => [...prev, optimisticMsg]);
         setInput(''); setIsUrgent(false);
+        isAtBottomRef.current = true;
 
-        try {
-            await axios.post(`${API_URL}/api/messages`, payload, { headers: { Authorization: `Bearer ${token}` } });
-            fetchData();
-        } catch (e) {
-            alert("Send failed");
-            setMessages(prev => prev.filter(m => m.id !== tempId));
-        }
+        try { await axios.post(`${API_URL}/api/messages`, payload, { headers: { Authorization: `Bearer ${token}` } }); fetchData(); }
+        catch (e) { alert("Send failed"); setMessages(prev => prev.filter(m => m.id !== tempId)); }
     };
 
-    const handleCreateGroup = async () => {
-        if (!newGroupName) return;
-        const token = localStorage.getItem('cabane_token');
-        try {
-            await axios.post(`${API_URL}/api/groups`, { name: newGroupName, memberIds: newGroupMembers }, { headers: { Authorization: `Bearer ${token}` } });
-            setNewGroupName(''); setNewGroupMembers([]); setIsCreatingGroup(false);
-            fetchData();
-        } catch (e) { alert("Failed to create group"); }
-    };
-
-    const handleLeaveGroup = async () => {
-        if (!selectedTarget || activeTab !== 'GROUPS') return;
-        if (!confirm(`Leave group "${selectedTarget.name}"?`)) return;
-        const token = localStorage.getItem('cabane_token');
-        try {
-            await axios.post(`${API_URL}/api/groups/leave`, { groupId: selectedTarget.id }, { headers: { Authorization: `Bearer ${token}` } });
-            setSelectedTarget(null); fetchData();
-        } catch (e) { alert("Failed to leave group"); }
-    };
-
-    const handleDeleteMessage = async (id) => {
-        if (!confirm("Delete this message?")) return;
-        const token = localStorage.getItem('cabane_token');
-        try { await axios.post(`${API_URL}/api/messages/delete`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); }
-        catch (e) { alert("Delete failed"); }
-    };
-
-    const handleDowngradeUrgency = async (id) => {
-        const token = localStorage.getItem('cabane_token');
-
-        // Optimistic update: Mark as ACKED by ME (change color locally instantly)
-        setMessages(prev => prev.map(m => m.id === id ? { ...m, is_ack_by_me: 1 } : m));
-
-        try { await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); }
-        catch (e) { console.error("Ack failed"); }
-    };
+    const handleCreateGroup = async () => { if (!newGroupName) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups`, { name: newGroupName, memberIds: newGroupMembers }, { headers: { Authorization: `Bearer ${token}` } }); setNewGroupName(''); setNewGroupMembers([]); setIsCreatingGroup(false); fetchData(); } catch (e) { alert("Failed"); } };
+    const handleLeaveGroup = async () => { if (!selectedTarget || activeTab !== 'GROUPS') return; if (!confirm("Leave?")) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/leave`, { groupId: selectedTarget.id }, { headers: { Authorization: `Bearer ${token}` } }); setSelectedTarget(null); fetchData(); } catch (e) { alert("Failed"); } };
+    const handleDeleteMessage = async (id) => { if (!confirm("Delete?")) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/messages/delete`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { alert("Delete failed"); } };
 
     // --- RENDER CHAT ---
-
-    const currentMessages = messages.filter(m => {
-        if (activeTab === 'GLOBAL') return !m.recipient_id && !m.group_id;
-        if (activeTab === 'NOTES') return String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(user.id);
-        if (activeTab === 'USERS' && selectedTarget) return ((String(m.sender_id) === String(selectedTarget.id) && String(m.recipient_id) === String(user.id)) || (String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(selectedTarget.id)));
-        if (activeTab === 'GROUPS' && selectedTarget) return String(m.group_id) === String(selectedTarget.id);
-        return false;
-    }).sort((a, b) => {
-        if (a.isOptimistic && !b.isOptimistic) return 1;
-        if (!a.isOptimistic && b.isOptimistic) return -1;
-        return new Date(a.timestamp) - new Date(b.timestamp);
-    });
-
     const renderChat = () => (
-        <div className="flex-grow overflow-y-auto p-4 space-y-3 bg-cabane-dark pb-4 overscroll-contain">
+        <div
+            ref={chatContainerRef}
+            onScroll={handleScroll}
+            className="flex-grow overflow-y-auto p-4 space-y-3 bg-cabane-dark pb-4 overscroll-contain relative"
+        >
             {currentMessages.length === 0 && <div className="text-center text-gray-500 text-xs italic mt-4">No messages yet.</div>}
+
             {currentMessages.map(msg => {
                 const isMe = user && (String(msg.sender_id) === String(user.id));
-
-                // ✅ URGENT LOGIC: Only Urgent if PRIORITY=URGENT AND I haven't acked it yet
-                const isUrgentActive = msg.priority === 'URGENT' && !msg.is_ack_by_me;
-
+                const isUrgentMsg = msg.priority === 'URGENT';
+                const isAcked = msg.is_ack_by_me;
                 const userColorClass = getUserColor(msg.sender);
+                const showRedAlert = isUrgentMsg && !isAcked;
 
                 return (
-                    <div key={msg.id} className={`flex flex-col w-full group ${isMe ? 'items-end' : 'items-start'}`}>
+                    <div key={msg.id} id={`msg-${msg.id}`} className={`flex flex-col w-full group ${isMe ? 'items-end' : 'items-start'}`}>
                         {!isMe && activeTab !== 'NOTES' && <span className="text-[10px] text-gray-500 ml-1 mb-0.5">{msg.sender}</span>}
 
                         <div
-                            // Only allow clicking to dismiss if it is currently active urgent
-                            onClick={() => isUrgentActive && handleDowngradeUrgency(msg.id)}
+                            onClick={() => setZoomedMessage(msg)}
                             className={clsx(
-                                "max-w-[85%] p-3 rounded-lg text-sm border shadow-sm relative break-words transition-all",
-                                isUrgentActive && "cursor-pointer hover:scale-[1.02]",
-
-                                isMe && !isUrgentActive && "bg-blue-600 border-blue-500 text-white rounded-br-none text-right",
-                                !isMe && !isUrgentActive && clsx("rounded-bl-none border-l-4 text-gray-200 bg-gray-800", userColorClass),
-
-                                isUrgentActive && "bg-red-900/80 border-red-500 text-white animate-pulse",
+                                "max-w-[85%] p-3 rounded-lg text-sm border shadow-sm relative break-words transition-all cursor-pointer hover:scale-[1.02]",
+                                isMe && !showRedAlert && "bg-blue-600 border-blue-500 text-white rounded-br-none text-right",
+                                !isMe && !showRedAlert && clsx("rounded-bl-none border-l-4 text-gray-200 bg-gray-800", userColorClass),
+                                showRedAlert && "bg-red-900/80 border-red-500 text-white animate-pulse",
                                 msg.isOptimistic && "opacity-70"
                             )}>
-                            {isUrgentActive && <div className="flex items-center gap-1 text-[10px] font-bold text-red-300 mb-1"><AlertTriangle size={10} /> URGENT (Tap to Ack)</div>}
+                            {showRedAlert && <div className="flex items-center gap-1 text-[10px] font-bold text-red-300 mb-1"><AlertTriangle size={10} /> FLASH MESSAGE</div>}
                             {msg.content}
                             {msg.isOptimistic && <span className="absolute bottom-1 right-1 text-[8px] text-gray-300"><Clock size={8} /></span>}
                         </div>
-
                         <div className="flex items-center gap-2 mt-1 mx-1">
                             <span className="text-[10px] text-gray-600">{formatSmartTime(msg.timestamp)}</span>
-                            {isMe && !msg.isOptimistic && (
-                                <button onClick={() => handleDeleteMessage(msg.id)} className="text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete">
-                                    <Trash2 size={12} />
-                                </button>
-                            )}
+                            {isMe && !msg.isOptimistic && <button onClick={(e) => { e.stopPropagation(); handleDeleteMessage(msg.id); }} className="text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title="Delete"><Trash2 size={12} /></button>}
                         </div>
                     </div>
                 );
             })}
             <div ref={messagesEndRef} />
+
+            {showScrollButton && (
+                <button onClick={scrollToBottom} className="fixed bottom-20 md:bottom-40 right-4 md:right-auto md:left-1/2 md:-translate-x-1/2 flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full shadow-lg font-bold text-xs animate-bounce z-50 border border-blue-400 cursor-pointer">
+                    <ArrowDown size={14} /> New Messages
+                </button>
+            )}
         </div>
     );
 
@@ -346,34 +389,30 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
                 {/* SUB-HEADER */}
                 {selectedTarget && (
-                    <div className="bg-gray-800 border-b border-gray-700 p-3 flex items-start gap-2 cursor-pointer hover:bg-gray-750 transition-colors"
-                        onClick={() => activeTab === 'GROUPS' ? setIsHeaderExpanded(!isHeaderExpanded) : null}>
+                    <div className="bg-gray-800 border-b border-gray-700 p-3 flex items-start gap-2 cursor-pointer hover:bg-gray-750 transition-colors" onClick={() => activeTab === 'GROUPS' ? setIsHeaderExpanded(!isHeaderExpanded) : null}>
                         <button onClick={(e) => { e.stopPropagation(); setSelectedTarget(null); }} className="mt-0.5"><ArrowLeft size={18} className="text-gray-400 hover:text-white" /></button>
                         <div className="flex-grow overflow-hidden">
                             <div className="font-bold text-sm text-white flex justify-between items-center">
                                 <span>{selectedTarget.username || selectedTarget.name}</span>
                                 {activeTab === 'GROUPS' && (
                                     <div className="flex items-center gap-2">
-                                        <button onClick={(e) => { e.stopPropagation(); handleLeaveGroup(); }} className="text-[10px] text-red-400 border border-red-900/50 px-1.5 py-0.5 rounded hover:bg-red-900/30 flex items-center gap-1">
-                                            <LogOut size={10} /> Leave
-                                        </button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleLeaveGroup(); }} className="text-[10px] text-red-400 border border-red-900/50 px-1.5 py-0.5 rounded hover:bg-red-900/30 flex items-center gap-1"><LogOut size={10} /> Leave</button>
                                         {isHeaderExpanded ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
                                     </div>
                                 )}
                             </div>
                             {activeTab === 'GROUPS' && selectedTarget.members && (
-                                <div className={clsx("text-xs text-gray-400 mt-1 transition-all duration-300", isHeaderExpanded ? "whitespace-normal" : "truncate")}>
-                                    {selectedTarget.members}
-                                </div>
+                                <div className={clsx("text-xs text-gray-400 mt-1 transition-all duration-300", isHeaderExpanded ? "whitespace-normal" : "truncate")}>{selectedTarget.members}</div>
                             )}
                         </div>
                     </div>
                 )}
 
-                {/* CONTENT AREA */}
+                {/* CONTENT */}
                 <div className="flex-grow flex flex-col overflow-hidden">
                     {((activeTab === 'GLOBAL' || activeTab === 'NOTES') || selectedTarget) && !isCreatingGroup && renderChat()}
 
+                    {/* LISTS */}
                     {!selectedTarget && (activeTab === 'USERS' || activeTab === 'GROUPS') && (
                         isCreatingGroup ? (
                             <div className="p-4 space-y-4 bg-cabane-dark h-full">
@@ -434,7 +473,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                             {activeTab !== 'NOTES' && (
                                 <label className={`flex items-center gap-1 text-xs font-bold cursor-pointer px-2 py-1 rounded border transition-colors ${isUrgent ? 'bg-red-900 text-red-200 border-red-600' : 'bg-gray-700 text-gray-400 border-gray-600'}`}>
                                     <input type="checkbox" className="hidden" checked={isUrgent} onChange={e => setIsUrgent(e.target.checked)} />
-                                    <AlertTriangle size={12} /> URGENT
+                                    <AlertTriangle size={12} /> FLASH MESSAGE
                                 </label>
                             )}
                         </div>
@@ -446,6 +485,16 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 )}
 
             </div>
+
+            {/* ZOOM VIEWER */}
+            {zoomedMessage && (
+                <FlashViewer
+                    messages={[zoomedMessage]}
+                    readOnly={true}
+                    onDismiss={() => handleDismissUrgency(zoomedMessage.id)}
+                    onClose={() => setZoomedMessage(null)}
+                />
+            )}
         </div>
     );
 };

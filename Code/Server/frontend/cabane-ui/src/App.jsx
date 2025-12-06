@@ -8,9 +8,10 @@ import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
 import { AdminPanel } from './components/AdminPanel';
 import { LogViewer } from './components/LogViewer';
-import { MessageDrawer } from './components/MessageDrawer'; // NEW
+import { MessageDrawer } from './components/MessageDrawer';
 import { Clock } from './components/Clock';
 import { Weather } from './components/Weather';
+import { FlashViewer } from './components/FlashViewer'; // ✅ CRITICAL IMPORT
 import { PANEL_LAYOUT } from './config/stations';
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
@@ -21,18 +22,17 @@ function Dashboard() {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user
   } = useSocket();
 
-  // Strict Logic: "Active Mode" only if I am the specific user driving
-  const canInteract = systemState.controller === 'USER' &&
-    systemState.currentUser === user?.username;
+  const canInteract = systemState.controller !== 'CABANE';
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showLogs, setShowLogs] = useState(false);
-  const [showMessageDrawer, setShowMessageDrawer] = useState(false); // NEW
-  const [notification, setNotification] = useState(null);
+  const [showMessageDrawer, setShowMessageDrawer] = useState(false);
 
-  // Message State
+  const [notification, setNotification] = useState(null);
+  const [flashMessages, setFlashMessages] = useState([]); // ✅ Flash Message State
+
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotes, setHasNotes] = useState(false);
 
@@ -92,37 +92,64 @@ function Dashboard() {
     if (audioCtx.current && audioCtx.current.state === 'suspended') audioCtx.current.resume();
   };
 
-  // --- EFFECT: SOCKET MESSAGE LISTENER ---
+  // --- FLASH MESSAGE LOGIC ---
+  const checkFlashMessages = async () => {
+    if (!user) return;
+    const token = localStorage.getItem('cabane_token');
+    try {
+      const res = await axios.get(`${API_URL}/api/messages`, { headers: { Authorization: `Bearer ${token}` } });
+      const msgs = res.data;
+
+      // Filter for: URGENT AND NOT ACKNOWLEDGED BY ME AND NOT SENT BY ME
+      const urgentUnacked = msgs.filter(m =>
+        m.priority === 'URGENT' &&
+        m.is_ack_by_me === 0 &&
+        String(m.sender_id) !== String(user.id)
+      );
+
+      setFlashMessages(urgentUnacked);
+    } catch (e) { }
+  };
+
+  const handleDismissFlash = async (msgId) => {
+    // 1. Clear popup
+    setFlashMessages(prev => prev.filter(m => m.id !== msgId));
+
+    const token = localStorage.getItem('cabane_token');
+    try {
+      // 2. Acknowledge Urgency (Stops Blinking/Siren)
+      await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: msgId }, { headers: { Authorization: `Bearer ${token}` } });
+
+      // 3. ✅ MARK AS READ (Clears Badge)
+      await axios.post(`${API_URL}/api/messages/read`, { messageIds: [msgId] }, { headers: { Authorization: `Bearer ${token}` } });
+    } catch (e) { console.error(e); }
+  };
+
+
+  // Poll for Flash Messages
+  useEffect(() => {
+    if (user) checkFlashMessages();
+    const interval = setInterval(() => { if (user) checkFlashMessages(); }, 5000);
+    return () => clearInterval(interval);
+  }, [user]);
+
+  // --- EFFECT: SOCKET LISTENER ---
   useEffect(() => {
     if (!socket) return;
 
     const handleNewMessage = (msg) => {
-      // Logic to handle notification for Urgent Messages
-      // Only trigger if it's NOT from me and it IS Urgent
-      if (msg.sender_id !== user?.id && msg.priority === 'URGENT') {
-        // Trigger Popup
-        setNotification({
-          type: 'INFO', // Or 'ALARM' colour if you prefer
-          message: `URGENT MESSAGE from ${msg.sender}:\n${msg.content}`
-        });
-
-        playTone('CHIRP'); // Sound alert
-
-        // Auto-Dismiss Logic
-        const dismissTime = user?.settings?.msgDismissTime || 0;
-        if (dismissTime > 0) {
-          setTimeout(() => setNotification(null), dismissTime * 1000);
-        }
+      // Trigger Flash Check if Urgent
+      if (msg.priority === 'URGENT' && String(msg.sender_id) !== String(user?.id)) {
+        checkFlashMessages();
+        playTone('CHIRP');
       }
-      // The unreadCount is updated by the Drawer's internal polling via handleUnreadChange
-      // OR we could increment here, but Drawer sync is safer.
     };
 
     socket.on('NEW_MESSAGE', handleNewMessage);
     return () => socket.off('NEW_MESSAGE', handleNewMessage);
   }, [socket, user]);
 
-  // --- EFFECT: BUZZER ---
+  // --- EFFECT: BUZZER & ALARMS ---
   useEffect(() => {
     if (systemState.buzzerStatus === 'SIREN') {
       playTone('SIREN');
@@ -131,10 +158,9 @@ function Dashboard() {
     } else if (systemState.buzzerStatus === 'CHIRP') playTone('CHIRP');
   }, [systemState.buzzerStatus]);
 
-  // --- EFFECT: SYSTEM NOTIFICATIONS ---
   useEffect(() => {
     if (!systemState.globalVacuumAlarm) setNotification(prev => (prev?.type === 'ALARM' ? null : prev));
-    if (systemState.buzzerEnabled) setNotification(prev => (prev?.message.includes("Buzzer MUTED") ? null : prev));
+    if (systemState.buzzerEnabled) setNotification(prev => (prev?.type === 'INFO' ? null : prev));
 
     if (systemState.buzzerStatus === 'SIREN') {
       const culprits = getAlarmSources();
@@ -145,7 +171,6 @@ function Dashboard() {
     }
   }, [systemState.globalVacuumAlarm, systemState.buzzerStatus, systemState.buzzerEnabled]);
 
-  // Callback from MessageDrawer to update header icons
   const handleUnreadChange = (unread, notes) => {
     setUnreadCount(unread);
     if (notes !== null) setHasNotes(notes > 0);
@@ -155,11 +180,22 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20" onClick={wakeAudio} onTouchStart={wakeAudio}>
 
+      {/* 1. NOTIFICATION BANNER */}
       {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
 
-      {/* Header */}
+      {/* 2. FLASH VIEWER (Auto Popup) */}
+      {flashMessages.length > 0 && (
+        <FlashViewer
+          messages={flashMessages}
+          onDismiss={handleDismissFlash}
+          onClose={() => setFlashMessages([])}
+        />
+      )}
+
+      {/* 3. HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6">
 
+        {/* LEFT: Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
 
@@ -182,8 +218,13 @@ function Dashboard() {
           </div>
         </div>
 
-        <div className="flex-grow flex flex-col items-center justify-center gap-2"><Clock /><Weather /></div>
+        {/* CENTER: Clock & Weather */}
+        <div className="flex-grow flex flex-col items-center justify-center gap-2">
+          <Clock />
+          <Weather />
+        </div>
 
+        {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
           {user?.role === 'ADMIN' && <button onClick={() => setShowAdmin(true)} className="p-3 rounded bg-gray-700 hover:bg-blue-900 text-blue-400 hover:text-white transition-colors border border-blue-900/30" title="Admin"><Shield size={20} /></button>}
           {(user?.can_view_logs || user?.role === 'ADMIN') && <button onClick={() => setShowLogs(true)} className="p-3 rounded bg-gray-700 hover:bg-gray-600 text-yellow-500 transition-colors" title="Logs"><ScrollText size={20} /></button>}
@@ -201,6 +242,7 @@ function Dashboard() {
           {/* NOTE INDICATOR */}
           {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
 
+          {/* CONTROLS */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap">Take Control</button>
@@ -225,13 +267,7 @@ function Dashboard() {
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         {PANEL_LAYOUT.map((row) => (
           <div key={row.id} className={`grid gap-6 ${row.cols}`}>
-            {row.cards.map((card, i) => (
-              <StationCard
-                key={i}
-                card={card}
-                isRemote={canInteract} // <--- This now carries the strict logic
-              />
-            ))}
+            {row.cards.map((card, i) => <StationCard key={i} card={card} isRemote={canInteract} />)}
           </div>
         ))}
       </div>

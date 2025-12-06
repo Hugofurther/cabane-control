@@ -182,12 +182,60 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ Set weather to update once per update frequency to avoid 429 (too many requests)
 
+√ When a user acknowledge a flash message in FlashViewer, the system behaves the same as if the user had seen it in the thread and dismisses it as being unseen.
+
+√ For the messaging system. I want to add an optional feature, where when selected, the message sent will be displayed in a separate very obvious and impossible to miss pop-up window in the center of the screen taking about 60% -75% of the screen. This window will replace or use the "Urgent" feature, but replace the "Rappel" banner.
+	- If a user sends a message with this option. The receiver will receive the message in the thread, but the Pop-up Window will appear displaying the message. When dismissed the message remains in the chat thread ( Global or private ).
+	- This Pop-up window will also be used if a user clicks on a message. The message will open and be displayed in this pop-up.
+	- Another way to use this pop-up is with the notes:
+		- If a user creates a note with this option selected the note will appear in this Pop-up automatically.
+		- When a user clicks on a note, The pop-up appears and the note is displayed in it.
+
+	√ When such a pop-up window appears on a user interface, it remains there until dismissed, even if the user logs out. When logging in again the pop-up show up again until dismissed.
+
+	√ When multiple pop-ups occur, they are stacked on top of each other and dismissed one at a time. The newer message on the top. There should be a way to scroll through multiple pop-ups without dismissing them.
+
+	√ This window should be dismissible by either clicking on a dismiss button or click outside of the window.
+
+	√ If the message is too long to display within the size of the pop-up window, the user can scroll. Swiping will only affect the pop-up if the mouse cursor is over the window. If the mouse cursor off of the window, the swiping scrolls the main window or the MessageDrawer, which ever the mouse cursor is over
+
+	√ What could we call this optional feature?
+
+√ I like the way all Flash Message" are added in the same window with arrow browsing. Can we make it that each of the "Flash Message" need to be "Acknowledged" separately and independently from each other. We can use the same button, but each message need to have its page's "acknowledge" button clicked.
+
+√ in the FlashViewer of the recipient, can we have a list or who the Falsh Message was sent to (e.g. Global, Group 1, User 1)
+
+√ A new message appears at the wrong place in the thread of a receiver at first. The receiver should also have a new message appear at the bottom of its thread automatically before the timestamp is calculated and the message is placed in the corned timestamp order.
+
+√ when a new message gets added, is there a way to make if obvious to the user there are more message if you scroll down? Or should we simple get the thread window to scroll to the last message automatically when they come in?
+
+√ The urgent message dismissal should only happen on the current user. Any other user which did not dismiss the "Urgent" should still see the message as "Urgent"
+
+√ Let's add a badge to the envelope icon when there are new messages with the number of new messages. ( think iOS )
+
+√ When new messages are present and the user clicks to open the MessageDrawer, a badge with the number of new messages are on the "Chat" tab if new messages in general chat. If new messages are in Users or Groups, a badge is display on these, the same.
+
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
 
+Let's fix one thing at a time. Let's tackle the autoscrolling. I think I know where the discrepancy is between what I'm requesting and what you are giving me.
+
+In a user session.
+
+1. If a message thread in the MessageDrawer is active (open)
+- New message comes in -> stick to the bottom
+
+2. If a message thread in the MessageDrawer is not active (not in sight)
+- User leaves a thread x, the position of the thread window is retained.
+- one or many New message comes in the message thread x.
+- User navigates back to the message thread x -> if no new message, take position at the bottom of the thread window automatically. If new messages came in return to the retained position and add a bouncing "New Messages" blue badge.
+
+---
+
+- Is it possible for the app to be detect when the screen start to re-arrange the layout when the screen becomes too small to fit as intended. Before re-arranging the layout, reduce the size of the cards and elements in the card to a certain point, then only after reducing the size of the components, then re-organize the layout, but before re-organizing the layout, hide the disabled stations to reduce clutter.
 
 
 
@@ -195,51 +243,64 @@ Requested
 -------------------------------------------------------
 -------------------------------------------------------
 
-- We are back with a suer without control's StationCard taking the light gray color as if it had control. Can we keep the darker color when a user doesn't have control. The way it is, if a user takes control, all user's online station card have a light background and it should not if the user doesn't have control.
+
+
+I have updated my knowledge base with the Reverted MessageDrawer.jsx (the simpler version without the complex useLayoutEffect or floating scroll button).
+Here is the description of the behavior in the current code:
+
+1. Action: Opening a Chat Thread
+
+When you click on a Tab (Global) or select a User/Group:
+Load: The conversation loads from the server.
+Scroll: The view automatically scrolls to the very bottom (latest message) immediately.
+Technical detail: A setTimeout of 100ms ensures the DOM is fully rendered before the scroll happens.
+Read Status: All unread messages currently loaded in that thread are immediately sent to the server to be Marked as Read.
+
+
+2. Action: Live Update (While Thread is Open)
+
+If you are looking at the thread and a new message arrives:
+Render: The new message is added to the list.
+Auto-Scroll: Because the message list length changed, the effect triggers again and force-scrolls to the bottom to show the new message.
+Note: In this simple version, if you were scrolled up reading history, this will pull you back down to the bottom.
+Read Status: The new message is immediately Marked as Read because the drawer is open.
+
+-------------------------------------------------------
+-------------------------------------------------------
+
+
+
 
 - is there a way for me to ssh into the server fro a remote location?
 
+NOTES
+- Notes should be different than a simple message.
+	- There should be a title and a body.
+
+
+
 MESSAGIN
 
-- an existing message could be set to "urgent" after sent to tell people to look at it. The alert banner should open the message drawer to the "urgent message" that triggered it.
-
-- The urgent message dismissal should only happen on the current user. Any other user which did not dismiss the "Urgent" should still see the message as "Urgent"
-
----
-
-- For the messaging system. I want to add an optional feature, where when selected, the message sent will be displayed in a very obvious and impossible to miss pop-up window in the center of the screen taking about 75% of the screen. This window will replace or use the "Urgent" feature, but replace the "Rappel" banner.
-	- If a user sends a message with this option. The receiver will receive the message in the thread, but the Pop-up Window will appear displaying the message. When dismissed the message remains in the chat thread ( Global or private ).
-	- This Pop-up window will also be used if a user clicks on a message. The message will be displayed in this pop-up.
-	- Another way to use this pip-up is with the notes:
-		- If a user creates a note with this option selected the note will appear in this Pop-up automatically.
-		- When a user clicks on a note, The pop-up appears and the note is displayed in it.
-
-	- When such a pop-up window appears on a user interface, it remains there until dismissed, even if the user logs out. When logging in again the pop-up show up again until dismissed.
-
-	- When multiple pop-ups occur, they are stacked on top of each other and dismissed one at a time. The newer message on the top. There should be a way to scroll through multiple pop-ups without dismissing them.
-
-	- What could we call this optional feature?
-
----
-
-- Let's add a badge to the envelope icon when there are new messages with the number of new messages. ( think iOS )
-
-- When new messages are present and the user clicks to open the MessageDrawer, a badge with the number of new messages are on the "Chat" tab if new messages in general chat. If new messages are in Users or Groups, a badge is display on these, the same.
-
-- When a user opens the chats, display starting at the first message unread. This means we need to keep track of the messages that were read.
-
 - How many messages should be retrieved? I think in order to keep things smooth, there should be a max amount of messages loaded at once, then as the user scrolls, the messages in the direction we are scrolling are being loaded and the messages that are getting further than the scroll are being unloaded.
+
 
 
 WEATHER
 
 - when clicking on the Weather a weather panel shows up with the forecast
 
+
+
+
 SERVER
 
 - I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
 
 
+
+
+UX
+- When overing over a component, can we have a tiny comment or pop up explanation of the feature (e.g. overing over "Flash Message" -> pop-up content: Add this option to display the message in a big message viewer on the recipient's screen)
 
 
 
@@ -251,6 +312,8 @@ LAYOUT
 - Can we have the buttons and font to resize smaller before the switches get displayed differently
 
 - ( after messaging )Can I have a dropdown list of which users are online.
+
+
 
 
 
