@@ -217,6 +217,11 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 -------------------------------------------------------
 -------------------------------------------------------
+Debug messages
+- Live Update does not scroll to the bottom when a new message comes in.
+
+-------------------------------------------------------
+-------------------------------------------------------
 
 Requested
 

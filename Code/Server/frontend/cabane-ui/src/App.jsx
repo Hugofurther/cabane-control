@@ -22,7 +22,8 @@ function Dashboard() {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user
   } = useSocket();
 
-  const canInteract = systemState.controller !== 'CABANE';
+  const canInteract = systemState.controller === 'USER' &&
+    systemState.currentUser === user?.username;
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
