@@ -220,6 +220,8 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 Debug messages
 - Live Update does not scroll to the bottom when a new message comes in.
 
+- The Flash Message in the sending user thread are not dismissed when the recipient clicks on Acknowledge. Remember if the Flash message is sent to multiple recipient ( Global or Group ) the dismissal in the sender should only be dismissed when all recipients have acknowledged the message.
+
 -------------------------------------------------------
 -------------------------------------------------------
 

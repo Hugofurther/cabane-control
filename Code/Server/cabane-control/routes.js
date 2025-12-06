@@ -297,12 +297,15 @@ router.post('/control/toggle', authenticateToken, (req, res) => {
 // 💬 MESSAGING SYSTEM (UPDATED)
 // ============================================================
 
-// GET: Include is_read_by_me logic
+// GET MESSAGES (Pagination Support)
 router.get('/messages', authenticateToken, (req, res) => {
     const { type, targetId } = req.query;
     const userId = req.user.id;
 
-    // ✅ SQL JOIN for Per-User Read Status
+    // Pagination Params (Default 50)
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+
     let sql = `
     SELECT m.*, 
       u.username as sender,
@@ -344,10 +347,13 @@ router.get('/messages', authenticateToken, (req, res) => {
         params.push(userId, userId, userId);
     }
 
-    sql += ` ORDER BY m.timestamp DESC LIMIT 100`;
+    // Apply Pagination
+    sql += ` ORDER BY m.timestamp DESC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
 
     db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: "DB Error" });
+        // Return reversed so they appear chronological (Oldest -> Newest)
         res.json(rows.reverse());
     });
 });
