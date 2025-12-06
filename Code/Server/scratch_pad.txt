@@ -217,33 +217,30 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 -------------------------------------------------------
 -------------------------------------------------------
+
+- Trying to fix the "thrashing" / race condition when new message is send and being displayed on the sender's thread.
+
+- Implementing the "Optimistic UI with Stable Keys" for sending messages.
+
+
+-------------------------------------------------------
+-------------------------------------------------------
 Debug messages
-- Live Update does not scroll to the bottom when a new message comes in.
 
 - The Flash Message in the sending user thread are not dismissed when the recipient clicks on Acknowledge. Remember if the Flash message is sent to multiple recipient ( Global or Group ) the dismissal in the sender should only be dismissed when all recipients have acknowledged the message.
+
+
+- Storage usage displays "Unknows" can you tell me why?
 
 -------------------------------------------------------
 -------------------------------------------------------
 
 Requested
 
+- messages are no longer being logged into the database
 
-Let's fix one thing at a time. Let's tackle the autoscrolling. I think I know where the discrepancy is between what I'm requesting and what you are giving me.
-
-In a user session.
-
-1. If a message thread in the MessageDrawer is active (open)
-- New message comes in -> stick to the bottom
-
-2. If a message thread in the MessageDrawer is not active (not in sight)
-- User leaves a thread x, the position of the thread window is retained.
-- one or many New message comes in the message thread x.
-- User navigates back to the message thread x -> if no new message, take position at the bottom of the thread window automatically. If new messages came in return to the retained position and add a bouncing "New Messages" blue badge.
-
----
-
+-------------------------------------------------------
 - Is it possible for the app to be detect when the screen start to re-arrange the layout when the screen becomes too small to fit as intended. Before re-arranging the layout, reduce the size of the cards and elements in the card to a certain point, then only after reducing the size of the components, then re-organize the layout, but before re-organizing the layout, hide the disabled stations to reduce clutter.
-
 
 
 
@@ -282,19 +279,36 @@ Read Status: The new message is immediately Marked as Read because the drawer is
 
 NOTES
 - Notes should be different than a simple message.
-	- There should be a title and a body.
+	- The note window should be like a folder with a list of note titles with their date of last modification and user who created it.
+	- Notes are personal to user, but can be shared to selected users.
+	- When clicking on a note, it displays the full content of the note in the FlashViewer ( It should already do that. ) 
+	- A user can open one of their note onto another user as a type of memo reminder. This is acting like sending a "FlashMessage" but instead of just being a message that will be lost in the thread, The user can re-use the same note over and over as a recurring reminder or else.
 
 
 
 MESSAGIN
 
-- How many messages should be retrieved? I think in order to keep things smooth, there should be a max amount of messages loaded at once, then as the user scrolls, the messages in the direction we are scrolling are being loaded and the messages that are getting further than the scroll are being unloaded.
 
+- for messaging and notes, SHIFT + RETURN give a new line.
+
+-----------------------------------
+Let's fix one thing at a time. Let's tackle the autoscrolling. I think I know where the discrepancy is between what I'm requesting and what you are giving me.
+
+In a user session.
+
+1. If a message thread in the MessageDrawer is active (open)
+- New message comes in -> stick to the bottom
+
+2. If a message thread in the MessageDrawer is not active (not in sight)
+- User leaves a thread x, the position of the thread window is retained.
+- one or many New message comes in the message thread x.
+- User navigates back to the message thread x -> if no new message, take position at the bottom of the thread window automatically. If new messages came in return to the retained position and add a bouncing "New Messages" blue badge.
+-----------------------------------
 
 
 WEATHER
 
-- when clicking on the Weather a weather panel shows up with the forecast
+- when clicking on the Weather a weather pop-up panel centered opens with the forecast available still rotating between the locations set.
 
 
 
@@ -319,6 +333,14 @@ LAYOUT
 - Can we have the buttons and font to resize smaller before the switches get displayed differently
 
 - ( after messaging )Can I have a dropdown list of which users are online.
+
+
+CONNECTION
+- how long does a user logged in connection stays alive for?
+
+- when Main Controller is offline and a user manage to click on the "release to Cabane" button,
+	1. Release to Cabane should be hidden ( only release to server is available )
+	2. If the user manages to release to Cabane, if the Main Controller is offline, control should never automatically to the server.
 
 
 
@@ -349,11 +371,62 @@ Can we make the app bi-langual ( French / English )
 - 
 We need an automation system to empty the pipelines before they freeze:
 Trigger Drainage of the pipes manually
-1. Trigger Momentarily ST3 transport push buttons Index 12, 13
-2. ST3 feedback ledPair 12, 13 are Both red = ST3 transport pumps are OFF -> triggers ST3 switch index 15 + ST2 switch index 11 + momentary pushbutton index 8
+
+1. Start all Transport Pumps ( 1sec Push Buttons ): idx 0, 1, 8, 12, 13
+	- Trigger Manual or temp below x ˚C
+	- Verify all vacuum switches are ON ledPair idx 2, 3, 9, 14 are GREEN -> alarm if any is ON with a RED light.
+
+	Drain T2 ( Transport line 2 ST1 -> Cabane )
+	- ST1 idx 5 OFF = Closing Valve T2 (Transport line 2 ST1 -> Cabane)
+	- ST1 idx 6 ON = Drain Valve T2 -> ST1
+
+2. Drain the transport line between ST2 and ST3
+	- Trigger: When ledPair idx 12 and idx 13 are RED ( Transport Pumps stopped = low level of water in vacuum tank )
+	
+	Setup Valves to Drain the transport line between ST2 and ST3  
+	- ST2 ledPair idx 8 is GREEN -> if not push ON (1 sec ) = Pompe Transport momentary ON ( 1 sec ) to make sure it is working
+	- ST3 idx 15 ON = Drain Valve ST2 > ST3
+	- ST2 idx 11 ON = Drain Valve ST3 > ST2
+
+2. Drain the transport line between ST1 and ST2 + Close Drain valves for the transport line between ST2 and ST3
+	- Trigger: When ST2 ledPair idx 8 is RED ( Transport Pumps stopped = low level of water in vacuum tank )
+	
+	Setup Valves to Drain the transport line between ST1 and ST2
+	- ST1 ledPair idx 0 and 1 are GREEN -> if not push ON (1 sec ) = Transport Pump momentary ON ( 1 sec ) to make sure it is working
+	- ST2 idx 10 ON = Drain Valve ST1 > ST2
+	- ST1 idx 7 ON = Drain Valve ST2 > ST1
+
+	Close Drain ST3 ( line should be empty by now )
+	- ST3 idx 15 OFF = Drain Valve ST2 > ST3
+
+	Close Drain ST1 T2 ( Line should be empty by now )
+	- ST1 idx 6 OFF = Drain Valve T2 -> ST1
+
+3. Drain the transport line between Cabane and ST1 + Close Drain valves for the transport line between ST1 and ST2
+	- Trigger: When ST1 ledPair idx 0 and 1 are RED ( Transport Pumps stopped = low level of water in vacuum tank )
+	
+	Setup Valves to Drain the transport line between ST1 and ST2
+	- ST1 idx 4 ON = Drain Valve T1 > ST1
+
+	Close Drain ST2 ( line should be empty by now )
+	- ST2 idx 10 and 11 OFF = Drain Valve ST2 > ST3
+
+	- Set timer
+
+4. Finish Drainage
+	- Trigger: 15 min timer or manual
+
+	Close Drain ST2 ( line should be empty by now )
+	- ST1 idx 4 and 7 OFF = Drain Valve T1 > ST1 and ST2 > ST1
+
+	Make sure thermometers are ON
+	- Switches idx 22, 24 ON
+
+	
 
 
-- St3 S3>S3 + St2 S3>S2 + ST2 transport + st3 vacuum 
+
+ST3 S3>S3 ON + St2 S3>S2 + ST2 transport + st3 vacuum + ST1 T2 Ferme + T2 Vidange
 - When ST2 Tranp stops
 - Ferme St3 S3>S3 + St2 S3>S2 + ST2 transport
 - ST2 S2>S1 + St1 St2>St1 + ST1 transport

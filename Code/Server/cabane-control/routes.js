@@ -379,9 +379,9 @@ router.post('/messages/read', authenticateToken, (req, res) => {
     });
 });
 
-// POST: Create Message
+// POST: Create Message (With Echo)
 router.post('/messages', authenticateToken, (req, res) => {
-    const { content, recipientId, groupId, priority } = req.body;
+    const { content, recipientId, groupId, priority, tempId } = req.body; // ✅ Accept tempId
     const rId = recipientId || null;
     const gId = groupId || null;
 
@@ -390,10 +390,10 @@ router.post('/messages', authenticateToken, (req, res) => {
         if (err) return res.status(500).json({ error: "Send failed" });
 
         if (req.io) {
-            // Fetch Group Name / Recipient Name for the socket event if needed, or let client fetch.
-            // Minimal payload for speed:
             req.io.emit('NEW_MESSAGE', {
                 id: this.lastID,
+                // ✅ Echo back the tempId so frontend can reconcile
+                tempId: tempId,
                 timestamp: new Date().toISOString(),
                 sender_id: req.user.id,
                 sender: req.user.username,
@@ -401,7 +401,7 @@ router.post('/messages', authenticateToken, (req, res) => {
                 group_id: gId,
                 content,
                 priority,
-                is_read_by_me: 0, // Default
+                is_read_by_me: 0,
                 is_ack_by_me: 0
             });
         }
