@@ -6,3 +6,5 @@
 *.svg
 *.ai
 *.webp
+
+node_modules/

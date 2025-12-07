@@ -2,13 +2,15 @@ const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./cabane.db');
 const bcrypt = require('bcryptjs');
 
-// Load env to get Admin Email
+// Load environment variables (for Admin Email)
 require('dotenv').config();
 
 db.serialize(() => {
-  console.log("--- Initializing Cabane Control Database (v2 Complete) ---");
+  console.log("--- Initializing Cabane Control Database (Full Production Schema) ---");
 
-  // 1. USERS Table (Consolidated Schema)
+  // ============================================================
+  // 1. USERS & PERMISSIONS
+  // ============================================================
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
@@ -18,14 +20,16 @@ db.serialize(() => {
     status TEXT DEFAULT 'UNVERIFIED', -- 'UNVERIFIED', 'PENDING', 'ACTIVE', 'REJECTED'
     verification_token TEXT,
     reset_token TEXT,
-    settings TEXT DEFAULT '{}',       -- JSON string for UI prefs
+    settings TEXT DEFAULT '{}',       -- JSON: { soundEnabled, vibrationEnabled, tempUnit, clockFormat... }
     can_control BOOLEAN DEFAULT 0,    -- Permission to drive system
     can_view_logs BOOLEAN DEFAULT 0,  -- Permission to read logs
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
   console.log("✔ Users Table Ready");
 
-  // 2. LOGS Table
+  // ============================================================
+  // 2. SYSTEM LOGS & SETTINGS
+  // ============================================================
   db.run(`CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -37,35 +41,67 @@ db.serialize(() => {
   )`);
   console.log("✔ Logs Table Ready");
 
-  // 3. MESSAGES Table
-  db.run(`CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    sender_id INTEGER,
-    recipient_id INTEGER, 
-    content TEXT,
-    is_read BOOLEAN DEFAULT 0,
-    FOREIGN KEY(sender_id) REFERENCES users(id)
-  )`);
-  console.log("✔ Messages Table Ready");
-
-  // 4. SYSTEM SETTINGS Table (New)
-  // Key: 'timezone', Value: 'America/New_York'
   db.run(`CREATE TABLE IF NOT EXISTS system_settings (
     key TEXT PRIMARY KEY,
     value TEXT
   )`);
-
-  // Insert Default Timezone if missing
+  // Insert default Timezone if missing
   db.run("INSERT OR IGNORE INTO system_settings (key, value) VALUES ('timezone', 'UTC')");
+  console.log("✔ System Settings Table Ready");
 
-  console.log("✔ Settings Table Ready");
+  // ============================================================
+  // 3. MESSAGING SYSTEM
+  // ============================================================
 
+  // Messages Container
+  db.run(`CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sender_id INTEGER,
+    recipient_id INTEGER, -- NULL for Global/Group
+    group_id INTEGER,     -- NULL for Global/DM
+    content TEXT,
+    priority TEXT DEFAULT 'NORMAL', -- 'NORMAL' or 'URGENT'
+    FOREIGN KEY(sender_id) REFERENCES users(id)
+  )`);
 
-  // 5. Create Default Admin Account
+  // Groups
+  db.run(`CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
+  // Group Memberships
+  db.run(`CREATE TABLE IF NOT EXISTS group_members (
+    group_id INTEGER,
+    user_id INTEGER,
+    PRIMARY KEY (group_id, user_id)
+  )`);
+
+  // Per-User Read Receipts
+  db.run(`CREATE TABLE IF NOT EXISTS message_reads (
+    message_id INTEGER, 
+    user_id INTEGER, 
+    read_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+    PRIMARY KEY (message_id, user_id)
+  )`);
+
+  // Per-User Urgency Acknowledgment
+  db.run(`CREATE TABLE IF NOT EXISTS message_urgency_acks (
+    message_id INTEGER, 
+    user_id INTEGER, 
+    ack_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
+    PRIMARY KEY (message_id, user_id)
+  )`);
+  console.log("✔ Messaging Tables Ready");
+
+  // ============================================================
+  // 4. DEFAULT ADMIN CREATION
+  // ============================================================
   const adminName = 'admin';
-  const adminPass = 'cabane'; // Change immediately after login
-  const adminEmail = process.env.ADMIN_EMAIL || 'hugofurther@gmail.com';
+  const adminPass = 'cabane'; // ⚠️ Change immediately after login
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@local.host';
 
   db.get("SELECT * FROM users WHERE username = ?", [adminName], (err, row) => {
     if (!row) {
@@ -77,8 +113,13 @@ db.serialize(() => {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
-      // Admin gets ALL permissions by default
-      const defaultSettings = JSON.stringify({ soundEnabled: true, vibrationEnabled: true });
+      // Admin gets ALL permissions and default settings
+      const defaultSettings = JSON.stringify({
+        soundEnabled: true,
+        vibrationEnabled: true,
+        clockFormat: '24h',
+        tempUnit: 'C'
+      });
 
       stmt.run(adminName, hash, adminEmail, 'ADMIN', 'ACTIVE', 1, 1, defaultSettings);
       stmt.finalize();
@@ -90,7 +131,7 @@ db.serialize(() => {
   });
 });
 
-// Close connection
+// Close connection safely
 setTimeout(() => {
   db.close();
   console.log("--- Database Setup Complete ---");
