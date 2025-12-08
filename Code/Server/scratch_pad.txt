@@ -234,16 +234,55 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ When writing a message and selecting "Flash Message" this should not take the "focus" away from the text input box and pressing return should send the message the same as if we select the input box again after clicking on the "Flash Message" button.
 
+√ the creator (admin) of a group should be able to rename the groups. When this happens, A FlashView memo should appear in all the members window to be acknowledged.
+
+√ the creator (admin) of a group should be able add or remove members of a group quietly or with a FlashView Memo ( to the group ( publicly ) or just the member being added / removed ( Privately )
+
+√ Group names should be constraint to unique per users (e.g.: if there is an existing group named "Maple" with users "A" and "B", user "C" cannot name a new group with user "A" and/or user "B", but user "C" can create a new group named "Maple" with user "D". If a user tried to create a group with a name constraint, the user gets prompt the name is already taken. 
+
+√ Clicking on the Users tab gives me a blank screen
+
+√ When created a new Group, the message auto generated 'Group "test7" created by hugo' should be sent at "Flash Message".
+
+√ in the header of a group message, a list of the members should be listed under the name of the group in an expandable truncated label.
+
+√ the admin of a group can delete a group and/or move its "admin status" to another member.
+
+√ When adding a user and sending a public Flash Message, the name of the user being added or removed should be indicated.
+
+√ Changes in groups should reflect live in each of the group in the groups table
+
+√ When a user has been removed from a group, they should not get the badge notification when a new group message is sent.
+
+√ the badges for new unseen message for a group should be displayed in red and not blue on the specific group in the Groups tab.
+
+√ Only the administrator of a group can access the administration part ( the gear icon in of the group )
+
+√ When a user get's removed from a group, since they are not receiving the group messages and need to be notified when "Public" is selected, in addition to send the notification to the Group, the removed user should be notified in a DM.
+
+√ let's make the default modification the default notifyType in the group admin to a usersetting.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
 
-- Group names should be constraint to unique per users (e.g.: if there is an existing group named "Maple" with users "A" and "B", user "C" cannot name a new group with user "A" and/or user "B", but user "C" can create a new group named "Maple" with user "D". If a user tried to create a group with a name constraint, the user gets prompt the name is already taken. 
 
-- the creator (admin) of a group should be able to rename the groups. When this happens, A FlashView memo should appear in all the members window to be acknowledged.
 
-- the creator (admin) of a group should be able add or remove members of a group quietly or with a FlashView Memo ( to the group ( publicly ) or just the member being added / removed ( Privately )
+
+
+
+
+
+---
+Debug
+
+
+
+---
+
+
+
 
 
 

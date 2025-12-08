@@ -95,13 +95,12 @@ function Dashboard() {
 
   // --- FLASH MESSAGE LOGIC ---
   const checkFlashMessages = async () => {
-    if (!user) return;
+    if (!user) return 0; // Return 0 if no user
     const token = localStorage.getItem('cabane_token');
     try {
       const res = await axios.get(`${API_URL}/api/messages`, { headers: { Authorization: `Bearer ${token}` } });
       const msgs = res.data;
 
-      // Filter for: URGENT AND NOT ACKNOWLEDGED BY ME AND NOT SENT BY ME
       const urgentUnacked = msgs.filter(m =>
         m.priority === 'URGENT' &&
         m.is_ack_by_me === 0 &&
@@ -109,7 +108,8 @@ function Dashboard() {
       );
 
       setFlashMessages(urgentUnacked);
-    } catch (e) { }
+      return urgentUnacked.length; // ✅ RETURN COUNT
+    } catch (e) { return 0; }
   };
 
   const handleDismissFlash = async (msgId) => {
@@ -129,37 +129,35 @@ function Dashboard() {
 
   // Poll for Flash Messages
   useEffect(() => {
-    if (user) checkFlashMessages();
-    const interval = setInterval(() => { if (user) checkFlashMessages(); }, 5000);
-    return () => clearInterval(interval);
-  }, [user]);
-
-  // --- EFFECT: SOCKET LISTENER ---
-  useEffect(() => {
     if (!socket) return;
 
     const handleNewMessage = (msg) => {
-      // Trigger Flash Check if Urgent
+      // 1. FILTER: If it's a Private DM for someone else, IGNORE IT completely.
+      if (msg.recipient_id && String(msg.recipient_id) !== String(user?.id)) {
+        return;
+      }
+
+      // 2. CHECK: If Urgent, verify with API before beeping (Handles Public Group Removal)
       if (msg.priority === 'URGENT' && String(msg.sender_id) !== String(user?.id)) {
-        checkFlashMessages();
-        playTone('CHIRP');
+        // Only beep if the server confirms we actually have a flash message waiting
+        checkFlashMessages().then((count) => {
+          if (count > 0) playTone('CHIRP');
+        });
       }
     };
 
-    // ✅ NEW: Handle Downgrades (Sender Cancel or All Acked)
     const handleUpdateMessage = (data) => {
       if (data.priority === 'NORMAL') {
-        // Remove from flash queue immediately (Closes Popup)
         setFlashMessages(prev => prev.filter(m => m.id !== data.id));
       }
     };
 
     socket.on('NEW_MESSAGE', handleNewMessage);
-    socket.on('UPDATE_MESSAGE', handleUpdateMessage); // <--- Add Listener
+    socket.on('UPDATE_MESSAGE', handleUpdateMessage);
 
     return () => {
       socket.off('NEW_MESSAGE', handleNewMessage);
-      socket.off('UPDATE_MESSAGE', handleUpdateMessage); // <--- Cleanup
+      socket.off('UPDATE_MESSAGE', handleUpdateMessage);
     };
   }, [socket, user]);
 

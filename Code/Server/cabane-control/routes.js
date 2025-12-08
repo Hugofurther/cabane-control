@@ -510,15 +510,31 @@ router.get('/users/directory', authenticateToken, (req, res) => {
     db.all("SELECT id, username, role, status FROM users WHERE status='ACTIVE'", [], (err, rows) => res.json(rows));
 });
 
+// GET CONVERSATIONS (Updated to include created_by)
 router.get('/conversations', authenticateToken, (req, res) => {
     const userId = req.user.id;
     const conversations = [];
     conversations.push({ type: 'GLOBAL', name: 'Global Chat', id: 'global' });
     conversations.push({ type: 'NOTES', name: 'My Notes', id: 'notes' });
 
-    const groupSql = `SELECT g.id, g.name, GROUP_CONCAT(u.username, ', ') as members FROM groups g JOIN group_members gm ON g.id = gm.group_id JOIN users u ON gm.user_id = u.id WHERE g.id IN (SELECT group_id FROM group_members WHERE user_id = ?) GROUP BY g.id`;
+    // ✅ ADDED g.created_by
+    const groupSql = `
+        SELECT g.id, g.name, g.created_by, GROUP_CONCAT(u.username, ', ') as members 
+        FROM groups g 
+        JOIN group_members gm ON g.id = gm.group_id 
+        JOIN users u ON gm.user_id = u.id 
+        WHERE g.id IN (SELECT group_id FROM group_members WHERE user_id = ?) 
+        GROUP BY g.id
+    `;
+
     db.all(groupSql, [userId], (err, groups) => {
-        if (groups) groups.forEach(g => conversations.push({ type: 'GROUP', name: g.name, id: g.id, members: g.members }));
+        if (groups) groups.forEach(g => conversations.push({
+            type: 'GROUP',
+            name: g.name,
+            id: g.id,
+            members: g.members,
+            created_by: g.created_by // ✅ Pass to frontend
+        }));
 
         const dmSql = `SELECT DISTINCT u.id, u.username FROM users u JOIN messages m ON (m.sender_id = u.id AND m.recipient_id = ?) OR (m.recipient_id = u.id AND m.sender_id = ?) WHERE u.id != ?`;
         db.all(dmSql, [userId, userId, userId], (err, users) => {
@@ -540,14 +556,219 @@ router.post('/api/messages/delete', authenticateToken, (req, res) => {
     });
 });
 
-// Group creation/leave endpoints...
-router.post('/groups', authenticateToken, (req, res) => {
+// ============================================================
+// 👥 GROUP MANAGEMENT
+// ============================================================
+
+// 1. CREATE GROUP
+router.post('/groups', authenticateToken, async (req, res) => {
     const { name, memberIds } = req.body;
-    db.run("INSERT INTO groups (name) VALUES (?)", [name], function () {
-        const gid = this.lastID;
-        db.run("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)", [gid, req.user.id]);
-        if (memberIds) memberIds.forEach(uid => db.run("INSERT INTO group_members VALUES (?, ?)", [gid, uid]));
-        res.json({ success: true });
+    const creatorId = req.user.id;
+    const allMemberIds = [...new Set([...memberIds, creatorId])];
+
+    const placeholders = allMemberIds.map(() => '?').join(',');
+    const checkSql = `SELECT u.username FROM users u JOIN group_members gm ON u.id = gm.user_id JOIN groups g ON gm.group_id = g.id WHERE g.name = ? AND u.id IN (${placeholders})`;
+
+    db.get(checkSql, [name, ...allMemberIds], (err, row) => {
+        if (row) return res.status(409).json({ error: `User '${row.username}' is already in a group named '${name}'.` });
+
+        db.run("INSERT INTO groups (name, created_by) VALUES (?, ?)", [name, creatorId], function (err) {
+            if (err) return res.status(500).json({ error: "DB Error" });
+
+            const groupId = this.lastID;
+            const insertMember = db.prepare("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)");
+            allMemberIds.forEach(uid => insertMember.run(groupId, uid));
+            insertMember.finalize();
+
+            // Notify System
+            const sysMsg = `Group "${name}" created by ${req.user.username}`;
+            db.run("INSERT INTO messages (sender_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)",
+                [creatorId, groupId, sysMsg, new Date().toISOString()],
+                function () {
+                    if (req.io) {
+                        req.io.emit('NEW_MESSAGE', {
+                            id: this.lastID,
+                            sender_id: creatorId,
+                            sender: 'SYSTEM',
+                            group_id: groupId,
+                            content: sysMsg,
+                            priority: 'URGENT',
+                            timestamp: new Date().toISOString()
+                        });
+
+                        // ✅ NEW: Notify all members to update their Group List
+                        allMemberIds.forEach(uid => {
+                            req.io.emit('GROUP_MEMBERSHIP_UPDATE', {
+                                targetUserId: uid,
+                                groupId: groupId,
+                                action: 'ADD'
+                            });
+                        });
+                    }
+                }
+            );
+            res.json({ success: true, groupId });
+        });
+    });
+});
+
+// 2. RENAME GROUP (With Flash Notification)
+router.post('/groups/:id/rename', authenticateToken, (req, res) => {
+    const groupId = req.params.id;
+    const { newName } = req.body;
+    const userId = req.user.id;
+
+    // Check Permissions & Execute
+    db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
+        if (!group) return res.status(404).json({ error: "Group not found" });
+        if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Only the creator can rename." });
+
+        // Check Name Constraint for ALL current members
+        const checkSql = `
+            SELECT u.username 
+            FROM users u
+            JOIN group_members gm ON u.id = gm.user_id
+            JOIN groups g ON gm.group_id = g.id
+            WHERE g.name = ? AND g.id != ? AND u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)
+        `;
+
+        db.get(checkSql, [newName, groupId, groupId], (err, conflict) => {
+            if (conflict) {
+                return res.status(409).json({ error: `Cannot rename: User '${conflict.username}' is already in another group named '${newName}'.` });
+            }
+
+            // Update Name
+            db.run("UPDATE groups SET name = ? WHERE id = ?", [newName, groupId], () => {
+
+                // ⚡ SEND FLASH MEMO (URGENT)
+                const alertMsg = `⚠️ GROUP RENAMED\n\nThis group has been renamed from "${group.name}" to "${newName}".\nPlease acknowledge.`;
+
+                db.run("INSERT INTO messages (sender_id, group_id, content, priority) VALUES (?, ?, ?, 'URGENT')",
+                    [userId, groupId, alertMsg],
+                    function () {
+                        if (req.io) {
+                            req.io.emit('NEW_MESSAGE', {
+                                id: this.lastID,
+                                sender_id: userId,
+                                sender: 'SYSTEM',
+                                group_id: groupId,
+                                content: alertMsg,
+                                priority: 'URGENT', // FLASH
+                                timestamp: new Date().toISOString(),
+                                is_read_by_me: 0,
+                                is_ack_by_me: 0
+                            });
+                        }
+                    }
+                );
+                res.json({ success: true });
+            });
+        });
+    });
+});
+
+// 3. MANAGE MEMBERS (Add/Remove with Options)
+// 3. MANAGE MEMBERS
+router.post('/groups/:id/members', authenticateToken, (req, res) => {
+    const groupId = req.params.id;
+    const { targetUserId, action, notificationType } = req.body;
+    const userId = req.user.id;
+
+    db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
+        if (!group) return res.status(404).json();
+        if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Permission denied" });
+
+        db.get("SELECT username FROM users WHERE id = ?", [targetUserId], (err, targetUser) => {
+            if (!targetUser) return res.status(404).json({ error: "Target user not found" });
+            const targetName = targetUser.username;
+
+            if (action === 'ADD') {
+                const checkSql = `SELECT 1 FROM groups g JOIN group_members gm ON g.id = gm.group_id WHERE g.name = ? AND gm.user_id = ?`;
+                db.get(checkSql, [group.name, targetUserId], (err, conflict) => {
+                    if (conflict) return res.status(409).json({ error: "User already in a group with this name." });
+
+                    db.run("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)", [groupId, targetUserId], function () {
+                        if (this.changes > 0) {
+                            handleMemberNotification(req.io, userId, groupId, targetUserId, 'ADDED', notificationType, group.name, targetName);
+                            // ✅ NEW: Notify Target
+                            req.io.emit('GROUP_MEMBERSHIP_UPDATE', { targetUserId, groupId, action: 'ADD' });
+                        }
+                        res.json({ success: true });
+                    });
+                });
+            }
+            else if (action === 'REMOVE') {
+                db.run("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", [groupId, targetUserId], function () {
+                    if (this.changes > 0) {
+                        handleMemberNotification(req.io, userId, groupId, targetUserId, 'REMOVED', notificationType, group.name, targetName);
+                        reevaluateUrgentMessages(req.io);
+                        // ✅ NEW: Notify Target
+                        req.io.emit('GROUP_MEMBERSHIP_UPDATE', { targetUserId, groupId, action: 'REMOVE' });
+                    }
+                    res.json({ success: true });
+                });
+            }
+        });
+    });
+});
+
+// 4. DELETE GROUP
+router.post('/groups/:id/delete', authenticateToken, (req, res) => {
+    const groupId = req.params.id;
+    const userId = req.user.id;
+
+    db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
+        if (!group) return res.status(404).json();
+        if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Permission denied" });
+
+        db.run("DELETE FROM groups WHERE id = ?", [groupId], () => {
+            reevaluateUrgentMessages(req.io);
+            // ✅ NEW: Notify Everyone to remove this group
+            req.io.emit('GROUP_DELETED', { groupId });
+            res.json({ success: true });
+        });
+    });
+});
+
+// 5. TRANSFER OWNERSHIP
+router.post('/groups/:id/transfer', authenticateToken, (req, res) => {
+    const groupId = req.params.id;
+    const { newAdminId } = req.body;
+    const userId = req.user.id;
+
+    db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
+        if (!group) return res.status(404).json();
+        if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Permission denied" });
+
+        // Get New Admin Name
+        db.get("SELECT username FROM users WHERE id = ?", [newAdminId], (err, newAdmin) => {
+            if (!newAdmin) return res.status(404).json({ error: "New admin not found" });
+
+            db.run("UPDATE groups SET created_by = ? WHERE id = ?", [newAdminId, groupId], () => {
+
+                // Notify Group via Flash Message
+                const alertMsg = `⚠️ ADMIN TRANSFER\n\nOwnership of this group has been transferred to ${newAdmin.username}.`;
+                const timestamp = new Date().toISOString();
+
+                db.run("INSERT INTO messages (sender_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)",
+                    [userId, groupId, alertMsg, timestamp],
+                    function () {
+                        if (req.io) {
+                            req.io.emit('NEW_MESSAGE', {
+                                id: this.lastID,
+                                sender_id: userId,
+                                sender: 'SYSTEM',
+                                group_id: groupId,
+                                content: alertMsg,
+                                priority: 'URGENT',
+                                timestamp: timestamp
+                            });
+                        }
+                    }
+                );
+                res.json({ success: true });
+            });
+        });
     });
 });
 
@@ -630,5 +851,59 @@ const reevaluateUrgentMessages = (io) => {
         });
     });
 };
+
+// Helper for Member Notifications
+// ✅ Updated signature to accept targetName
+function handleMemberNotification(io, adminId, groupId, targetId, action, type, groupName, targetName) {
+    if (type === 'QUIET') return;
+
+    const timestamp = new Date().toISOString();
+    const priority = 'URGENT';
+
+    // 1. Primary Message (The requested one)
+    let content = "";
+    let recipientId = null;
+    let targetGroupId = null;
+
+    if (type === 'PRIVATE') {
+        recipientId = targetId;
+        content = `NOTICE: You have been ${action} ${action === 'ADDED' ? 'to' : 'from'} the group "${groupName}".`;
+    }
+    else if (type === 'PUBLIC') {
+        targetGroupId = groupId;
+        content = `GROUP UPDATE: User "${targetName}" has been ${action}.`;
+    }
+
+    const insertMsg = (rId, gId, txt) => {
+        db.run("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+            [adminId, rId, gId, txt, priority, timestamp],
+            function () {
+                if (io) {
+                    io.emit('NEW_MESSAGE', {
+                        id: this.lastID,
+                        sender_id: adminId,
+                        sender: 'SYSTEM',
+                        recipient_id: rId,
+                        group_id: gId,
+                        content: txt,
+                        priority,
+                        timestamp,
+                        is_read_by_me: 0,
+                        is_ack_by_me: 0
+                    });
+                }
+            }
+        );
+    };
+
+    // Send Primary
+    insertMsg(recipientId, targetGroupId, content);
+
+    // 2. ✅ SECONDARY: If Public Remove, ALSO notify the removed user via DM
+    if (type === 'PUBLIC' && action === 'REMOVED') {
+        const dmContent = `NOTICE: You have been REMOVED from the group "${groupName}" (Publicly).`;
+        insertMsg(targetId, null, dmContent);
+    }
+}
 
 module.exports = router;
