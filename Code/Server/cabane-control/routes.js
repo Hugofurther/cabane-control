@@ -381,20 +381,24 @@ router.post('/messages/read', authenticateToken, (req, res) => {
 
 // POST: Create Message (With Echo)
 router.post('/messages', authenticateToken, (req, res) => {
-    const { content, recipientId, groupId, priority, tempId } = req.body; // ✅ Accept tempId
+    const { content, recipientId, groupId, priority, tempId } = req.body;
     const rId = recipientId || null;
     const gId = groupId || null;
 
-    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority) VALUES (?, ?, ?, ?, ?)");
-    stmt.run(req.user.id, rId, gId, content, priority || 'NORMAL', function (err) {
+    // ✅ FIX 1: Generate Master Timestamp here (ISO 8601 UTC)
+    const masterTimestamp = new Date().toISOString();
+
+    // ✅ FIX 2: Explicitly insert this timestamp into DB
+    const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, ?, ?, ?)");
+
+    stmt.run(req.user.id, rId, gId, content, priority || 'NORMAL', masterTimestamp, function (err) {
         if (err) return res.status(500).json({ error: "Send failed" });
 
         if (req.io) {
             req.io.emit('NEW_MESSAGE', {
                 id: this.lastID,
-                // ✅ Echo back the tempId so frontend can reconcile
                 tempId: tempId,
-                timestamp: new Date().toISOString(),
+                timestamp: masterTimestamp, // ✅ Send EXACT same string to socket
                 sender_id: req.user.id,
                 sender: req.user.username,
                 recipient_id: rId,
@@ -410,16 +414,63 @@ router.post('/messages', authenticateToken, (req, res) => {
     stmt.finalize();
 });
 
+// POST: Acknowledge/Downgrade Urgency
 router.post('/messages/downgrade', authenticateToken, (req, res) => {
     const { messageId } = req.body;
     const userId = req.user.id;
 
+    // 1. Mark as Acked by this user
     db.run("INSERT OR IGNORE INTO message_urgency_acks (message_id, user_id) VALUES (?, ?)",
         [messageId, userId],
-        (err) => {
+        function (err) {
             if (err) return res.status(500).json({ error: "Update failed" });
-            // Check for global resolve logic here if desired (copy from previous turns)
-            // For now, per-user ack is sufficient for UI.
+
+            // 2. CHECK IF ALL RECIPIENTS HAVE ACKED
+            // Logic:
+            // A. Get message info (Recipient/Group/Global)
+            // B. Count total target users
+            // C. Count total acks
+
+            const sqlCheck = `
+                SELECT m.id, m.sender_id, m.recipient_id, m.group_id, m.priority,
+                       (SELECT COUNT(*) FROM message_urgency_acks WHERE message_id = m.id) as ack_count,
+                       (SELECT COUNT(*) FROM group_members WHERE group_id = m.group_id) as group_count,
+                       (SELECT COUNT(*) FROM users WHERE status='ACTIVE') as global_count
+                FROM messages m WHERE m.id = ?
+            `;
+
+            db.get(sqlCheck, [messageId], (err, row) => {
+                if (!row) return res.json({ success: true }); // Should not happen
+
+                let targetCount = 0;
+                let isDowngradeNeeded = false;
+
+                if (row.recipient_id) {
+                    targetCount = 1; // Just the recipient
+                } else if (row.group_id) {
+                    // Group Size - 1 (Sender doesn't ack)
+                    targetCount = row.group_count - 1;
+                } else {
+                    // Global (All Active Users - 1)
+                    targetCount = row.global_count - 1;
+                }
+
+                // If everyone acked, downgrade!
+                // Note: ack_count includes sender if they acked? No, sender UI doesn't usually allow acking own msg.
+                // Assuming normal flow:
+                if (row.ack_count >= targetCount) {
+                    isDowngradeNeeded = true;
+                }
+
+                if (isDowngradeNeeded && row.priority === 'URGENT') {
+                    db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [messageId], () => {
+                        if (req.io) {
+                            req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
+                        }
+                    });
+                }
+            });
+
             res.json({ success: true });
         }
     );
