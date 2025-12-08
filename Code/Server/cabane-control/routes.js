@@ -16,6 +16,8 @@ const PUBLIC_URL = process.env.PUBLIC_URL || 'http://192.168.1.200:3000';
 
 // --- HELPERS ---
 const normalize = (str) => str ? str.trim().toLowerCase() : '';
+const checkDiskSpace = require('check-disk-space').default;
+
 
 const validatePassword = (pwd) => {
     if (pwd.length < 8) return "Password must be at least 8 characters.";
@@ -36,6 +38,28 @@ const logAction = (io, userId, username, type, message) => {
         });
     }
 };
+
+// ------------------------------------------------------------
+// 📊 SYSTEM STATUS (Disk Usage)
+// ------------------------------------------------------------
+router.get('/system/status', authenticateToken, async (req, res) => {
+    try {
+        // Check root volume ('/')
+        const space = await checkDiskSpace('/');
+
+        // Calculate percentage
+        const percent = Math.round(((space.size - space.free) / space.size) * 100);
+
+        res.json({
+            diskUsage: `${percent}%`,
+            free: space.free,
+            size: space.size
+        });
+    } catch (e) {
+        console.error("[System] Disk check failed:", e);
+        res.json({ diskUsage: 'Unknown' });
+    }
+});
 
 // ============================================================
 // 🔐 AUTHENTICATION
@@ -667,7 +691,6 @@ router.post('/groups/:id/rename', authenticateToken, (req, res) => {
     });
 });
 
-// 3. MANAGE MEMBERS (Add/Remove with Options)
 // 3. MANAGE MEMBERS
 router.post('/groups/:id/members', authenticateToken, (req, res) => {
     const groupId = req.params.id;
@@ -780,7 +803,6 @@ router.post('/groups/leave', authenticateToken, (req, res) => {
         res.json({ success: true });
     });
 });
-
 
 // ============================================================
 // 🧹 HELPERS
