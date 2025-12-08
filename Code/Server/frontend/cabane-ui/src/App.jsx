@@ -146,8 +146,21 @@ function Dashboard() {
       }
     };
 
+    // ✅ NEW: Handle Downgrades (Sender Cancel or All Acked)
+    const handleUpdateMessage = (data) => {
+      if (data.priority === 'NORMAL') {
+        // Remove from flash queue immediately (Closes Popup)
+        setFlashMessages(prev => prev.filter(m => m.id !== data.id));
+      }
+    };
+
     socket.on('NEW_MESSAGE', handleNewMessage);
-    return () => socket.off('NEW_MESSAGE', handleNewMessage);
+    socket.on('UPDATE_MESSAGE', handleUpdateMessage); // <--- Add Listener
+
+    return () => {
+      socket.off('NEW_MESSAGE', handleNewMessage);
+      socket.off('UPDATE_MESSAGE', handleUpdateMessage); // <--- Cleanup
+    };
   }, [socket, user]);
 
   // --- EFFECT: BUZZER & ALARMS ---

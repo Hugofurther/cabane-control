@@ -247,11 +247,18 @@ router.post('/users/permission', authenticateToken, requireAdmin, (req, res) => 
 router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
     const { userId } = req.body;
     if (userId === req.user.id) return res.status(400).json({ error: "Cannot delete self" });
+
     db.run("DELETE FROM users WHERE id = ?", [userId], function (err) {
         if (this.changes === 0) return res.status(404).json();
+
+        // ✅ Trigger Check
+        reevaluateUrgentMessages(req.io);
+
         res.json({ success: true });
     });
 });
+
+
 
 // ============================================================
 // 🏭 CONTROL
@@ -476,6 +483,28 @@ router.post('/messages/downgrade', authenticateToken, (req, res) => {
     );
 });
 
+// POST: Sender Cancels Urgency
+router.post('/messages/cancel-urgency', authenticateToken, (req, res) => {
+    const { messageId } = req.body;
+    const userId = req.user.id;
+
+    // Verify ownership and update
+    db.run(
+        "UPDATE messages SET priority = 'NORMAL' WHERE id = ? AND sender_id = ?",
+        [messageId, userId],
+        function (err) {
+            if (err) return res.status(500).json({ error: "DB Error" });
+            if (this.changes === 0) return res.status(403).json({ error: "Not sender or msg not found" });
+
+            // Emit Global Update (Closes FlashViewers for everyone)
+            if (req.io) {
+                req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
+            }
+            res.json({ success: true });
+        }
+    );
+});
+
 // ... Group Routes (Create, Leave) ...
 router.get('/users/directory', authenticateToken, (req, res) => {
     db.all("SELECT id, username, role, status FROM users WHERE status='ACTIVE'", [], (err, rows) => res.json(rows));
@@ -524,7 +553,82 @@ router.post('/groups', authenticateToken, (req, res) => {
 
 router.post('/groups/leave', authenticateToken, (req, res) => {
     const { groupId } = req.body;
-    db.run("DELETE FROM group_members WHERE group_id=? AND user_id=?", [groupId, req.user.id], () => res.json({ success: true }));
+    db.run("DELETE FROM group_members WHERE group_id=? AND user_id=?", [groupId, req.user.id], () => {
+        // ✅ Trigger Check
+        reevaluateUrgentMessages(req.io);
+        res.json({ success: true });
+    });
 });
+
+
+// ============================================================
+// 🧹 HELPERS
+// ============================================================
+
+// Re-evaluates ALL active urgent messages to see if they can be downgraded
+// (Run this after a user is deleted or leaves a group)
+const reevaluateUrgentMessages = (io) => {
+    const sql = `SELECT id, recipient_id, group_id, sender_id FROM messages WHERE priority = 'URGENT'`;
+
+    db.all(sql, [], (err, messages) => {
+        if (err || !messages || messages.length === 0) return;
+
+        messages.forEach(msg => {
+            // Define who still NEEDS to ack 
+            // Logic: Count (Target Users) MINUS (Users who already acked)
+            let pendingSql = "";
+            let params = [];
+
+            if (msg.recipient_id) {
+                // DM: Check if the specific recipient is pending
+                // (If recipient was deleted, count will be 0)
+                pendingSql = `
+                    SELECT COUNT(*) as pending 
+                    FROM users 
+                    WHERE id = ? 
+                    AND id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)
+                `;
+                params = [msg.recipient_id, msg.id];
+            }
+            else if (msg.group_id) {
+                // Group: Active Members excluding Sender and Ackers
+                pendingSql = `
+                    SELECT COUNT(*) as pending 
+                    FROM group_members gm
+                    JOIN users u ON gm.user_id = u.id
+                    WHERE gm.group_id = ? 
+                    AND u.status = 'ACTIVE'
+                    AND u.id != ?
+                    AND u.id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)
+                `;
+                params = [msg.group_id, msg.sender_id, msg.id];
+            }
+            else {
+                // Global: All Active Users excluding Sender and Ackers
+                pendingSql = `
+                    SELECT COUNT(*) as pending 
+                    FROM users 
+                    WHERE status = 'ACTIVE'
+                    AND id != ?
+                    AND id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)
+                `;
+                params = [msg.sender_id, msg.id];
+            }
+
+            db.get(pendingSql, params, (err, row) => {
+                if (!row) return;
+
+                // If NO ONE is pending (count is 0), the message is resolved
+                if (row.pending === 0) {
+                    console.log(`[Urgency] Auto-downgrading Message ${msg.id} (All recipients acknowledged or deleted)`);
+
+                    db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [msg.id], () => {
+                        if (io) io.emit('UPDATE_MESSAGE', { id: msg.id, priority: 'NORMAL' });
+                    });
+                }
+            });
+        });
+    });
+};
 
 module.exports = router;

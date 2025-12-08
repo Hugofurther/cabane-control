@@ -76,8 +76,11 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS group_members (
     group_id INTEGER,
     user_id INTEGER,
-    PRIMARY KEY (group_id, user_id)
+    PRIMARY KEY (group_id, user_id),
+    FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
+
 
   // Per-User Read Receipts
   db.run(`CREATE TABLE IF NOT EXISTS message_reads (
@@ -92,7 +95,9 @@ db.serialize(() => {
     message_id INTEGER, 
     user_id INTEGER, 
     ack_at DATETIME DEFAULT CURRENT_TIMESTAMP, 
-    PRIMARY KEY (message_id, user_id)
+    PRIMARY KEY (message_id, user_id),
+    FOREIGN KEY(message_id) REFERENCES messages(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   )`);
   console.log("✔ Messaging Tables Ready");
 
