@@ -262,6 +262,18 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ let's make the default modification the default notifyType in the group admin to a usersetting.
 
+√ Storage usage displays "Unknows" can you tell me why?
+
+√ When the Main Controller is offline, the Button "Release to Cabane" should become hidden. If for some reason the user succeeds releasing to cabane even if the Main Controller is offline, Control should automatically revert to "System_Failsafe" ( Server ), as if the Main Controller were to get disconnected from the network.
+
+√ When the Main Controller has control and the vacuum switch is OFF, but then the Thermostat overrides it to ON, the vacuum switch started flickering between ON and OFF. Not sure, but I think it's because since the switch was OFF and the thermostat telling the switch to be on, there was an alternating change of what to listen to. Can you evaluate the code and make. Can you figure out the source of this problem please.
+
+√ is there a way for me to ssh into the server fro a remote location?
+
+√ When a station become offline, The UI should retain the last state of that station switches until it reconnects
+
+√ make login expiresIn a user setting with default 60 days.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
@@ -269,71 +281,22 @@ Requested
 
 
 
+-----
+
+- Can we make all native browser alerts a centered pop-up more of the same theme as the app. It is disorienting and bad UX to have those native browser alerts.
 
 
 
 
-
----
+-------------------------------------------------------
+-------------------------------------------------------
 Debug
 
 
 
----
-
-
-
-
-
-
-
-
-
-
 
 -------------------------------------------------------
 -------------------------------------------------------
-Debug messages
-
-
-
-- Storage usage displays "Unknows" can you tell me why?
-
--------------------------------------------------------
--------------------------------------------------------
-
-
-
-
-
--------------------------------------------------------
--------------------------------------------------------
-
-
-1. Action: Opening a Chat Thread
-
-When you click on a Tab (Global) or select a User/Group:
-Load: The conversation loads from the server.
-Scroll: The view automatically scrolls to the very bottom (latest message) immediately.
-Technical detail: A setTimeout of 100ms ensures the DOM is fully rendered before the scroll happens.
-Read Status: All unread messages currently loaded in that thread are immediately sent to the server to be Marked as Read.
-
-
-2. Action: Live Update (While Thread is Open)
-
-If you are looking at the thread and a new message arrives:
-Render: The new message is added to the list.
-Auto-Scroll: Because the message list length changed, the effect triggers again and force-scrolls to the bottom to show the new message.
-Note: In this simple version, if you were scrolled up reading history, this will pull you back down to the bottom.
-Read Status: The new message is immediately Marked as Read because the drawer is open.
-
--------------------------------------------------------
--------------------------------------------------------
-
-
-
-
-- is there a way for me to ssh into the server fro a remote location?
 
 NOTES
 - Notes should be different than a simple message.
@@ -343,37 +306,44 @@ NOTES
 	- A user can open one of their note onto another user as a type of memo reminder. This is acting like sending a "FlashMessage" but instead of just being a message that will be lost in the thread, The user can re-use the same note over and over as a recurring reminder or else.
 
 
-
+-----------------------------------
 MESSAGIN
 
 
 -----------------------------------
 
-
+-----------------------------------
 WEATHER
 
-- when clicking on the Weather a weather pop-up panel centered opens with the forecast available still rotating between the locations set.
+- make the minimum Weather update frequency 1 minute
+
+- when clicking on the clock / Weather a weather pop-up panel centered opens with the forecast available still rotating between the locations set.
 
 
 
-
+-----------------------------------
 SERVER
 
 - I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
 
 
 
-
+-----------------------------------
 UX
 - Is it possible for the app to be detect when the screen start to re-arrange the layout when the screen becomes too small to fit as intended. Before re-arranging the layout, reduce the size of the cards and elements in the card to a certain point, then only after reducing the size of the components, then re-organize the layout, but before re-organizing the layout, hide the disabled stations to reduce clutter.
 
 - When overing over a component, can we have a tiny comment or pop up explanation of the feature (e.g. overing over "Flash Message" -> pop-up content: Add this option to display the message in a big message viewer on the recipient's screen)
 
-- At some point, where a switch was OFF, but then the Thermostat was overriding it to ON, the vacuum switch started flickering between ON and OFF. I think it's because since the switch was OFF and the thermostat telling the switch to be on, there was an alternating change of what to listen to.
-
-- When the Main Controller is offline, the Button "Release to Cabane" should be hidden. If for some reason the user succeeds releasing to cabane even if the Main Controller is offline, Control should automatically revert to "System_Failsafe" ( Server ), as if the Main Controller were to get disconnected from the network.
+- Can we make the app bi-langual ( French / English )
 
 
+-----------------------------------
+NATIVE BROWSER ALERTS
+
+- Session Expirty
+
+
+-----------------------------------
 LAYOUT
 
 - We need to move access to the admin panel in the UserSettings as well as the log. A simple user, when clicking on the username will not see the Admin Panels tab. Only the admin will.
@@ -384,18 +354,8 @@ LAYOUT
 
 - When a station goes offline, since the station keeps its last switch states and feedback, the app should also keep the last known switch states and feedback until the station becomes online again.
 
-
+-----------------------------------
 CONNECTION
-- how long does a user logged in connection stays alive for?
-
-- when Main Controller is offline and a user manage to click on the "release to Cabane" button,
-	1. Release to Cabane should be hidden ( only release to server is available )
-	2. If the user manages to release to Cabane, if the Main Controller is offline, control should never automatically to the server.
-
-
-
-
-
 
 
 ARDUINO
@@ -412,7 +372,7 @@ IOS
 
 ------------------------------------------------------------
 
-Can we make the app bi-langual ( French / English )
+
 
 - Get an complete and updated "setup_db.js" file with all additions to the database.
 
@@ -464,7 +424,7 @@ Trigger Drainage of the pipes manually
 	- Set timer
 
 4. Finish Drainage
-	- Trigger: 15 min timer or manual
+	- Trigger: 15 min timer default adjustable in user settings or manual trigger
 
 	Close Drain ST2 ( line should be empty by now )
 	- ST1 idx 4 and 7 OFF = Drain Valve T1 > ST1 and ST2 > ST1

@@ -16,7 +16,7 @@ const state = {
     buzzerEnabled: false,
     buzzerStatus: 'OFF',
     timezone: 'UTC',
-    disabledStations: [] // ✅ NEW STATE
+    disabledStations: []
 };
 
 let controlHandshakeConfirmed = false;
@@ -84,6 +84,29 @@ function updateDisabled(jsonStr) {
     try { state.disabledStations = JSON.parse(jsonStr); pushUpdate(); } catch (e) { }
 }
 
+// ✅ NEW: Centralized Override Logic
+function applyThermostatOverrides() {
+    let changed = false;
+    THERMOSTATS.forEach(th => {
+        // If Thermostat Switch is Enabled
+        if (state.virtualSwitches[th.swIdx]) {
+            // Check Feedback Sensor (Active Low: 0 = Cold/Active)
+            const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
+
+            if (rawBit === 0) {
+                // Force target switches ON
+                th.overrides.forEach(targetIdx => {
+                    if (state.virtualSwitches[targetIdx] === 0) {
+                        state.virtualSwitches[targetIdx] = 1;
+                        changed = true;
+                    }
+                });
+            }
+        }
+    });
+    return changed;
+}
+
 function updatePhysicalState(switchBytes, isOverrideActive) {
     if (!state.mainControllerOnline) {
         console.log("[NET] Main Controller Detected Online.");
@@ -102,18 +125,27 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         }
     }
     state.lastMainHeartbeat = Date.now();
+
+    // Update Physical State
     for (let i = 0; i < 24; i++) {
         const byteIdx = Math.floor(i / 8);
         const bitIdx = i % 8;
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
+
     if (isForcingRelease) {
         if (isOverrideActive) udpService.sendOverrideCommand(0);
         else { isForcingRelease = false; }
         return;
     }
+
     if (state.controller === 'CABANE') {
+        // 1. Reset Virtual to match Physical
         state.virtualSwitches = [...state.physicalSwitches];
+
+        // 2. ✅ IMMEDIATELY Apply Overrides (Prevents UI Flicker)
+        applyThermostatOverrides();
+
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
             console.log("[SYNC] Main in Override. Pi assuming SERVER.");
             state.controller = 'SERVER'; state.currentUser = null; controlHandshakeConfirmed = true;
@@ -147,10 +179,20 @@ function takeControl(username) {
     pushUpdate();
 }
 function releaseToServer() {
+    // 🛡️ SAFETY CHECK
+    if (!state.mainControllerOnline) {
+        takeControl('SYSTEM_FAILSAFE');
+        return;
+    }
     state.controller = 'SERVER'; state.currentUser = null; lastControlTakeTime = Date.now();
     udpService.sendOverrideCommand(1); pushUpdate();
 }
 function releaseToCabane() {
+    // 🛡️ SAFETY CHECK
+    if (!state.mainControllerOnline) {
+        takeControl('SYSTEM_FAILSAFE');
+        return;
+    }
     state.controller = 'CABANE'; state.currentUser = null; lastReleaseTime = Date.now();
     controlHandshakeConfirmed = false; isForcingRelease = true; udpService.sendOverrideCommand(0);
     pushUpdate();
@@ -166,25 +208,27 @@ function controlLoop() {
     let stateChanged = false;
     state.buzzerEnabled = !!state.virtualSwitches[21];
 
-    THERMOSTATS.forEach(th => {
-        if (state.virtualSwitches[th.swIdx]) {
-            const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
-            if (rawBit === 0) {
-                th.overrides.forEach(targetIdx => {
-                    if (state.virtualSwitches[targetIdx] === 0) {
-                        state.virtualSwitches[targetIdx] = 1; stateChanged = true;
-                    }
-                });
-            }
-        }
-    });
+    // ✅ RE-APPLY Overrides (Keeps logic consistent in Server/User modes)
+    if (applyThermostatOverrides()) {
+        stateChanged = true;
+    }
 
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
+        // ✅ CRITICAL FIX: Skip check if station is Offline OR Disabled
+        // This prevents "Stale Data" from triggering false alarms
+        if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) {
+            return;
+        }
+
         const commandedOn = state.virtualSwitches[chk.swIdx];
         const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
+
+        // Logic: Commanded ON, but Feedback says OFF (1)
         if (commandedOn && rawFb === 1) alarmDetected = true;
     });
+
+
     if (state.globalVacuumAlarm !== alarmDetected) {
         state.globalVacuumAlarm = alarmDetected;
         if (alarmDetected) logSystemEvent('ALARM', "Vacuum Loss Detected");
@@ -217,7 +261,6 @@ function controlLoop() {
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
-            // ✅ DISABLE CHECK: Skip if station is disabled
             if (state.disabledStations.includes(m.st)) return;
             if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit);
         });
@@ -239,6 +282,7 @@ function checkHeartbeats() {
     if (state.mainControllerOnline && (now - state.lastMainHeartbeat > 5000)) {
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
         state.mainControllerOnline = false;
+        // Auto-Take Control if we were waiting for Cabane
         if (state.controller === 'CABANE') takeControl('SYSTEM_FAILSAFE');
         pushUpdate();
     }

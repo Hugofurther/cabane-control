@@ -123,9 +123,13 @@ router.post('/auth/login', (req, res) => {
         let userSettings = {};
         try { userSettings = user.settings ? JSON.parse(user.settings) : {} } catch (e) { }
 
+        // ✅ CHANGE: Read setting or default to 60 days
+        const expiresIn = userSettings.tokenExpiration || '60d';
+
         const token = jwt.sign(
             { id: user.id, username: user.username, role: user.role },
-            process.env.JWT_SECRET, { expiresIn: '12h' }
+            process.env.JWT_SECRET,
+            { expiresIn }
         );
 
         logAction(req.io, user.id, user.username, 'AUTH', 'Logged In');

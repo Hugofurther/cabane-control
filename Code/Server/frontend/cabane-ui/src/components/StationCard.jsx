@@ -89,7 +89,9 @@ export const StationCard = ({ card, isRemote }) => {
                     const isOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
                     const isControlUnavailable = isDisabled || isOffline;
 
-                    const virtualOn = isControlUnavailable ? false : !!systemState.virtualSwitches[ctrl.idx];
+                    // ✅ MODIFIED: Use the state directly. Do not force false if offline.
+                    const virtualOn = !!systemState.virtualSwitches[ctrl.idx];
+
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
                     const isLocked = !isRemote || isControlUnavailable;
 

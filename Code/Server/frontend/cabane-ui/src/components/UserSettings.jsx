@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { clsx } from 'clsx';
 import axios from 'axios';
@@ -10,6 +10,22 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const { user, updateSettings, logout } = useSocket();
     const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
     const [msg, setMsg] = useState(null);
+
+    // State for Session Timeout inputs
+    const [sessionVal, setSessionVal] = useState(60);
+    const [sessionUnit, setSessionUnit] = useState('d');
+
+    // Parse existing setting on open
+    useEffect(() => {
+        if (user?.settings?.tokenExpiration) {
+            // ✅ CHANGE: Added 'm' to the regex: [hdm]
+            const match = user.settings.tokenExpiration.match(/^(\d+)([hdm])$/);
+            if (match) {
+                setSessionVal(parseInt(match[1]));
+                setSessionUnit(match[2]);
+            }
+        }
+    }, [user, isOpen]);
 
     if (!isOpen || !user) return null;
 
@@ -22,6 +38,13 @@ export const UserSettings = ({ isOpen, onClose }) => {
     // Helper to set a specific value
     const setSetting = (key, value) => {
         updateSettings({ ...user.settings, [key]: value });
+    };
+
+    // Handle Session Save
+    const saveSessionTimeout = () => {
+        const val = sessionVal > 0 ? sessionVal : 60; // Prevent 0 or negative
+        const str = `${val}${sessionUnit}`;
+        updateSettings({ ...user.settings, tokenExpiration: str });
     };
 
     const handlePasswordChange = async (e) => {
@@ -109,7 +132,7 @@ export const UserSettings = ({ isOpen, onClose }) => {
                         </div>
                     </section>
 
-                    {/* 2. ADMIN DEFAULTS (New Section) */}
+                    {/* 2. ADMIN DEFAULTS */}
                     <section className="space-y-3">
                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Group Admin Defaults</h3>
 
@@ -145,6 +168,41 @@ export const UserSettings = ({ isOpen, onClose }) => {
                     {/* 3. SECURITY */}
                     <section className="space-y-3 pt-4 border-t border-gray-800">
                         <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Security</h3>
+
+                        {/* Session Timeout Config */}
+                        <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 mb-4">
+                            <div className="flex items-center gap-3 mb-2">
+                                <Lock size={18} className="text-orange-400" />
+                                <span className="text-sm font-medium text-gray-200">Session Timeout</span>
+                            </div>
+                            <div className="flex gap-2">
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={sessionVal}
+                                    onChange={(e) => {
+                                        setSessionVal(e.target.value);
+                                        // Auto-save logic could go here, or rely on blur
+                                    }}
+                                    onBlur={saveSessionTimeout}
+                                    className="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm w-20 text-center"
+                                />
+                                <select
+                                    value={sessionUnit}
+                                    onChange={(e) => {
+                                        setSessionUnit(e.target.value);
+                                        updateSettings({ ...user.settings, tokenExpiration: `${sessionVal}${e.target.value}` });
+                                    }}
+                                    className="bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm flex-grow"
+                                >
+                                    <option value="d">Days</option>
+                                    <option value="h">Hours</option>
+                                    {/* ✅ NEW OPTION */}
+                                    <option value="m">Minutes</option>
+                                </select>
+                            </div>
+                            <p className="text-[10px] text-gray-500 mt-1">Changes apply at next login.</p>
+                        </div>
 
                         <form onSubmit={handlePasswordChange} className="space-y-3">
                             <input type="password" placeholder="Current Password" value={passwordData.current} onChange={e => setPasswordData(p => ({ ...p, current: e.target.value }))} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm" required />

@@ -101,6 +101,12 @@ db.serialize(() => {
   )`);
   console.log("✔ Messaging Tables Ready");
 
+  // Optimization Indices
+  db.run("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
+  db.run("CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)");
+  db.run("CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id)");
+  console.log("✔ Messaging Indices Ready");
+
   // ============================================================
   // 4. DEFAULT ADMIN CREATION
   // ============================================================

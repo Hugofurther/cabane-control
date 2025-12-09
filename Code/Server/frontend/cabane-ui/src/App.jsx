@@ -263,8 +263,23 @@ function Dashboard() {
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2">
-              <button onClick={releaseToServer} className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Hold</button>
-              <button onClick={releaseToCabane} className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Release</button>
+              {/* HOLD BUTTON (Always Available) */}
+              <button
+                onClick={releaseToServer}
+                className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap"
+              >
+                Hold
+              </button>
+
+              {/* RELEASE BUTTON (Hidden if Main Controller is Offline) */}
+              {systemState.mainControllerOnline && (
+                <button
+                  onClick={releaseToCabane}
+                  className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap"
+                >
+                  Release
+                </button>
+              )}
             </div>
           )}
 

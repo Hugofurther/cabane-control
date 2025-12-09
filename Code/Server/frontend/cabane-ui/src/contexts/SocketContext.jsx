@@ -31,12 +31,58 @@ export const SocketProvider = ({ children }) => {
 
     // Settings & Weather State
     const [siteSettings, setSiteSettings] = useState({ timezone: 'UTC' });
-    const [weatherData, setWeatherData] = useState([]); // ✅ NEW: Stores weather list from server
+    const [weatherData, setWeatherData] = useState([]);
 
     // Auth State
     const [token, setToken] = useState(localStorage.getItem('cabane_token'));
     const [user, setUser] = useState(null);
     const [onlineList, setOnlineList] = useState([]);
+
+    // --- ACTIONS (Defined early so they can be used in effects) ---
+    const logout = () => {
+        localStorage.removeItem('cabane_token');
+        setToken(null);
+        setUser(null);
+        window.location.reload(); // Hard refresh to clear all state
+    };
+
+    // --- 🛡️ GLOBAL AXIOS INTERCEPTOR (Session Timeout Handler) ---
+    useEffect(() => {
+        const interceptor = axios.interceptors.response.use(
+            (response) => response,
+            (error) => {
+                if (error.response) {
+                    const { status, data } = error.response;
+
+                    // 1. Handle 401 (Unauthorized) - Always Logout
+                    if (status === 401) {
+                        alert("Session Expired. Please log in again.");
+                        logout();
+                        return Promise.reject(error);
+                    }
+
+                    // 2. Handle 403 (Forbidden) - Check if it's Expiry or Logic
+                    if (status === 403) {
+                        // In Express, middleware usually sends res.sendStatus(403) for expiry, which results in a string "Forbidden"
+                        // Custom logic errors in routes.js use res.status(403).json({ error: "..." })
+
+                        const isExpiry = typeof data === 'string' || (data.error && data.error.toLowerCase().includes('token'));
+
+                        if (isExpiry) {
+                            alert("Session Expired. Please log in again.");
+                            logout();
+                        } else {
+                            // It's just a permission error (e.g., "Not active controller"), let the UI handle it or show simple alert
+                            console.warn("Action blocked:", data.error || data);
+                        }
+                    }
+                }
+                return Promise.reject(error);
+            }
+        );
+
+        return () => axios.interceptors.response.eject(interceptor);
+    }, []);
 
     // --- SOCKET SETUP ---
     useEffect(() => {
@@ -50,9 +96,7 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('STATE_FULL', (data) => setSystemState(data));
         newSocket.on('ONLINE_USERS', (users) => setOnlineList(users || []));
 
-        // ✅ NEW: Listen for Weather Updates from Server
         newSocket.on('WEATHER_UPDATE', (data) => {
-            // Ensure data is always an array to prevent crashes
             setWeatherData(Array.isArray(data) ? data : []);
         });
 
@@ -82,6 +126,7 @@ export const SocketProvider = ({ children }) => {
                 });
                 setUser(res.data);
             } catch (e) {
+                // If initial check fails, it might be expired too
                 localStorage.removeItem('cabane_token');
                 setToken(null);
                 setUser(null);
@@ -99,7 +144,7 @@ export const SocketProvider = ({ children }) => {
         }
     }, [socket, user]);
 
-    // --- ACTIONS ---
+    // --- API CALLS ---
     const login = async (username, password) => {
         try {
             const res = await axios.post(`${API_URL}/api/auth/login`, { username, password });
@@ -116,13 +161,6 @@ export const SocketProvider = ({ children }) => {
             await axios.post(`${API_URL}/api/auth/register`, { username, email, password });
             return { success: true };
         } catch (e) { return { success: false, error: e.response?.data?.error }; }
-    };
-
-    const logout = () => {
-        localStorage.removeItem('cabane_token');
-        setToken(null);
-        setUser(null);
-        window.location.reload();
     };
 
     const updateSettings = async (newSettings) => {
@@ -178,7 +216,7 @@ export const SocketProvider = ({ children }) => {
             socket, isConnected, systemState,
             user, authLoading, onlineList,
             siteSettings,
-            weatherData, // ✅ CRITICAL: THIS MUST BE EXPORTED
+            weatherData,
 
             login, register, logout,
             updateSettings, updateSiteSettings,
