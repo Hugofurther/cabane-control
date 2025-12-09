@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSocket } from '../contexts/SocketContext';
 import { WeatherModal } from './WeatherModal';
-import { Settings, Wind, Droplets, Thermometer, CloudRain } from 'lucide-react';
+import { Settings, Wind, Droplets, Thermometer, CloudRain, ArrowUp } from 'lucide-react';
 
 export const Weather = () => {
     const { weatherData, siteSettings, user } = useSocket();
@@ -14,6 +14,9 @@ export const Weather = () => {
 
         const intervalSec = parseInt(siteSettings?.weather_rotation_interval) || 10;
 
+        // Don't rotate if only 1 item
+        if (weatherData.length <= 1) return;
+
         const timer = setInterval(() => {
             setIndex(prev => (prev + 1) % weatherData.length);
         }, intervalSec * 1000);
@@ -21,16 +24,16 @@ export const Weather = () => {
         return () => clearInterval(timer);
     }, [weatherData, siteSettings]);
 
-    // --- EMPTY STATE ---
+    // 1. USER PREFERENCE CHECK
+    // If user specifically hid it, return NULL (Don't render anything)
+    // Default to true if setting is undefined
+    if (user?.settings?.showWeather === false) return null;
+
+    // 2. SYSTEM DATA CHECK
+    // If Admin disabled all locations (or no key), data is empty.
+    // Return NULL to remove it from the main page entirely.
     if (!weatherData || weatherData.length === 0) {
-        return (
-            <div className="flex items-center gap-2 bg-red-900/20 px-3 py-2 rounded-lg border border-red-900/50">
-                <Settings size={14} className="text-red-400 animate-spin-slow" />
-                <span className="text-[10px] font-bold text-red-300">
-                    {user?.role === 'ADMIN' ? "MISSING API KEY" : "WEATHER OFFLINE"}
-                </span>
-            </div>
-        );
+        return null;
     }
 
     // --- DATA PREP ---
@@ -41,10 +44,10 @@ export const Weather = () => {
     const curr = currentCity.current;
     const temp = Math.round(curr.main.temp);
     const feels = Math.round(curr.main.feels_like);
-    const wind = Math.round(curr.wind.speed * 3.6); // km/h
+    const windSpeed = Math.round(curr.wind.speed * 3.6); // km/h
+    const windDeg = curr.wind.deg || 0;
     const iconCode = curr.weather[0].icon;
 
-    // logic: show rain volume if raining, otherwise humidity
     const rain = curr.rain ? (curr.rain['1h'] || 0) : 0;
     const showRain = rain > 0;
     const secondaryMetric = showRain ? `${rain}mm` : `${curr.main.humidity}%`;
@@ -61,7 +64,8 @@ export const Weather = () => {
                     <img
                         src={`https://openweathermap.org/img/wn/${iconCode}.png`}
                         alt="weather"
-                        className="w-10 h-10 drop-shadow-sm filter brightness-110"
+                        // Pure White Icon
+                        className="w-10 h-10 filter grayscale brightness-200 drop-shadow-[0_0_5px_rgba(255,255,255,0.4)]"
                     />
                     <span className="text-3xl font-black text-white leading-none group-hover:text-blue-300 transition-colors">
                         {temp}°
@@ -84,7 +88,11 @@ export const Weather = () => {
                     <div className="flex items-center gap-2 text-[10px] font-mono text-gray-300">
                         <div className="flex items-center gap-1">
                             <Wind size={10} className="text-blue-300" />
-                            <span>{wind}k</span>
+                            <span>{windSpeed}k</span>
+                            {/* Bold White Arrow */}
+                            <div style={{ transform: `rotate(${windDeg + 180}deg)` }} className="transition-transform duration-700">
+                                <ArrowUp size={10} strokeWidth={3} className="text-white" />
+                            </div>
                         </div>
                         <span className="text-gray-600 text-[8px]">|</span>
                         <div className="flex items-center gap-1">

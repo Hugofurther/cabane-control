@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw } from 'lucide-react';
+import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, User, Lock } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
+import { clsx } from 'clsx';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -11,6 +12,19 @@ const formatBytes = (bytes) => {
     return `${gb.toFixed(1)} GB`;
 };
 
+const Toggle = ({ checked, onChange, disabled }) => (
+    <div
+        onClick={disabled ? undefined : onChange}
+        className={clsx(
+            "w-10 h-5 rounded-full p-1 transition-colors relative flex-shrink-0",
+            disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+            checked ? "bg-green-500" : "bg-gray-600"
+        )}
+    >
+        <div className={clsx("w-3 h-3 bg-white rounded-full shadow-sm transform transition-transform duration-200", checked ? "translate-x-5" : "translate-x-0")} />
+    </div>
+);
+
 export const AdminPanel = ({ isOpen, onClose }) => {
     const { showConfirm, showAlert } = useModal();
     const [activeTab, setActiveTab] = useState('USERS');
@@ -18,12 +32,15 @@ export const AdminPanel = ({ isOpen, onClose }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    // System Settings State
     const [sysSettings, setSysSettings] = useState({
         timezone: 'UTC',
         weather_api_key: '',
         weather_rotation_interval: '10',
-        weather_update_interval: '15'
+        weather_rotation_enabled: 'true',
+        weather_update_interval: '15',
+        weather_update_interval_forecast: '60',
+        weather_api_limit_min: '60',
+        weather_api_limit_month: '1000000'
     });
     const [locations, setLocations] = useState([]);
     const [disabledStations, setDisabledStations] = useState([]);
@@ -35,7 +52,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
     const timezones = [
         { label: "Montréal, QC (EST)", value: "America/Montreal" },
         { label: "Drummondville, QC (EST)", value: "America/Montreal" },
-        { label: "Sainte-Brigitte-des-Saults, QC (EST)", value: "America/Montreal" },
         { label: "New York (EST)", value: "America/New_York" },
         { label: "Paris (CET)", value: "Europe/Paris" },
         { label: "UTC", value: "UTC" }
@@ -52,7 +68,10 @@ export const AdminPanel = ({ isOpen, onClose }) => {
             setSysSettings(prev => ({ ...prev, ...resSettings.data }));
 
             if (resSettings.data.weather_locations) {
-                try { setLocations(JSON.parse(resSettings.data.weather_locations)); } catch (e) { }
+                try {
+                    const locs = JSON.parse(resSettings.data.weather_locations);
+                    setLocations(locs.map(l => ({ ...l, enabled: l.enabled !== false })));
+                } catch (e) { }
             }
 
             if (resSettings.data.disabled_stations) {
@@ -60,15 +79,11 @@ export const AdminPanel = ({ isOpen, onClose }) => {
             }
 
             const resStatus = await axios.get(`${API_URL}/api/system/status`, { headers: { Authorization: `Bearer ${token}` } });
-            const total = resStatus.data.size || 0;
-            const free = resStatus.data.free || 0;
-            const used = total - free;
-
             setDiskStats({
                 percent: resStatus.data.diskUsage || '0%',
-                free: free,
-                size: total,
-                used: used
+                free: resStatus.data.free || 0,
+                size: resStatus.data.size || 0,
+                used: (resStatus.data.size || 0) - (resStatus.data.free || 0)
             });
 
             setError('');
@@ -82,36 +97,18 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
     };
 
-    // ✅ UPDATED: Use OpenWeatherMap Geocoding API
     const searchCity = async () => {
         if (!citySearch) return;
-
-        // Safety: Need API Key to search
-        if (!sysSettings.weather_api_key) {
-            showAlert("Configuration Error", "Please enter and save your OpenWeatherMap API Key first.");
-            return;
-        }
-
+        if (!sysSettings.weather_api_key) { showAlert("Error", "Enter API Key first."); return; }
         try {
-            // New Endpoint: api.openweathermap.org/geo/1.0/direct
             const res = await axios.get(`https://api.openweathermap.org/geo/1.0/direct?q=${citySearch}&limit=5&appid=${sysSettings.weather_api_key}`);
             setCityResults(res.data || []);
-        } catch (e) {
-            console.error(e);
-            showAlert("Search Failed", "Could not reach the geocoding service. Check your API Key.");
-        }
+        } catch (e) { showAlert("Search Failed", "Check API Key."); }
     };
 
-    // ✅ UPDATED: Adapt to OWM Data Structure
     const addLocation = (city) => {
-        // OWM returns: { name, lat, lon, country, state }
         const locationName = city.name + (city.state ? `, ${city.state}` : `, ${city.country}`);
-
-        setLocations(prev => [...prev, {
-            name: locationName,
-            lat: city.lat,
-            lon: city.lon
-        }]);
+        setLocations(prev => [...prev, { name: locationName, lat: city.lat, lon: city.lon, enabled: true }]);
         setCityResults([]); setCitySearch('');
     };
 
@@ -119,7 +116,55 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         setLocations(prev => prev.filter((_, i) => i !== index));
     };
 
+    const toggleLocation = (index) => {
+        setLocations(prev => prev.map((l, i) => i === index ? { ...l, enabled: !l.enabled } : l));
+    };
+
+    // --- CALCULATOR ---
+    const calculateApiUsage = () => {
+        const activeCount = locations.filter(l => l.enabled).length;
+
+        // ✅ CRITICAL FIX: Return complete object even if 0 active
+        if (activeCount === 0) return {
+            val: '0.00',
+            status: 'SAFE',
+            color: 'text-gray-500',
+            limitMsg: 'Idle',
+            monthly: 0
+        };
+
+        const callsCurrent = activeCount / (parseInt(sysSettings.weather_update_interval) || 15);
+        const callsForecast = activeCount / (parseInt(sysSettings.weather_update_interval_forecast) || 60);
+        const totalPerMin = callsCurrent + callsForecast;
+
+        const limitMin = parseInt(sysSettings.weather_api_limit_min) || 60;
+        const limitMonth = parseInt(sysSettings.weather_api_limit_month) || 1000000;
+        const estimatedMonth = totalPerMin * 43200;
+
+        let status = 'SAFE';
+        let color = 'text-green-400';
+        let limitMsg = `Limit: ${limitMin}/min`;
+
+        if (totalPerMin > limitMin) {
+            status = 'EXCEEDED (MIN)'; color = 'text-red-500';
+        } else if (estimatedMonth > limitMonth) {
+            status = 'EXCEEDED (MONTH)'; color = 'text-red-500';
+            limitMsg = `Limit: ${limitMonth}/mo`;
+        } else if (totalPerMin > limitMin * 0.8) {
+            status = 'WARNING'; color = 'text-yellow-500';
+        }
+
+        return { val: totalPerMin.toFixed(2), status, color, limitMsg, monthly: Math.round(estimatedMonth) };
+    };
+
+    const apiUsage = calculateApiUsage();
+
     const saveSettings = async () => {
+        if (apiUsage.status.includes('EXCEEDED')) {
+            showAlert("Warning", "Your configuration exceeds the API Call Limit. Please adjust settings.");
+            return;
+        }
+
         const token = localStorage.getItem('cabane_token');
         try {
             const payload = {
@@ -128,36 +173,14 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                 disabled_stations: JSON.stringify(disabledStations)
             };
             await axios.post(`${API_URL}/api/system/settings`, payload, { headers: { Authorization: `Bearer ${token}` } });
-
-            showAlert("Success", "System settings have been saved. The interface will reload to apply changes.", () => {
-                window.location.reload();
-            });
-        } catch (e) {
-            showAlert("Error", "Failed to save settings.");
-        }
+            window.location.reload();
+        } catch (e) { showAlert("Error", "Failed to save."); }
     };
 
-    const approveUser = async (id) => {
-        await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-        fetchData();
-    };
-    const togglePermission = async (id, type, val) => {
-        await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-        fetchData();
-    };
-
+    const approveUser = async (id) => { await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
+    const togglePermission = async (id, type, val) => { await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
     const deleteUser = async (id) => {
-        showConfirm({
-            title: "Delete User",
-            message: "Are you sure you want to permanently delete this user account?",
-            isDestructive: true,
-            onConfirm: async () => {
-                try {
-                    await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-                    fetchData();
-                } catch (e) { showAlert("Error", "Failed to delete user."); }
-            }
-        });
+        showConfirm({ title: "Delete User", message: "Permanently delete user?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); } catch (e) { } } });
     };
 
     if (!isOpen) return null;
@@ -199,98 +222,97 @@ export const AdminPanel = ({ isOpen, onClose }) => {
 
                     {activeTab === 'SYSTEM' && (
                         <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
-                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit">
-                                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Globe size={20} className="text-blue-500" /> Timezone</h3>
-                                <select value={sysSettings.timezone} onChange={(e) => setSysSettings({ ...sysSettings, timezone: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-6 outline-none">
-                                    {timezones.map(tz => <option key={tz.label} value={tz.value}>{tz.label}</option>)}
-                                </select>
-
-                                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 pt-4 border-t border-gray-700">
-                                    <HardDrive size={20} className="text-purple-500" /> Storage
-                                </h3>
-
-                                <div className="flex justify-between items-baseline mb-2">
-                                    <div className="text-3xl font-mono font-black text-white">
-                                        {diskStats.percent} <span className="text-sm text-gray-500 font-sans font-bold">FULL</span>
-                                    </div>
-                                    <div className="text-xs font-bold text-gray-400">
-                                        {formatBytes(diskStats.size)} TOTAL
-                                    </div>
+                            {/* Timezone & Disk */}
+                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
+                                <div>
+                                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Globe size={20} className="text-blue-500" /> Timezone</h3>
+                                    <select value={sysSettings.timezone} onChange={(e) => setSysSettings({ ...sysSettings, timezone: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-6 outline-none">
+                                        {timezones.map(tz => <option key={tz.label} value={tz.value}>{tz.label}</option>)}
+                                    </select>
                                 </div>
-
-                                <div className="w-full bg-gray-700 rounded-full h-3 mb-3 overflow-hidden border border-gray-600">
-                                    <div
-                                        className="bg-purple-600 h-full rounded-full transition-all duration-1000 ease-out"
-                                        style={{ width: diskStats.percent }}
-                                    ></div>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                    <div className="bg-gray-900/50 p-2 rounded border border-gray-700 flex flex-col">
-                                        <span className="text-gray-500 font-bold uppercase">Used</span>
-                                        <span className="text-gray-200 font-mono text-sm">{formatBytes(diskStats.used)}</span>
+                                <div className="pt-4 border-t border-gray-700">
+                                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><HardDrive size={20} className="text-purple-500" /> Storage</h3>
+                                    <div className="flex justify-between items-baseline mb-2">
+                                        <div className="text-3xl font-mono font-black text-white">{diskStats.percent} <span className="text-sm text-gray-500 font-sans font-bold">FULL</span></div>
+                                        <div className="text-xs font-bold text-gray-400">{formatBytes(diskStats.size)} TOTAL</div>
                                     </div>
-                                    <div className="bg-gray-900/50 p-2 rounded border border-gray-700 flex flex-col">
-                                        <span className="text-gray-500 font-bold uppercase">Free</span>
-                                        <span className="text-green-400 font-mono text-sm">{formatBytes(diskStats.free)}</span>
+                                    <div className="w-full bg-gray-700 rounded-full h-3 mb-3 overflow-hidden border border-gray-600">
+                                        <div className="bg-purple-600 h-full rounded-full transition-all duration-1000 ease-out" style={{ width: diskStats.percent }}></div>
+                                    </div>
+                                    <div className="flex justify-between text-xs text-gray-400">
+                                        <span>Used: {formatBytes(diskStats.used)}</span>
+                                        <span>Free: {formatBytes(diskStats.free)}</span>
                                     </div>
                                 </div>
                             </div>
 
-                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
-                                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><MapPin size={20} className="text-green-500" /> Weather Rotation</h3>
+                            {/* Weather Config */}
+                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> Weather Services</h3>
 
-                                <div className="mb-4 pb-4 border-b border-gray-700">
-                                    <label className="text-xs font-bold text-gray-500 mb-1 flex items-center gap-1">
-                                        <Globe size={12} /> OPENWEATHERMAP API KEY
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={sysSettings.weather_api_key || ''}
-                                        onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })}
-                                        className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs"
-                                        placeholder="Enter your API Key..."
-                                    />
-                                    <p className="text-[10px] text-gray-500 mt-1">
-                                        Required for Weather. Frequency is auto-calculated to stay under limit.
-                                    </p>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-4 mb-6 pb-6 border-b border-gray-700">
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 mb-1 flex items-center gap-1"><Clock size={12} /> ROTATION (SEC)</label>
-                                        <input type="number" min="2" value={sysSettings.weather_rotation_interval} onChange={e => setSysSettings({ ...sysSettings, weather_rotation_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-gray-700">
+                                    <div className="md:col-span-1">
+                                        <label className="text-xs font-bold text-gray-500 mb-1 block">API KEY</label>
+                                        <input type="text" value={sysSettings.weather_api_key || ''} onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs" />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-bold text-gray-500 mb-1 flex items-center gap-1"><RefreshCw size={12} /> UPDATE FREQ (MIN)</label>
-                                        <input type="number" min="5" value={sysSettings.weather_update_interval} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                        <label className="text-xs font-bold text-gray-500 mb-1 block">LIMIT (CALLS/MIN)</label>
+                                        <input type="number" value={sysSettings.weather_api_limit_min} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-gray-500 mb-1 block">LIMIT (CALLS/MONTH)</label>
+                                        <input type="number" value={sysSettings.weather_api_limit_month} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_month: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
                                     </div>
                                 </div>
 
-                                <div className="flex gap-2 mb-4">
-                                    <input type="text" placeholder="Add City..." value={citySearch} onChange={e => setCitySearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchCity()} className="flex-grow bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
-                                    <button onClick={searchCity} className="p-2 bg-blue-600 rounded text-white hover:bg-blue-500"><Search size={20} /></button>
+                                <div className="grid grid-cols-3 gap-4 pb-6 border-b border-gray-700">
+                                    <div><label className="text-xs font-bold text-gray-500 mb-1 block">CURRENT (MIN)</label><input type="number" min="5" value={sysSettings.weather_update_interval} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
+                                    <div><label className="text-xs font-bold text-gray-500 mb-1 block">FORECAST (MIN)</label><input type="number" min="30" value={sysSettings.weather_update_interval_forecast} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval_forecast: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
+                                    <div><label className="text-xs font-bold text-gray-500 mb-1 block">ROTATION (SEC)</label><input type="number" min="2" value={sysSettings.weather_rotation_interval} onChange={e => setSysSettings({ ...sysSettings, weather_rotation_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                                 </div>
-                                {cityResults.length > 0 && (
-                                    <ul className="mb-4 bg-gray-900 border border-gray-600 rounded max-h-40 overflow-y-auto">
-                                        {cityResults.map(city => (
-                                            // ✅ UPDATED: Map OWM Geo response fields
-                                            <li key={`${city.lat}-${city.lon}`} onClick={() => addLocation(city)} className="p-2 hover:bg-blue-900/50 cursor-pointer text-sm text-gray-300 border-b border-gray-700">
-                                                {city.name}, {city.state ? `${city.state}, ` : ''}{city.country}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                                <div className="space-y-2">
-                                    {locations.map((loc, i) => (
-                                        <div key={i} className="flex justify-between items-center bg-gray-900/50 p-3 rounded border border-gray-700">
-                                            <div className="text-sm text-gray-300">{loc.name}</div>
-                                            <button onClick={() => removeLocation(i)} className="text-red-400 hover:text-white"><Trash2 size={16} /></button>
+
+                                <div className={`p-3 rounded border flex items-center justify-between ${apiUsage.status.includes('EXCEEDED') ? 'bg-red-900/20 border-red-800' : 'bg-gray-900/50 border-gray-700'}`}>
+                                    <div className="flex items-center gap-2">
+                                        <Calculator size={16} className={apiUsage.color} />
+                                        <div className="flex flex-col">
+                                            <span className="text-xs font-bold text-gray-300">USAGE: <span className={apiUsage.color}>{apiUsage.val}</span> /min</span>
+                                            <span className="text-[9px] text-gray-500">EST. MONTHLY: {apiUsage.monthly.toLocaleString()}</span>
                                         </div>
-                                    ))}
+                                    </div>
+                                    <span className={`text-[10px] font-black px-2 py-1 rounded ${apiUsage.status === 'SAFE' ? 'bg-green-900 text-green-400' : 'bg-red-900 text-red-200'}`}>
+                                        {apiUsage.limitMsg}
+                                    </span>
+                                </div>
+
+                                <div className="space-y-4">
+                                    <div className="flex gap-2">
+                                        <input type="text" placeholder="Add City..." value={citySearch} onChange={e => setCitySearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchCity()} className="flex-grow bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                        <button onClick={searchCity} className="p-2 bg-blue-600 rounded text-white hover:bg-blue-500"><Search size={20} /></button>
+                                    </div>
+                                    {cityResults.length > 0 && (
+                                        <ul className="bg-gray-900 border border-gray-600 rounded max-h-40 overflow-y-auto">
+                                            {cityResults.map(city => (
+                                                <li key={`${city.lat}-${city.lon}`} onClick={() => addLocation(city)} className="p-2 hover:bg-blue-900/50 cursor-pointer text-sm text-gray-300 border-b border-gray-700">
+                                                    {city.name}, {city.state ? `${city.state}, ` : ''}{city.country}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
+                                    <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
+                                        {locations.map((loc, i) => (
+                                            <div key={i} className={`flex justify-between items-center p-3 rounded border transition-colors ${loc.enabled ? 'bg-gray-900/50 border-gray-700' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
+                                                <div className="flex items-center gap-3">
+                                                    <Toggle checked={loc.enabled} onChange={() => toggleLocation(i)} />
+                                                    <span className={`text-sm ${loc.enabled ? 'text-gray-300' : 'text-gray-500 line-through'}`}>{loc.name}</span>
+                                                </div>
+                                                <button onClick={() => removeLocation(i)} className="text-red-400 hover:text-white"><Trash2 size={16} /></button>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
                             </div>
 
+                            {/* Station Config */}
                             <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> Station Configuration</h3>
                                 <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
@@ -311,7 +333,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
 
                 {activeTab === 'SYSTEM' && (
                     <div className="p-4 bg-gray-900 border-t border-gray-800 shrink-0 flex justify-end">
-                        <button onClick={saveSettings} className="w-full md:w-auto px-8 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all">
+                        <button onClick={saveSettings} disabled={apiUsage.status.includes('EXCEEDED')} className={`w-full md:w-auto px-8 font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all ${apiUsage.status.includes('EXCEEDED') ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
                             <Save size={20} /> SAVE ALL SETTINGS
                         </button>
                     </div>

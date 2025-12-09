@@ -276,19 +276,51 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ Can we make all native browser alerts a centered pop-up more of the same theme as the app. It is disorienting and bad UX to have those native browser alerts.
 
+√ Can we make the wind direction of a more evident icon? this icon is a bit difficult to discern.
+
+√ in the Weather pop-up modal, the snowflakes icon is very dark and we can barely see it . Is the
+
+√ for the weather pop-up modal, the 'pause feature' resumes to rotating after the rotating frequency time has passed. It's like it's not paused. Can we make it so it really pauses and then resume when clicking the pop-up modal again, outside the arrows.
+
+√ we should add a "save settings" button for the user settings panel like we have for the Admin Panel
+
+√ In AdminPanel, in the weather locations list, there should be a check box to enable/disable rotating to the location without having to delete it.
+
+√ In AdminPanel, for the weather there should be a separate setting for the frequency of updating the forecast data added to the Current Weather update freq (min).
+
+√ In AdminPanel, for the weather, close to the API key, there should be a place to enter the API allocation ( free plan is 60 calls per minute and or 1,000,000 calls per month.
+
+√ Did we address the calculation of allocation of API call with the "Update Frequency" settings? We are allocated 60 calls per minute and/or 1,000,000 apiece call per month.This calculation would stop refrain the user to set the update frequency of the calls in the adminpanel to avoid going over the api call allowance and leave a small buffer.
+
+√ In AdminPanel, the check boxes for the location rotation are now present, but when unchecked, the rotation still rotate them. Actually can we make these toggles? They look better.
+
+√ In AdminPanel, for the weather, close to the API key, Still missing the total per month. The max per minute is 60, but then the max per month is 1 million.
+
+√ the modal "User preferences saved successfully" after saving user settings is not necessary. We can remove it.
+
+√ After saving the Admin setting , is the "Success - Settings saved. Reloading..." Pop-up modal necessary? If not, let's remove it. It is annoying and doesn't bring anything to the UX.
+
+√ In AdminPanel, for the weather locations, we can remove the Master Rotation Toggle. If needing only one location the user can disable all but one.
+
+√ In AdminPanel, for the weather locations, if we there is only one location enabled, we should gray out the toggle to avoid having no locations. When the admin disable all the locations, we get a blank page.
+
+√ UserSettings doesn't seem to have the "profile section anymore where the user can change it's username and email address
+
+√ In UserSettings, we should have a toggle to enable / disable the weather all together. When disabled, the weather widget isn't displayed and the Weather modal is also disabled.
+
+√ In AdminPanel, for the weather locations, instead of disabling the toggle for location when there is only one enabled, if we disable it, this would remove the weather app from the Main page and stop the API calls. The same happens if we delete all the locations. The main page wouldn't have the weather widget and or accessibility to the Weather modal.
+
+√ in UserSettings, we should have the Profile and Security on a separate tab.
+
+√ In AdminPanel, for the weather locations, when toggling the last remaining location, I get the blank page.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
-
-
+- We need to move access to the AdminPanel as well as the Log in the UserSettings instead of in separate icons on the main page. A simple user would not have access to the AdminPanel tab and that tab would be hidden. Same with the log for the users without log access.
 
 -----
-
-- we should add a save settings button for the user settings panel
-
-- in the Weather pop-up modal, the snowflakes icon is very dark and we can barely see it . Is there a way to make sure the icons have a visible color considering the background color?
-
 
 -------------------------------------------------------
 -------------------------------------------------------
@@ -318,16 +350,6 @@ MESSAGIN
 WEATHER
 
 
-
-- when clicking on the clock / Weather a weather pop-up panel centered opens with the forecast available still rotating between the locations set.
-	- Top of the pop-up is the Current Weather "https://openweathermap.org/current" with as much information as available
-	- the body has the "5 day weather forecast" "https://openweathermap.org/forecast5" displaying as much data as possible.
-	- The pop-up still rotates, but there should be a way to pause the rotation. What do you think we should use for that?
-
-- We need a system of calculation to make sure we don't go over the 60 calls/minute or 1,000,000 calls/month with a small buffer and have the system set the frequency minimum based on this calculation. This should include all api calls to openweathermap.org
-
-
-
 -----------------------------------
 SERVER
 
@@ -352,7 +374,7 @@ NATIVE BROWSER ALERTS -> Should be Modal pop-up
 -----------------------------------
 LAYOUT
 
-- We need to move access to the admin panel in the UserSettings as well as the log. A simple user, when clicking on the username will not see the Admin Panels tab. Only the admin will.
+
 
 - Can we have the buttons and font to resize smaller before the switches get displayed differently
 
