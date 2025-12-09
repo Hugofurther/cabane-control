@@ -285,9 +285,9 @@ Requested
 
 -----
 
+- we should add a save settings button for the user settings panel
 
-
-
+- in the Weather pop-up modal, the snowflakes icon is very dark and we can barely see it . Is there a way to make sure the icons have a visible color considering the background color?
 
 
 -------------------------------------------------------
@@ -317,11 +317,14 @@ MESSAGIN
 -----------------------------------
 WEATHER
 
-- make the minimum Weather update frequency 1 minute
+
 
 - when clicking on the clock / Weather a weather pop-up panel centered opens with the forecast available still rotating between the locations set.
+	- Top of the pop-up is the Current Weather "https://openweathermap.org/current" with as much information as available
+	- the body has the "5 day weather forecast" "https://openweathermap.org/forecast5" displaying as much data as possible.
+	- The pop-up still rotates, but there should be a way to pause the rotation. What do you think we should use for that?
 
-- Can we have a system of calculation to make sure we don't go over the 60 calls/minute or 1,000,000 calls/month
+- We need a system of calculation to make sure we don't go over the 60 calls/minute or 1,000,000 calls/month with a small buffer and have the system set the frequency minimum based on this calculation. This should include all api calls to openweathermap.org
 
 
 
@@ -483,3 +486,13 @@ Veuillez activer l’interrupteur du buzzer.
 <server.js terminal>
 
 </server.js terminal>
+
+
+
+
+
+
+---
+
+Please updated your knowledge. No need to reply. More files are coming.
+

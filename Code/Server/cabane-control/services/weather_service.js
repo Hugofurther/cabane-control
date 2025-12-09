@@ -1,121 +1,137 @@
 // ============================================================
-// 🌦️ WEATHER SERVICE (Server-Side Fetcher)
+// 🌦️ WEATHER SERVICE (OpenWeatherMap)
 // ============================================================
-const sqlite3 = require('sqlite3').verbose();
-const db = new sqlite3.Database('./cabane.db');
+const axios = require('axios');
+const db = require('sqlite3').verbose();
+const database = new db.Database('./cabane.db');
 
 let ioRef = null;
-let locations = [];
-let weatherCache = []; // Stores the latest successful data
-let updateIntervalMs = 15 * 60 * 1000; // Default 15m
+let intervalRef = null;
 
-// 429 Protection
-let isBanned = false;
-let banReleaseTime = 0;
-let fetchTimer = null;
+// Configuration
+let config = {
+    apiKey: '', // stored in system_settings as 'weather_api_key'
+    locations: [],
+    updateIntervalMin: 15, // User preference
+    rotationIntervalSec: 10
+};
+
+// State
+let weatherData = []; // Array of { location, current, forecast }
+let currentIndex = 0;
+let rotationTimer = null;
+
+// Rate Limits (OpenWeatherMap Free Tier)
+// 60 calls/min, 1M calls/month (~23 calls/min continuous)
+const SAFE_CALLS_PER_MIN = 20;
 
 function init(io) {
     ioRef = io;
-    reloadSettings();
+    loadSettings();
 }
 
-function reloadSettings() {
-    // Load locations and interval from DB
-    db.all("SELECT key, value FROM system_settings WHERE key IN ('weather_locations', 'weather_update_interval')", (err, rows) => {
+function loadSettings() {
+    database.all("SELECT key, value FROM system_settings", (err, rows) => {
         if (rows) {
             rows.forEach(row => {
+                if (row.key === 'weather_api_key') config.apiKey = row.value;
                 if (row.key === 'weather_locations') {
-                    try { locations = JSON.parse(row.value); } catch (e) { locations = []; }
+                    try { config.locations = JSON.parse(row.value); } catch (e) { }
                 }
-                if (row.key === 'weather_update_interval') {
-                    updateIntervalMs = (parseInt(row.value) || 15) * 60 * 1000;
-                }
+                if (row.key === 'weather_update_interval') config.updateIntervalMin = parseInt(row.value) || 15;
             });
+
+            // Recalculate safe interval and restart
+            startService();
         }
-        // Restart Loop
-        startFetchLoop();
     });
 }
 
-function startFetchLoop() {
-    if (fetchTimer) clearInterval(fetchTimer);
-
-    // Run immediately, then on interval
-    performFetch();
-    fetchTimer = setInterval(performFetch, updateIntervalMs);
+function reloadSettings() {
+    loadSettings();
 }
 
-async function performFetch() {
-    if (locations.length === 0) return;
+function calculateSafeInterval() {
+    const numLocs = config.locations.length;
+    if (numLocs === 0) return config.updateIntervalMin;
 
-    // 1. Check 429 Ban
-    if (isBanned) {
-        const now = Date.now();
-        if (now < banReleaseTime) {
-            console.log(`[WEATHER] API Banned. Waiting until ${new Date(banReleaseTime).toLocaleTimeString()}`);
-            return;
-        } else {
-            console.log("[WEATHER] Ban lifted. Resuming fetches.");
-            isBanned = false;
-        }
+    // 2 calls per location (Current + Forecast)
+    const callsPerCycle = numLocs * 2;
+
+    // Max cycles per minute to stay under SAFE_CALLS_PER_MIN
+    const maxCyclesPerMin = SAFE_CALLS_PER_MIN / callsPerCycle;
+
+    // Minimum safe interval in minutes
+    const minSafeIntervalMin = Math.ceil(1 / maxCyclesPerMin);
+
+    console.log(`[Weather] Cities: ${numLocs}, Calls/Cycle: ${callsPerCycle}. Calc Min Interval: ${minSafeIntervalMin}m.`);
+
+    // Return the larger of the two: User Pref or Safety Limit
+    return Math.max(config.updateIntervalMin, minSafeIntervalMin);
+}
+
+function startService() {
+    if (intervalRef) clearInterval(intervalRef);
+    if (rotationTimer) clearInterval(rotationTimer);
+
+    if (!config.apiKey || config.locations.length === 0) {
+        console.log("[Weather] Missing API Key or Locations. Service Paused.");
+        return;
     }
 
-    console.log("[WEATHER] Fetching data for", locations.length, "cities...");
-    const newCache = [];
+    const safeIntervalMin = calculateSafeInterval();
+    console.log(`[Weather] Starting Update Loop every ${safeIntervalMin} minutes.`);
 
-    // 2. Fetch Data
-    for (const loc of locations) {
-        // Small delay between requests to be nice to the API
-        await new Promise(r => setTimeout(r, 500));
+    // Initial Fetch
+    fetchAllWeather();
 
+    // Schedule Fetch
+    intervalRef = setInterval(fetchAllWeather, safeIntervalMin * 60 * 1000);
+}
+
+async function fetchAllWeather() {
+    if (!config.apiKey) return;
+
+    const results = [];
+
+    // Serial fetching to avoid bursting requests
+    for (const loc of config.locations) {
         try {
-            const lat = parseFloat(loc.lat);
-            const lon = parseFloat(loc.lon);
-            if (isNaN(lat) || isNaN(lon)) continue;
+            // 1. Current Weather
+            const currentUrl = `https://api.openweathermap.org/data/2.5/weather?lat=${loc.lat}&lon=${loc.lon}&units=metric&appid=${config.apiKey}`;
+            const resCurrent = await axios.get(currentUrl);
 
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,precipitation&temperature_unit=celsius&wind_speed_unit=kmh&precipitation_unit=mm`;
+            // 2. 5-Day Forecast
+            const forecastUrl = `https://api.openweathermap.org/data/2.5/forecast?lat=${loc.lat}&lon=${loc.lon}&units=metric&appid=${config.apiKey}`;
+            const resForecast = await axios.get(forecastUrl);
 
-            const response = await fetch(url);
-
-            if (response.status === 429) {
-                console.error("[WEATHER] 429 Too Many Requests! Pausing for 1 hour.");
-                isBanned = true;
-                banReleaseTime = Date.now() + (60 * 60 * 1000); // 1 Hour
-                return; // Stop fetching immediately
-            }
-
-            if (!response.ok) {
-                console.error(`[WEATHER] HTTP Error ${response.status} for ${loc.name}`);
-                continue;
-            }
-
-            const data = await response.json();
-
-            // Structure data for Frontend
-            newCache.push({
-                name: loc.name,
-                data: data.current,
-                timestamp: Date.now()
+            results.push({
+                locationName: loc.name,
+                current: resCurrent.data,
+                forecast: resForecast.data
             });
 
+            // Small delay between calls to be polite
+            await new Promise(r => setTimeout(r, 200));
+
         } catch (e) {
-            console.error("[WEATHER] Network Error:", e.message);
+            console.error(`[Weather] Failed for ${loc.name}:`, e.message);
         }
     }
 
-    // 3. Update Cache & Broadcast
-    if (newCache.length > 0) {
-        weatherCache = newCache;
-        if (ioRef) ioRef.emit('WEATHER_UPDATE', weatherCache);
-        console.log("[WEATHER] Update sent to clients.");
+    weatherData = results;
+    broadcastData();
+}
+
+function broadcastData() {
+    if (ioRef) {
+        // Send the FULL array so the frontend can handle the detailed modal logic
+        ioRef.emit('WEATHER_FULL_UPDATE', weatherData);
     }
 }
 
-// Helper to send current cache to new clients immediately
 function sendCurrentTo(socket) {
-    if (weatherCache.length > 0) {
-        socket.emit('WEATHER_UPDATE', weatherCache);
-    }
+    socket.emit('WEATHER_FULL_UPDATE', weatherData);
 }
 
 module.exports = { init, reloadSettings, sendCurrentTo };

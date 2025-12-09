@@ -92,9 +92,12 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('STATE_FULL', (data) => setSystemState(data));
         newSocket.on('ONLINE_USERS', (users) => setOnlineList(users || []));
 
-        newSocket.on('WEATHER_UPDATE', (data) => {
+        // ✅ REPLACED: Listen for the new FULL data structure
+        newSocket.on('WEATHER_FULL_UPDATE', (data) => {
             setWeatherData(Array.isArray(data) ? data : []);
         });
+
+        // REMOVED: newSocket.on('WEATHER_UPDATE'...) to prevent conflicts
 
         return () => newSocket.close();
     }, []);

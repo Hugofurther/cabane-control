@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw } from 'lucide-react';
-import { useModal } from '../contexts/ModalContext'; // ✅ Import Modal Hook
+import { useModal } from '../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-// Helper for Bytes
 const formatBytes = (bytes) => {
     if (!bytes || isNaN(bytes)) return '0 GB';
     const gb = bytes / (1024 * 1024 * 1024);
@@ -13,7 +12,7 @@ const formatBytes = (bytes) => {
 };
 
 export const AdminPanel = ({ isOpen, onClose }) => {
-    const { showConfirm, showAlert } = useModal(); // ✅ Get Hooks
+    const { showConfirm, showAlert } = useModal();
     const [activeTab, setActiveTab] = useState('USERS');
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -22,6 +21,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
     // System Settings State
     const [sysSettings, setSysSettings] = useState({
         timezone: 'UTC',
+        weather_api_key: '',
         weather_rotation_interval: '10',
         weather_update_interval: '15'
     });
@@ -53,8 +53,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
 
             if (resSettings.data.weather_locations) {
                 try { setLocations(JSON.parse(resSettings.data.weather_locations)); } catch (e) { }
-            } else if (resSettings.data.weather_city) {
-                setLocations([{ name: resSettings.data.weather_city, lat: resSettings.data.weather_lat, lon: resSettings.data.weather_lon }]);
             }
 
             if (resSettings.data.disabled_stations) {
@@ -84,22 +82,35 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
     };
 
+    // ✅ UPDATED: Use OpenWeatherMap Geocoding API
     const searchCity = async () => {
         if (!citySearch) return;
+
+        // Safety: Need API Key to search
+        if (!sysSettings.weather_api_key) {
+            showAlert("Configuration Error", "Please enter and save your OpenWeatherMap API Key first.");
+            return;
+        }
+
         try {
-            const res = await axios.get(`https://geocoding-api.open-meteo.com/v1/search?name=${citySearch}&count=5&language=en&format=json`);
-            setCityResults(res.data.results || []);
+            // New Endpoint: api.openweathermap.org/geo/1.0/direct
+            const res = await axios.get(`https://api.openweathermap.org/geo/1.0/direct?q=${citySearch}&limit=5&appid=${sysSettings.weather_api_key}`);
+            setCityResults(res.data || []);
         } catch (e) {
-            // ✅ REPLACED: alert("Search failed");
-            showAlert("Search Failed", "Could not reach the weather service.");
+            console.error(e);
+            showAlert("Search Failed", "Could not reach the geocoding service. Check your API Key.");
         }
     };
 
+    // ✅ UPDATED: Adapt to OWM Data Structure
     const addLocation = (city) => {
+        // OWM returns: { name, lat, lon, country, state }
+        const locationName = city.name + (city.state ? `, ${city.state}` : `, ${city.country}`);
+
         setLocations(prev => [...prev, {
-            name: city.name + (city.admin1 ? `, ${city.admin1}` : ''),
-            lat: city.latitude,
-            lon: city.longitude
+            name: locationName,
+            lat: city.lat,
+            lon: city.lon
         }]);
         setCityResults([]); setCitySearch('');
     };
@@ -118,13 +129,11 @@ export const AdminPanel = ({ isOpen, onClose }) => {
             };
             await axios.post(`${API_URL}/api/system/settings`, payload, { headers: { Authorization: `Bearer ${token}` } });
 
-            // ✅ REPLACED: alert("Settings saved."); window.location.reload();
-            showAlert("Success", "System settings have been saved. The interface will now reload.", () => {
+            showAlert("Success", "System settings have been saved. The interface will reload to apply changes.", () => {
                 window.location.reload();
             });
         } catch (e) {
-            // ✅ REPLACED: alert("Failed to save");
-            showAlert("Error", "Failed to save settings. Please check your connection.");
+            showAlert("Error", "Failed to save settings.");
         }
     };
 
@@ -138,7 +147,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
     };
 
     const deleteUser = async (id) => {
-        // ✅ REPLACED: if (confirm("Delete user?")) { ... }
         showConfirm({
             title: "Delete User",
             message: "Are you sure you want to permanently delete this user account?",
@@ -147,9 +155,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                 try {
                     await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
                     fetchData();
-                } catch (e) {
-                    showAlert("Error", "Failed to delete user.");
-                }
+                } catch (e) { showAlert("Error", "Failed to delete user."); }
             }
         });
     };
@@ -160,12 +166,12 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 backdrop-blur-sm" onClick={onClose}>
             <div className="bg-cabane-panel border border-gray-600 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
 
-                <div className="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-800">
+                <div className="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-800 shrink-0">
                     <h2 className="text-xl font-black text-gray-200 flex items-center gap-3 tracking-wide"><Shield className="text-blue-500" size={24} /> ADMINISTRATION</h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={28} /></button>
                 </div>
 
-                <div className="flex border-b border-gray-700 bg-gray-900">
+                <div className="flex border-b border-gray-700 bg-gray-900 shrink-0">
                     <button onClick={() => setActiveTab('USERS')} className={`flex-1 py-3 text-sm font-bold uppercase ${activeTab === 'USERS' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500'}`}>Users</button>
                     <button onClick={() => setActiveTab('SYSTEM')} className={`flex-1 py-3 text-sm font-bold uppercase ${activeTab === 'SYSTEM' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500'}`}>System Settings</button>
                 </div>
@@ -192,8 +198,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                     )}
 
                     {activeTab === 'SYSTEM' && (
-                        <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* Timezone & Disk */}
+                        <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
                             <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit">
                                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Globe size={20} className="text-blue-500" /> Timezone</h3>
                                 <select value={sysSettings.timezone} onChange={(e) => setSysSettings({ ...sysSettings, timezone: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-6 outline-none">
@@ -232,11 +237,25 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                 </div>
                             </div>
 
-                            {/* Weather Config */}
                             <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><MapPin size={20} className="text-green-500" /> Weather Rotation</h3>
 
-                                {/* Timing Settings */}
+                                <div className="mb-4 pb-4 border-b border-gray-700">
+                                    <label className="text-xs font-bold text-gray-500 mb-1 flex items-center gap-1">
+                                        <Globe size={12} /> OPENWEATHERMAP API KEY
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={sysSettings.weather_api_key || ''}
+                                        onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })}
+                                        className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs"
+                                        placeholder="Enter your API Key..."
+                                    />
+                                    <p className="text-[10px] text-gray-500 mt-1">
+                                        Required for Weather. Frequency is auto-calculated to stay under limit.
+                                    </p>
+                                </div>
+
                                 <div className="grid grid-cols-2 gap-4 mb-6 pb-6 border-b border-gray-700">
                                     <div>
                                         <label className="text-xs font-bold text-gray-500 mb-1 flex items-center gap-1"><Clock size={12} /> ROTATION (SEC)</label>
@@ -248,7 +267,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                     </div>
                                 </div>
 
-                                {/* City Search */}
                                 <div className="flex gap-2 mb-4">
                                     <input type="text" placeholder="Add City..." value={citySearch} onChange={e => setCitySearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchCity()} className="flex-grow bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
                                     <button onClick={searchCity} className="p-2 bg-blue-600 rounded text-white hover:bg-blue-500"><Search size={20} /></button>
@@ -256,7 +274,10 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                 {cityResults.length > 0 && (
                                     <ul className="mb-4 bg-gray-900 border border-gray-600 rounded max-h-40 overflow-y-auto">
                                         {cityResults.map(city => (
-                                            <li key={city.id} onClick={() => addLocation(city)} className="p-2 hover:bg-blue-900/50 cursor-pointer text-sm text-gray-300 border-b border-gray-700">{city.name}, {city.admin1}</li>
+                                            // ✅ UPDATED: Map OWM Geo response fields
+                                            <li key={`${city.lat}-${city.lon}`} onClick={() => addLocation(city)} className="p-2 hover:bg-blue-900/50 cursor-pointer text-sm text-gray-300 border-b border-gray-700">
+                                                {city.name}, {city.state ? `${city.state}, ` : ''}{city.country}
+                                            </li>
                                         ))}
                                     </ul>
                                 )}
@@ -270,7 +291,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                 </div>
                             </div>
 
-                            {/* Station Config */}
                             <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> Station Configuration</h3>
                                 <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
@@ -285,11 +305,17 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                     })}
                                 </div>
                             </div>
-
-                            <div className="md:col-span-2"><button onClick={saveSettings} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all"><Save size={20} /> SAVE ALL SETTINGS</button></div>
                         </div>
                     )}
                 </div>
+
+                {activeTab === 'SYSTEM' && (
+                    <div className="p-4 bg-gray-900 border-t border-gray-800 shrink-0 flex justify-end">
+                        <button onClick={saveSettings} className="w-full md:w-auto px-8 bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all">
+                            <Save size={20} /> SAVE ALL SETTINGS
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );
