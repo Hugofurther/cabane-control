@@ -274,6 +274,8 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ make login expiresIn a user setting with default 60 days.
 
+√ Can we make all native browser alerts a centered pop-up more of the same theme as the app. It is disorienting and bad UX to have those native browser alerts.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
@@ -283,7 +285,7 @@ Requested
 
 -----
 
-- Can we make all native browser alerts a centered pop-up more of the same theme as the app. It is disorienting and bad UX to have those native browser alerts.
+
 
 
 
@@ -319,6 +321,8 @@ WEATHER
 
 - when clicking on the clock / Weather a weather pop-up panel centered opens with the forecast available still rotating between the locations set.
 
+- Can we have a system of calculation to make sure we don't go over the 60 calls/minute or 1,000,000 calls/month
+
 
 
 -----------------------------------
@@ -338,9 +342,8 @@ UX
 
 
 -----------------------------------
-NATIVE BROWSER ALERTS
+NATIVE BROWSER ALERTS -> Should be Modal pop-up
 
-- Session Expirty
 
 
 -----------------------------------

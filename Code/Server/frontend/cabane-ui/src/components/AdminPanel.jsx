@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw } from 'lucide-react';
+import { useModal } from '../contexts/ModalContext'; // ✅ Import Modal Hook
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
+// Helper for Bytes
 const formatBytes = (bytes) => {
     if (!bytes || isNaN(bytes)) return '0 GB';
     const gb = bytes / (1024 * 1024 * 1024);
@@ -11,6 +13,7 @@ const formatBytes = (bytes) => {
 };
 
 export const AdminPanel = ({ isOpen, onClose }) => {
+    const { showConfirm, showAlert } = useModal(); // ✅ Get Hooks
     const [activeTab, setActiveTab] = useState('USERS');
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -19,8 +22,8 @@ export const AdminPanel = ({ isOpen, onClose }) => {
     // System Settings State
     const [sysSettings, setSysSettings] = useState({
         timezone: 'UTC',
-        weather_rotation_interval: '10', // Default 10s
-        weather_update_interval: '15'    // Default 15m
+        weather_rotation_interval: '10',
+        weather_update_interval: '15'
     });
     const [locations, setLocations] = useState([]);
     const [disabledStations, setDisabledStations] = useState([]);
@@ -58,10 +61,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                 try { setDisabledStations(JSON.parse(resSettings.data.disabled_stations)); } catch (e) { }
             }
 
-            // INSIDE fetchData():
             const resStatus = await axios.get(`${API_URL}/api/system/status`, { headers: { Authorization: `Bearer ${token}` } });
-
-            // Calculate raw used bytes
             const total = resStatus.data.size || 0;
             const free = resStatus.data.free || 0;
             const used = total - free;
@@ -89,7 +89,10 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         try {
             const res = await axios.get(`https://geocoding-api.open-meteo.com/v1/search?name=${citySearch}&count=5&language=en&format=json`);
             setCityResults(res.data.results || []);
-        } catch (e) { alert("Search failed"); }
+        } catch (e) {
+            // ✅ REPLACED: alert("Search failed");
+            showAlert("Search Failed", "Could not reach the weather service.");
+        }
     };
 
     const addLocation = (city) => {
@@ -109,14 +112,20 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         const token = localStorage.getItem('cabane_token');
         try {
             const payload = {
-                ...sysSettings, // Includes timezone, rotation, update intervals
+                ...sysSettings,
                 weather_locations: JSON.stringify(locations),
                 disabled_stations: JSON.stringify(disabledStations)
             };
             await axios.post(`${API_URL}/api/system/settings`, payload, { headers: { Authorization: `Bearer ${token}` } });
-            alert("Settings saved.");
-            window.location.reload();
-        } catch (e) { alert("Failed to save"); }
+
+            // ✅ REPLACED: alert("Settings saved."); window.location.reload();
+            showAlert("Success", "System settings have been saved. The interface will now reload.", () => {
+                window.location.reload();
+            });
+        } catch (e) {
+            // ✅ REPLACED: alert("Failed to save");
+            showAlert("Error", "Failed to save settings. Please check your connection.");
+        }
     };
 
     const approveUser = async (id) => {
@@ -127,11 +136,22 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
         fetchData();
     };
+
     const deleteUser = async (id) => {
-        if (confirm("Delete user?")) {
-            await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-            fetchData();
-        }
+        // ✅ REPLACED: if (confirm("Delete user?")) { ... }
+        showConfirm({
+            title: "Delete User",
+            message: "Are you sure you want to permanently delete this user account?",
+            isDestructive: true,
+            onConfirm: async () => {
+                try {
+                    await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
+                    fetchData();
+                } catch (e) {
+                    showAlert("Error", "Failed to delete user.");
+                }
+            }
+        });
     };
 
     if (!isOpen) return null;
@@ -179,11 +199,11 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                 <select value={sysSettings.timezone} onChange={(e) => setSysSettings({ ...sysSettings, timezone: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-6 outline-none">
                                     {timezones.map(tz => <option key={tz.label} value={tz.value}>{tz.label}</option>)}
                                 </select>
+
                                 <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2 pt-4 border-t border-gray-700">
                                     <HardDrive size={20} className="text-purple-500" /> Storage
                                 </h3>
 
-                                {/* Percentage Header */}
                                 <div className="flex justify-between items-baseline mb-2">
                                     <div className="text-3xl font-mono font-black text-white">
                                         {diskStats.percent} <span className="text-sm text-gray-500 font-sans font-bold">FULL</span>
@@ -193,7 +213,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                     </div>
                                 </div>
 
-                                {/* Progress Bar */}
                                 <div className="w-full bg-gray-700 rounded-full h-3 mb-3 overflow-hidden border border-gray-600">
                                     <div
                                         className="bg-purple-600 h-full rounded-full transition-all duration-1000 ease-out"
@@ -201,7 +220,6 @@ export const AdminPanel = ({ isOpen, onClose }) => {
                                     ></div>
                                 </div>
 
-                                {/* Detailed Stats Grid */}
                                 <div className="grid grid-cols-2 gap-2 text-xs">
                                     <div className="bg-gray-900/50 p-2 rounded border border-gray-700 flex flex-col">
                                         <span className="text-gray-500 font-bold uppercase">Used</span>

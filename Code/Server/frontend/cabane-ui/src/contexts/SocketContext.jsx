@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
+import { useModal } from './ModalContext'; // ✅ Import Hook
 
 const SocketContext = createContext();
 
@@ -9,6 +10,7 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
+    const { showAlert } = useModal(); // ✅ Get Alert function
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
@@ -38,15 +40,15 @@ export const SocketProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [onlineList, setOnlineList] = useState([]);
 
-    // --- ACTIONS (Defined early so they can be used in effects) ---
+    // --- ACTIONS ---
     const logout = () => {
         localStorage.removeItem('cabane_token');
         setToken(null);
         setUser(null);
-        window.location.reload(); // Hard refresh to clear all state
+        window.location.reload();
     };
 
-    // --- 🛡️ GLOBAL AXIOS INTERCEPTOR (Session Timeout Handler) ---
+    // --- 🛡️ GLOBAL AXIOS INTERCEPTOR ---
     useEffect(() => {
         const interceptor = axios.interceptors.response.use(
             (response) => response,
@@ -54,25 +56,20 @@ export const SocketProvider = ({ children }) => {
                 if (error.response) {
                     const { status, data } = error.response;
 
-                    // 1. Handle 401 (Unauthorized) - Always Logout
                     if (status === 401) {
-                        alert("Session Expired. Please log in again.");
-                        logout();
+                        showAlert("Session Expired", "Your session has timed out. Please log in again.", () => {
+                            logout();
+                        });
                         return Promise.reject(error);
                     }
 
-                    // 2. Handle 403 (Forbidden) - Check if it's Expiry or Logic
                     if (status === 403) {
-                        // In Express, middleware usually sends res.sendStatus(403) for expiry, which results in a string "Forbidden"
-                        // Custom logic errors in routes.js use res.status(403).json({ error: "..." })
-
                         const isExpiry = typeof data === 'string' || (data.error && data.error.toLowerCase().includes('token'));
-
                         if (isExpiry) {
-                            alert("Session Expired. Please log in again.");
-                            logout();
+                            showAlert("Session Expired", "Your session has timed out. Please log in again.", () => {
+                                logout();
+                            });
                         } else {
-                            // It's just a permission error (e.g., "Not active controller"), let the UI handle it or show simple alert
                             console.warn("Action blocked:", data.error || data);
                         }
                     }
@@ -80,9 +77,8 @@ export const SocketProvider = ({ children }) => {
                 return Promise.reject(error);
             }
         );
-
         return () => axios.interceptors.response.eject(interceptor);
-    }, []);
+    }, [showAlert]);
 
     // --- SOCKET SETUP ---
     useEffect(() => {
@@ -106,7 +102,6 @@ export const SocketProvider = ({ children }) => {
     // --- SESSION RESTORE ---
     useEffect(() => {
         const checkSession = async () => {
-            // Fetch Settings
             try {
                 if (token) {
                     const resSettings = await axios.get(`${API_URL}/api/system/settings`, {
@@ -126,7 +121,6 @@ export const SocketProvider = ({ children }) => {
                 });
                 setUser(res.data);
             } catch (e) {
-                // If initial check fails, it might be expired too
                 localStorage.removeItem('cabane_token');
                 setToken(null);
                 setUser(null);
@@ -137,7 +131,6 @@ export const SocketProvider = ({ children }) => {
         checkSession();
     }, [token]);
 
-    // Identify
     useEffect(() => {
         if (socket && user?.username) {
             socket.emit('IDENTIFY', user.username);
@@ -186,9 +179,18 @@ export const SocketProvider = ({ children }) => {
 
     // --- CONTROL ---
     const takeControl = async () => {
-        if (!token) { alert("Login required"); return; }
-        try { await axios.post(`${API_URL}/api/control/take`, {}, { headers: { Authorization: `Bearer ${token}` } }); }
-        catch (e) { alert("Failed: " + (e.response?.data?.error || e.message)); }
+        if (!token) {
+            // ✅ REPLACED: alert("Login required");
+            showAlert("Access Denied", "You must be logged in to take control.");
+            return;
+        }
+        try {
+            await axios.post(`${API_URL}/api/control/take`, {}, { headers: { Authorization: `Bearer ${token}` } });
+        }
+        catch (e) {
+            // ✅ REPLACED: alert("Failed: " + ...);
+            showAlert("Control Error", "Failed to take control: " + (e.response?.data?.error || e.message));
+        }
     };
 
     const releaseToServer = async () => {

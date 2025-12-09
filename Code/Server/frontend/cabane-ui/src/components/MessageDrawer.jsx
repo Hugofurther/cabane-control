@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { X, Send, AlertTriangle, StickyNote, Users, User, Plus, ArrowLeft, Search, Clock, Trash2, LogOut, CheckCheck, ArrowDown, ChevronUp, ChevronDown, Check, Settings, UserMinus, Edit3, Crown, Trash } from 'lucide-react';
+import { X, Send, AlertTriangle, Users, Plus, ArrowLeft, Search, Clock, Trash2, CheckCheck, ArrowDown, Settings, UserMinus, Edit3, Crown, Trash, Check } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { clsx } from 'clsx';
 import { FlashViewer } from './FlashViewer';
+import { useModal } from '../contexts/ModalContext'; // ✅ Hook
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -28,6 +29,7 @@ const formatSmartTime = (isoString) => {
 };
 
 export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
+    const { showConfirm, showAlert } = useModal(); // ✅ Use Global Modal
     const { user, socket, onlineList } = useSocket();
 
     // --- STATE ---
@@ -49,7 +51,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const [newGroupName, setNewGroupName] = useState('');
     const [newGroupMembers, setNewGroupMembers] = useState([]);
     const [renameInput, setRenameInput] = useState('');
-    const [notifyType, setNotifyType] = useState('PUBLIC'); // Will be reset by effect
+    const [notifyType, setNotifyType] = useState('PUBLIC');
 
     const [zoomedMessage, setZoomedMessage] = useState(null);
 
@@ -112,7 +114,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         setIsHeaderExpanded(false);
     }, [selectedTarget]);
 
-    // ✅ FIX: Reset Notification Type to User Default whenever Settings Panel Opens
     useEffect(() => {
         if (isGroupSettingsOpen) {
             setNotifyType(user?.settings?.defaultGroupNotify || 'PUBLIC');
@@ -121,7 +122,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     useEffect(() => { allowedGroupIds.current = new Set(groupList.map(g => String(g.id))); }, [groupList]);
 
-    // --- HELPER: GET ADMIN NAME ---
     const getAdminName = (adminId) => {
         if (!adminId) return null;
         const u = userList.find(user => user.id === adminId);
@@ -175,7 +175,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
                 if (action === 'REMOVE' && activeTab === 'GROUPS' && String(selectedTarget?.id) === String(groupId)) {
                     setSelectedTarget(null);
-                    alert("You have been removed from this group.");
+                    showAlert("Removed", "You have been removed from this group.");
                 }
             }
         };
@@ -185,7 +185,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             fetchData();
             if (activeTab === 'GROUPS' && String(selectedTarget?.id) === String(groupId)) {
                 setSelectedTarget(null);
-                alert("This group has been deleted by the admin.");
+                showAlert("Deleted", "This group has been deleted by the admin.");
             }
         };
 
@@ -290,11 +290,12 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         if (textareaRef.current) textareaRef.current.style.height = 'auto';
         isAtBottomRef.current = true;
         try { await axios.post(`${API_URL}/api/messages`, payload, { headers: { Authorization: `Bearer ${token}` } }); }
-        catch (e) { alert("Send failed"); setMessages(prev => prev.filter(m => m.id !== tempId)); }
+        catch (e) { showAlert("Error", "Send failed"); setMessages(prev => prev.filter(m => m.id !== tempId)); }
     };
 
     const handleKeyDown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e); } };
     const handleInput = (e) => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`; };
+
     const handleMarkAllRead = () => {
         const allUnreadIds = messages.filter(m => !m.is_read_by_me && String(m.sender_id) !== String(user.id)).map(m => m.id);
         if (allUnreadIds.length > 0) {
@@ -303,18 +304,100 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             setMessages(prev => prev.map(m => allUnreadIds.includes(m.id) ? { ...m, is_read_by_me: 1 } : m));
         }
     };
+
     const handleDowngradeUrgency = async (id) => {
         setMessages(prev => prev.map(m => m.id === id ? { ...m, is_ack_by_me: 1 } : m));
         try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { }
     };
-    const handleCancelUrgency = async (id) => { if (!confirm("Cancel urgency?")) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/messages/cancel-urgency`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { } };
-    const handleDeleteMessage = async (id) => { if (!confirm("Delete?")) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/messages/delete`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { } };
+
+    // ✅ REFACTORED: Cancel Urgency
+    const handleCancelUrgency = (id) => {
+        showConfirm({
+            title: "Cancel Flash Message",
+            message: "This will stop the alarm for all recipients. Continue?",
+            isDestructive: true,
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.post(`${API_URL}/api/messages/cancel-urgency`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } });
+                } catch (e) { showAlert("Error", "Failed to cancel."); }
+            }
+        });
+    };
+
+    // ✅ REFACTORED: Delete Message
+    const handleDeleteMessage = (id) => {
+        showConfirm({
+            title: "Delete Message",
+            message: "Are you sure you want to delete this message?",
+            isDestructive: true,
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.post(`${API_URL}/api/messages/delete`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } });
+                } catch (e) { showAlert("Error", "Failed to delete."); }
+            }
+        });
+    };
 
     // --- GROUP MGMT ---
-    const handleCreateGroup = async () => { if (!newGroupName) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups`, { name: newGroupName, memberIds: newGroupMembers }, { headers: { Authorization: `Bearer ${token}` } }); setNewGroupName(''); setNewGroupMembers([]); setIsCreatingGroup(false); fetchData(); } catch (e) { alert(e.response?.data?.error || "Failed"); } };
-    const handleRenameGroup = async () => { if (!renameInput) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/rename`, { newName: renameInput }, { headers: { Authorization: `Bearer ${token}` } }); setSelectedTarget(prev => ({ ...prev, name: renameInput })); fetchData(); alert("Renamed successfully"); } catch (e) { alert(e.response?.data?.error || "Failed"); } };
-    const handleDeleteGroup = async () => { if (!confirm(`Are you sure you want to delete group "${selectedTarget.name}"? This cannot be undone.`)) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/delete`, {}, { headers: { Authorization: `Bearer ${token}` } }); setSelectedTarget(null); fetchData(); } catch (e) { alert(e.response?.data?.error || "Failed"); } };
-    const handleTransferAdmin = async (newAdminId) => { if (!confirm(`Transfer ownership to this user? You will lose admin privileges.`)) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/transfer`, { newAdminId }, { headers: { Authorization: `Bearer ${token}` } }); fetchData(); setIsGroupSettingsOpen(false); alert("Ownership transferred."); } catch (e) { alert(e.response?.data?.error || "Failed"); } };
+    // ✅ REFACTORED: Create Group (Alert only)
+    const handleCreateGroup = async () => {
+        if (!newGroupName) return;
+        try {
+            const token = localStorage.getItem('cabane_token');
+            await axios.post(`${API_URL}/api/groups`, { name: newGroupName, memberIds: newGroupMembers }, { headers: { Authorization: `Bearer ${token}` } });
+            setNewGroupName(''); setNewGroupMembers([]); setIsCreatingGroup(false); fetchData();
+        } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
+    };
+
+    // ✅ REFACTORED: Rename Group (Alert only)
+    const handleRenameGroup = async () => {
+        if (!renameInput) return;
+        try {
+            const token = localStorage.getItem('cabane_token');
+            await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/rename`, { newName: renameInput }, { headers: { Authorization: `Bearer ${token}` } });
+            setSelectedTarget(prev => ({ ...prev, name: renameInput })); fetchData();
+            showAlert("Success", "Group renamed successfully.");
+        } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
+    };
+
+    // ✅ REFACTORED: Delete Group
+    const handleDeleteGroup = () => {
+        if (!selectedTarget) return;
+        showConfirm({
+            title: "Delete Group",
+            message: `Are you sure you want to delete "${selectedTarget.name}"?\nThis will remove all members and history.`,
+            isDestructive: true,
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/delete`, {}, { headers: { Authorization: `Bearer ${token}` } });
+                    setSelectedTarget(null); fetchData();
+                } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
+            }
+        });
+    };
+
+    // ✅ REFACTORED: Transfer Admin
+    const handleTransferAdmin = (newAdminId) => {
+        showConfirm({
+            title: "Transfer Ownership",
+            message: "You will lose admin privileges for this group. Proceed?",
+            isDestructive: false,
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/transfer`, { newAdminId }, { headers: { Authorization: `Bearer ${token}` } });
+                    fetchData();
+                    setIsGroupSettingsOpen(false);
+                    showAlert("Success", "Ownership transferred.");
+                } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
+            }
+        });
+    };
+
+    // ✅ REFACTORED: Manage Member (Alert only)
     const handleManageMember = async (targetId, action) => {
         try {
             const token = localStorage.getItem('cabane_token');
@@ -330,7 +413,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 return { ...prev, members: members.join(', ') };
             });
             fetchData();
-        } catch (e) { alert(e.response?.data?.error || "Failed"); }
+        } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
     };
 
     // --- RENDER HELPERS ---
@@ -381,11 +464,10 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     const isOnline = activeTab === 'USERS' && (onlineList || []).includes(item.username);
                     const colorClass = activeTab === 'USERS' ? getUserColor(item.username) : 'border-gray-600 text-gray-400';
                     const unreadCount = getTargetUnreadCount(item, activeTab);
-                    const adminName = activeTab === 'GROUPS' ? getAdminName(item.created_by) : null; // ✅ Get Admin Name
+                    const adminName = activeTab === 'GROUPS' ? getAdminName(item.created_by) : null;
 
                     return (<div key={item.id} onClick={() => setSelectedTarget(item)} className="p-3 bg-gray-800/50 hover:bg-gray-800 rounded border border-gray-700 cursor-pointer flex justify-between items-center"><div className="flex items-center gap-3">{activeTab === 'USERS' ? (<div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs border bg-gray-900 ${colorClass}`}>{item.username.substring(0, 2).toUpperCase()}</div>) : (<div className="p-1.5 rounded bg-gray-700 text-gray-300"><Users size={16} /></div>)}<div className="flex flex-col overflow-hidden"><span className="text-sm font-bold text-gray-300">{item.username || item.name}</span>
 
-                        {/* ✅ DISPLAY ADMIN IN LIST */}
                         {activeTab === 'GROUPS' && adminName && (
                             <span className="flex items-center gap-1 text-[10px] text-yellow-500/80"><Crown size={10} /> {adminName}</span>
                         )}
@@ -424,7 +506,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                                 <span className="font-bold text-sm truncate max-w-[150px]">{selectedTarget.username || selectedTarget.name}</span>
                             </div>
 
-                            {/* ✅ DISPLAY ADMIN IN HEADER */}
                             {activeTab === 'GROUPS' && selectedTarget.created_by && (
                                 <div className="flex items-center gap-1 text-[10px] text-yellow-500/80 ml-6">
                                     <Crown size={10} /> Admin: {getAdminName(selectedTarget.created_by)}

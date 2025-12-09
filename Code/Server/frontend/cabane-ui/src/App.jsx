@@ -14,6 +14,10 @@ import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer'; // ✅ CRITICAL IMPORT
 import { PANEL_LAYOUT } from './config/stations';
 
+import { ModalProvider } from './contexts/ModalContext'; // ✅ New Import
+import { GlobalModal } from './components/GlobalModal';   // ✅ New Import
+
+
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -325,5 +329,12 @@ const MainLayout = () => {
 };
 
 export default function App() {
-  return (<SocketProvider> <MainLayout /> </SocketProvider>);
+  return (
+    <ModalProvider>      {/* ✅ Wrap Everything */}
+      <SocketProvider>
+        <MainLayout />
+        <GlobalModal /> {/* ✅ Render the Modal Container */}
+      </SocketProvider>
+    </ModalProvider>
+  );
 }
