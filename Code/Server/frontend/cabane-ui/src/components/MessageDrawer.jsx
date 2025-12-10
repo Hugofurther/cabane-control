@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { X, Send, AlertTriangle, Users, Plus, ArrowLeft, Search, Clock, Trash2, CheckCheck, ArrowDown, Settings, UserMinus, Edit3, Crown, Trash, Check } from 'lucide-react';
+import {
+    X, Send, AlertTriangle, Users, Plus, ArrowLeft, Search, Clock,
+    Trash2, CheckCheck, ArrowDown, Settings, UserMinus, Edit3, Crown,
+    Trash, Check, StickyNote, Share2, Copy, Zap, Lock, ChevronDown
+} from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { clsx } from 'clsx';
 import { FlashViewer } from './FlashViewer';
@@ -8,7 +12,7 @@ import { useModal } from '../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-// ... (Keep getUserColor, formatSmartTime helpers) ...
+// --- HELPERS ---
 const getUserColor = (username) => {
     if (!username) return 'border-gray-500 text-gray-400 bg-gray-800';
     const colors = ['border-emerald-500 text-emerald-400 bg-emerald-900/10', 'border-purple-500 text-purple-400 bg-purple-900/10', 'border-orange-500 text-orange-400 bg-orange-900/10', 'border-pink-500 text-pink-400 bg-pink-900/10', 'border-cyan-500 text-cyan-400 bg-cyan-900/10', 'border-indigo-500 text-indigo-400 bg-indigo-900/10'];
@@ -32,20 +36,36 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const { showConfirm, showAlert } = useModal();
     const { user, socket, onlineList } = useSocket();
 
+    // --- STATE ---
     const [activeTab, setActiveTab] = useState('GLOBAL');
     const [selectedTarget, setSelectedTarget] = useState(null);
     const [isCreatingGroup, setIsCreatingGroup] = useState(false);
     const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
     const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
 
+    // Chat Data
     const [messages, setMessages] = useState([]);
     const [userList, setUserList] = useState([]);
     const [groupList, setGroupList] = useState([]);
 
+    // Note Data
+    const [notes, setNotes] = useState([]);
+    const [noteSearch, setNoteSearch] = useState('');
+    const [viewingNote, setViewingNote] = useState(null);
+    const [isCreatingNote, setIsCreatingNote] = useState(false);
+    const [newNoteTitle, setNewNoteTitle] = useState('');
+    const [initialEditMode, setInitialEditMode] = useState(false); // For new notes
+
+    // Share Data
+    const [shareTargetNote, setShareTargetNote] = useState(null); // The note being shared
+    const [shareModalOpen, setShareModalOpen] = useState(false);
+
+    // Chat Inputs
     const [input, setInput] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [isUrgent, setIsUrgent] = useState(false);
 
+    // Group Mgmt Inputs
     const [newGroupName, setNewGroupName] = useState('');
     const [newGroupMembers, setNewGroupMembers] = useState([]);
     const [renameInput, setRenameInput] = useState('');
@@ -53,6 +73,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     const [zoomedMessage, setZoomedMessage] = useState(null);
 
+    // Scroll & Ref
     const [showScrollButton, setShowScrollButton] = useState(false);
     const messagesEndRef = useRef(null);
     const chatContainerRef = useRef(null);
@@ -63,14 +84,11 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const hasInitialScrolledRef = useRef(false);
     const prevMessagesLength = useRef(0);
 
-    // ✅ NOTE: Scroll Lock useEffect REMOVED here.
-
     // --- BADGE LOGIC ---
     useEffect(() => {
         if (!user) return;
         const totalUnread = messages.filter(m => !m.is_read_by_me && String(m.sender_id) !== String(user.id)).length;
-        const notesCount = messages.filter(m => String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(user.id)).length;
-        if (onUnreadChange) onUnreadChange(totalUnread, notesCount);
+        if (onUnreadChange) onUnreadChange(totalUnread, null);
     }, [messages, user, onUnreadChange]);
 
     const getTabUnreadCount = (tab) => {
@@ -103,6 +121,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             isAtBottomRef.current = true;
             setShowScrollButton(false);
             fetchData();
+            if (activeTab === 'NOTES') fetchNotes();
         }
     }, [activeTab, selectedTarget, isOpen]);
 
@@ -148,6 +167,14 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 setGroupList(groups);
                 allowedGroupIds.current = new Set(groups.map(g => String(g.id)));
             }
+        } catch (e) { console.error(e); }
+    };
+
+    const fetchNotes = async () => {
+        const token = localStorage.getItem('cabane_token');
+        try {
+            const res = await axios.get(`${API_URL}/api/notes`, { headers: { Authorization: `Bearer ${token}` } });
+            setNotes(res.data || []);
         } catch (e) { console.error(e); }
     };
 
@@ -226,7 +253,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const currentMessages = useMemo(() => {
         return messages.filter(m => {
             if (activeTab === 'GLOBAL') return !m.recipient_id && !m.group_id;
-            if (activeTab === 'NOTES') return String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(user.id);
+            if (activeTab === 'NOTES') return false;
             if (activeTab === 'USERS' && selectedTarget) return ((String(m.sender_id) === String(selectedTarget.id) && String(m.recipient_id) === String(user.id)) || (String(m.sender_id) === String(user.id) && String(m.recipient_id) === String(selectedTarget.id)));
             if (activeTab === 'GROUPS' && selectedTarget) return String(m.group_id) === String(selectedTarget.id);
             return false;
@@ -239,7 +266,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     }, [messages, activeTab, selectedTarget, user]);
 
     useLayoutEffect(() => {
-        if (!isOpen || !chatContainerRef.current || currentMessages.length === 0) return;
+        if (!isOpen || !chatContainerRef.current || currentMessages.length === 0 || activeTab === 'NOTES') return;
         const container = chatContainerRef.current;
         const isNewMessage = currentMessages.length > prevMessagesLength.current;
         const isContentShort = container.scrollHeight <= container.clientHeight;
@@ -279,7 +306,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         const token = localStorage.getItem('cabane_token');
         const tempId = `temp-${Date.now()}`;
         const payload = { content: input, priority: isUrgent ? 'URGENT' : 'NORMAL', tempId };
-        if (activeTab === 'NOTES') payload.recipientId = user.id;
         if (activeTab === 'USERS' && selectedTarget) payload.recipientId = selectedTarget.id;
         if (activeTab === 'GROUPS' && selectedTarget) payload.groupId = selectedTarget.id;
 
@@ -335,6 +361,72 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 } catch (e) { showAlert("Error", "Failed to delete."); }
             }
         });
+    };
+
+    // --- NOTE ACTIONS ---
+    const handleCreateNote = async () => {
+        if (!newNoteTitle.trim()) return;
+        const titleToCreate = newNoteTitle;
+        try {
+            const token = localStorage.getItem('cabane_token');
+            const res = await axios.post(`${API_URL}/api/notes`, { title: titleToCreate, content: "" }, { headers: { Authorization: `Bearer ${token}` } });
+
+            setNewNoteTitle('');
+            setIsCreatingNote(false);
+
+            const newNote = {
+                id: res.data.id,
+                title: titleToCreate,
+                content: "",
+                is_owner: 1,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            };
+
+            fetchNotes();
+            setViewingNote(newNote);
+            setInitialEditMode(true);
+
+        } catch (e) { showAlert("Error", "Failed to create note."); }
+    };
+
+    const handleUpdateNote = async (id, title, content) => {
+        try {
+            const token = localStorage.getItem('cabane_token');
+            await axios.put(`${API_URL}/api/notes/${id}`, { title, content }, { headers: { Authorization: `Bearer ${token}` } });
+            fetchNotes();
+            setViewingNote(null);
+        } catch (e) { showAlert("Error", "Failed to save note."); }
+    };
+
+    const handleDeleteNote = (id) => {
+        showConfirm({
+            title: "Delete Note?",
+            message: "This will remove the note for you and anyone you shared it with.",
+            isDestructive: true,
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.delete(`${API_URL}/api/notes/${id}`, { headers: { Authorization: `Bearer ${token}` } });
+                    fetchNotes();
+                } catch (e) { showAlert("Error", "Failed to delete."); }
+            }
+        });
+    };
+
+    const handleCopyNote = async (id) => {
+        try {
+            const token = localStorage.getItem('cabane_token');
+            await axios.post(`${API_URL}/api/notes/${id}/copy`, {}, { headers: { Authorization: `Bearer ${token}` } });
+            fetchNotes();
+            showAlert("Success", "Note copied to your personal folder.");
+        } catch (e) { showAlert("Error", "Copy failed."); }
+    };
+
+    const openShareModal = (note, isFlash = false) => {
+        setShareTargetNote(note);
+        setIsUrgent(isFlash);
+        setShareModalOpen(true);
     };
 
     // --- GROUP MGMT ---
@@ -408,7 +500,82 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
     };
 
-    // --- RENDER HELPERS ---
+    // --- RENDER NOTES LIST ---
+    const renderNotes = () => {
+        const filteredNotes = notes.filter(n =>
+            n.title.toLowerCase().includes(noteSearch.toLowerCase()) ||
+            (n.content || "").toLowerCase().includes(noteSearch.toLowerCase())
+        );
+
+        return (
+            <div className="flex flex-col h-full bg-cabane-dark">
+                {/* TOOLBAR */}
+                <div className="p-3 bg-gray-900 border-b border-gray-700 flex gap-2">
+                    <div className="relative flex-grow">
+                        <Search className="absolute left-2 top-2 text-gray-500" size={14} />
+                        <input type="text" placeholder="Search notes..." value={noteSearch} onChange={e => setNoteSearch(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded pl-8 p-1.5 text-sm text-white outline-none" />
+                    </div>
+                    <button onClick={() => setIsCreatingNote(!isCreatingNote)} className="bg-blue-600 p-2 rounded text-white hover:bg-blue-500"><Plus size={16} /></button>
+                </div>
+
+                {/* CREATE UI */}
+                {isCreatingNote && (
+                    <div className="p-3 bg-gray-800 border-b border-gray-700 flex gap-2 animate-in slide-in-from-top-2">
+                        <input
+                            type="text"
+                            placeholder="Note Title..."
+                            value={newNoteTitle}
+                            onChange={e => setNewNoteTitle(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') handleCreateNote(); }}
+                            className="flex-grow bg-gray-900 border border-gray-600 rounded p-1.5 text-sm text-white outline-none"
+                            autoFocus
+                        />
+                        <button onClick={handleCreateNote} className="bg-green-600 px-3 py-1 rounded text-xs font-bold text-white uppercase shadow hover:bg-green-500">Create</button>
+                    </div>
+                )}
+
+                {/* LIST */}
+                <div className="flex-grow overflow-y-auto p-2 space-y-2">
+                    {filteredNotes.map(note => {
+                        const isOwner = note.is_owner === 1;
+                        return (
+                            <div key={note.id} onClick={() => { setViewingNote(note); setInitialEditMode(false); }} className="bg-gray-800 border border-gray-700 rounded p-3 cursor-pointer hover:border-blue-500 transition-colors group relative">
+                                <div className="flex justify-between items-start">
+                                    <div className="flex items-center gap-2">
+                                        {isOwner ? <StickyNote size={16} className="text-yellow-500" /> : <Share2 size={16} className="text-blue-400" />}
+                                        <h4 className="font-bold text-gray-200 text-sm">{note.title}</h4>
+                                    </div>
+                                    <span className="text-[10px] text-gray-500">{new Date(note.updated_at).toLocaleDateString()}</span>
+                                </div>
+                                <p className="text-xs text-gray-400 mt-1 truncate">{note.content || "No content"}</p>
+                                {!isOwner && <p className="text-[10px] text-blue-400 mt-1 flex items-center gap-1"><Lock size={10} /> Shared by {note.creator_name}</p>}
+
+                                {/* ACTIONS (Hover) */}
+                                <div className="absolute right-2 bottom-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 p-1 rounded shadow-lg border border-gray-700">
+                                    {isOwner && (
+                                        <>
+                                            <button onClick={(e) => { e.stopPropagation(); openShareModal(note, false); }} className="p-1.5 hover:bg-blue-900/50 text-blue-400 rounded" title="Share"><Share2 size={12} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); openShareModal(note, true); }} className="p-1.5 hover:bg-yellow-900/50 text-yellow-400 rounded" title="Flash Memo"><Zap size={12} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }} className="p-1.5 hover:bg-red-900/50 text-red-400 rounded" title="Delete"><Trash2 size={12} /></button>
+                                        </>
+                                    )}
+                                    {!isOwner && (
+                                        <>
+                                            <button onClick={(e) => { e.stopPropagation(); handleCopyNote(note.id); }} className="p-1.5 hover:bg-green-900/50 text-green-400 rounded" title="Save Copy"><Copy size={12} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }} className="p-1.5 hover:bg-red-900/50 text-red-400 rounded" title="Dismiss Share"><Trash2 size={12} /></button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                    {filteredNotes.length === 0 && <div className="text-center text-gray-500 text-xs italic mt-10">No notes found.</div>}
+                </div>
+            </div>
+        );
+    };
+
+    // --- RENDER CHAT ---
     const renderChat = () => (
         <div ref={chatContainerRef} onScroll={handleScroll} className="flex-grow overflow-y-auto p-4 space-y-3 bg-cabane-dark pb-4 overscroll-contain relative">
             {currentMessages.length === 0 && <div className="text-center text-gray-500 text-xs italic mt-4">No messages yet.</div>}
@@ -470,6 +637,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         );
     };
 
+    // --- RENDER MAIN ---
     return (
         <div className={clsx("fixed inset-0 bg-black/50 z-[55] transition-opacity duration-300", isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none")} onClick={onClose}>
             <div className={clsx("absolute top-0 bottom-0 right-0 w-full md:w-96 bg-gray-900 border-l border-gray-700 shadow-2xl transform transition-transform duration-300 flex flex-col", isOpen ? "translate-x-0" : "translate-x-full")} onClick={e => e.stopPropagation()}>
@@ -489,8 +657,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     <div className="flex gap-2"><button onClick={handleMarkAllRead} className="text-gray-500 hover:text-green-400" title="Mark All Read"><CheckCheck size={18} /></button><button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button></div>
                 </div>
 
-                {/* SUB-HEADER */}
-                {selectedTarget && (
+                {/* SUB-HEADER (Only for Chat) */}
+                {selectedTarget && activeTab !== 'NOTES' && (
                     <div className="bg-gray-800 border-b border-gray-700 p-3 flex justify-between items-center shrink-0" onClick={() => activeTab === 'GROUPS' ? setIsHeaderExpanded(!isHeaderExpanded) : null}>
                         <div className="flex-grow overflow-hidden flex flex-col gap-0.5">
                             <div className="flex items-center gap-2 cursor-pointer hover:text-white text-gray-300 transition-colors" onClick={(e) => { e.stopPropagation(); setSelectedTarget(null); setIsGroupSettingsOpen(false); }}>
@@ -518,7 +686,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     </div>
                 )}
 
-                {/* GROUP SETTINGS PANEL */}
+                {/* GROUP SETTINGS PANEL (Chat Only) */}
                 {isGroupSettingsOpen && activeTab === 'GROUPS' && selectedTarget && (
                     <div className="bg-gray-850 border-b border-gray-700 p-4 space-y-4 animate-in slide-in-from-top-5">
                         <div className="flex gap-2">
@@ -572,27 +740,34 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     </div>
                 )}
 
+                {/* BODY */}
                 <div className="flex-grow flex flex-col overflow-hidden">
-                    {((activeTab === 'GLOBAL' || activeTab === 'NOTES') || selectedTarget) && !isCreatingGroup && !isGroupSettingsOpen && renderChat()}
-                    {!selectedTarget && !isCreatingGroup && (activeTab === 'USERS' || activeTab === 'GROUPS') && renderList()}
-                    {isCreatingGroup && (
-                        <div className="p-4 space-y-4 bg-cabane-dark h-full">
-                            <div className="flex items-center gap-2 mb-4"><button onClick={() => setIsCreatingGroup(false)}><ArrowLeft size={16} className="text-white" /></button><h3 className="font-bold text-white">New Group</h3></div>
-                            <input type="text" placeholder="Group Name" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm" />
-                            <div className="space-y-1 max-h-64 overflow-y-auto border border-gray-700 rounded p-2"><label className="text-xs text-gray-500 font-bold block mb-2">SELECT MEMBERS:</label>{userList && userList.filter(u => u.id !== user?.id).map(u => (<div key={u.id} onClick={() => setNewGroupMembers(p => p.includes(u.id) ? p.filter(i => i !== u.id) : [...p, u.id])} className={`p-2 rounded border text-xs cursor-pointer flex justify-between items-center mb-1 ${newGroupMembers.includes(u.id) ? 'bg-blue-900/30 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>{u.username} {newGroupMembers.includes(u.id) && <Check size={14} className="text-blue-400" />}</div>))}</div>
-                            <button onClick={handleCreateGroup} className="w-full py-2 bg-blue-600 rounded font-bold text-white text-sm">Create Group</button>
-                        </div>
+                    {/* CONDITIONAL RENDER: NOTES vs CHAT */}
+                    {activeTab === 'NOTES' ? (
+                        renderNotes()
+                    ) : (
+                        <>
+                            {((activeTab === 'GLOBAL') || selectedTarget) && !isCreatingGroup && !isGroupSettingsOpen && renderChat()}
+                            {!selectedTarget && !isCreatingGroup && (activeTab === 'USERS' || activeTab === 'GROUPS') && renderList()}
+                            {isCreatingGroup && (
+                                <div className="p-4 space-y-4 bg-cabane-dark h-full">
+                                    <div className="flex items-center gap-2 mb-4"><button onClick={() => setIsCreatingGroup(false)}><ArrowLeft size={16} className="text-white" /></button><h3 className="font-bold text-white">New Group</h3></div>
+                                    <input type="text" placeholder="Group Name" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white text-sm" />
+                                    <div className="space-y-1 max-h-64 overflow-y-auto border border-gray-700 rounded p-2"><label className="text-xs text-gray-500 font-bold block mb-2">SELECT MEMBERS:</label>{userList && userList.filter(u => u.id !== user?.id).map(u => (<div key={u.id} onClick={() => setNewGroupMembers(p => p.includes(u.id) ? p.filter(i => i !== u.id) : [...p, u.id])} className={`p-2 rounded border text-xs cursor-pointer flex justify-between items-center mb-1 ${newGroupMembers.includes(u.id) ? 'bg-blue-900/30 border-blue-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>{u.username} {newGroupMembers.includes(u.id) && <Check size={14} className="text-blue-400" />}</div>))}</div>
+                                    <button onClick={handleCreateGroup} className="w-full py-2 bg-blue-600 rounded font-bold text-white text-sm">Create Group</button>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 
-                {((activeTab === 'GLOBAL' || activeTab === 'NOTES') || (selectedTarget && !isGroupSettingsOpen)) && !isCreatingGroup && (
+                {/* FOOTER (Only for Chat) */}
+                {((activeTab === 'GLOBAL') || (selectedTarget && !isGroupSettingsOpen)) && !isCreatingGroup && activeTab !== 'NOTES' && (
                     <form className="p-4 bg-gray-800 border-t border-gray-700 shrink-0">
                         <div className="flex gap-2 mb-2">
-                            {activeTab !== 'NOTES' && (
-                                <label onMouseDown={(e) => e.preventDefault()} className={`flex items-center gap-1 text-xs font-bold cursor-pointer px-2 py-1 rounded border transition-colors ${isUrgent ? 'bg-red-900 text-red-200 border-red-600' : 'bg-gray-700 text-gray-400 border-gray-600'}`}>
-                                    <input type="checkbox" className="hidden" checked={isUrgent} onChange={e => { setIsUrgent(e.target.checked); textareaRef.current?.focus(); }} /><AlertTriangle size={12} /> FLASH MESSAGE
-                                </label>
-                            )}
+                            <label onMouseDown={(e) => e.preventDefault()} className={`flex items-center gap-1 text-xs font-bold cursor-pointer px-2 py-1 rounded border transition-colors ${isUrgent ? 'bg-red-900 text-red-200 border-red-600' : 'bg-gray-700 text-gray-400 border-gray-600'}`}>
+                                <input type="checkbox" className="hidden" checked={isUrgent} onChange={e => { setIsUrgent(e.target.checked); textareaRef.current?.focus(); }} /><AlertTriangle size={12} /> FLASH MESSAGE
+                            </label>
                         </div>
                         <div className="flex gap-2 items-end">
                             <textarea ref={textareaRef} value={input} onChange={handleInput} onKeyDown={handleKeyDown} rows={1} placeholder="Type a message..." className="flex-grow bg-gray-900 border border-gray-600 rounded-lg p-2 text-white outline-none resize-none overflow-hidden min-h-[40px] max-h-[120px] text-sm" />
@@ -601,7 +776,108 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     </form>
                 )}
             </div>
+
+            {/* MESSAGE VIEWER */}
             {zoomedMessage && <FlashViewer messages={[zoomedMessage]} readOnly={true} onDismiss={() => handleDowngradeUrgency(zoomedMessage.id)} onClose={() => setZoomedMessage(null)} />}
+
+            {/* NOTE VIEWER */}
+            {viewingNote && (
+                <FlashViewer
+                    messages={[viewingNote]}
+                    readOnly={false}
+                    isOwner={viewingNote.is_owner === 1}
+                    initialEditMode={initialEditMode}
+                    onClose={() => setViewingNote(null)}
+                    onSave={handleUpdateNote}
+                />
+            )}
+
+            {/* SHARE MODAL (INTERNAL) */}
+            {shareModalOpen && (
+                <ShareModal
+                    note={shareTargetNote}
+                    users={userList.filter(u => u.id !== user?.id)}
+                    isFlash={isUrgent} // Passed from toggle logic
+                    onClose={() => setShareModalOpen(false)}
+                />
+            )}
+        </div>
+    );
+};
+
+// --- SUB-COMPONENT: SHARE MODAL ---
+const ShareModal = ({ note, users, isFlash, onClose }) => {
+    const [selectedUser, setSelectedUser] = useState('');
+    const [flashEnabled, setFlashEnabled] = useState(isFlash);
+    const [status, setStatus] = useState('IDLE'); // IDLE, SUCCESS
+
+    const handleShare = async () => {
+        if (!selectedUser) return;
+        const token = localStorage.getItem('cabane_token');
+        const endpoint = flashEnabled ? 'flash' : 'share';
+
+        try {
+            await axios.post(`${API_URL}/api/notes/${note.id}/${endpoint}`,
+                { targetUserId: selectedUser },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            setStatus('SUCCESS');
+            setTimeout(onClose, 1500); // Close after success animation
+        } catch (e) {
+            alert("Failed to share."); // Fallback
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
+            <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+                <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-850">
+                    <h3 className="font-bold text-white flex items-center gap-2">
+                        {flashEnabled ? <Zap className="text-yellow-400" size={18} /> : <Share2 className="text-blue-400" size={18} />}
+                        {flashEnabled ? "Send Flash Memo" : "Share Note"}
+                    </h3>
+                    <button onClick={onClose}><X size={20} className="text-gray-500 hover:text-white" /></button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    <div>
+                        <label className="text-xs font-bold text-gray-500 block mb-2">SELECT USER</label>
+                        <select
+                            className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white outline-none text-sm"
+                            value={selectedUser}
+                            onChange={e => setSelectedUser(e.target.value)}
+                        >
+                            <option value="">-- Choose User --</option>
+                            {users.map(u => (
+                                <option key={u.id} value={u.id}>{u.username}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div onClick={() => setFlashEnabled(!flashEnabled)} className="flex items-center gap-3 p-3 bg-gray-800/50 rounded border border-gray-700 cursor-pointer hover:bg-gray-800 transition-colors">
+                        <div className={clsx("w-5 h-5 rounded border flex items-center justify-center", flashEnabled ? "bg-yellow-500 border-yellow-500" : "border-gray-500")}>
+                            {flashEnabled && <Check size={14} className="text-black" />}
+                        </div>
+                        <div>
+                            <p className={clsx("text-sm font-bold", flashEnabled ? "text-yellow-400" : "text-gray-400")}>Urgent Flash Memo</p>
+                            <p className="text-[10px] text-gray-500">Triggers an alarm on user's screen.</p>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={handleShare}
+                        disabled={!selectedUser || status === 'SUCCESS'}
+                        className={clsx(
+                            "w-full py-3 rounded-lg font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all",
+                            status === 'SUCCESS'
+                                ? "bg-green-600 text-white scale-105"
+                                : (flashEnabled ? "bg-yellow-600 hover:bg-yellow-500 text-black" : "bg-blue-600 hover:bg-blue-500 text-white")
+                        )}
+                    >
+                        {status === 'SUCCESS' ? <Check size={24} strokeWidth={3} /> : (flashEnabled ? "SEND ALERT" : "SHARE")}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };

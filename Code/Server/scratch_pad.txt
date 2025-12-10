@@ -330,6 +330,17 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ When the cursor overs over the MessageDrawer or a pop-up modal, the background ( main page ) should not scroll while swiping up and down. only when the cursor is off of the MessageDrawer or the pop-up modal, the main page scrolls... when either are showing.
 
+√ the input textfield in the creation of the note should respond to "Return", same as clicking the "Create" button
+
+√ When creating a new note, the FlashViewer should appear automatically in edit mode, with cursor ready to type.
+
+√ When finishing editing by clicking on the Green Check, the FlashViewer should dismiss.
+
+√ When sharing the link, we should have a modal centered, not a Native Browser Alert. There should be a dropdown list of user and groups on which the "sharer" can select the users they want to share with. There should also be an option to share with "Flash Memo" enabled. This modal should have its "share" button turn into a green checkmark when successfully sent instead of the "Success - shared with x" pop-up.
+
+√ The Flash Memo should have similar flow as the sharing.
+
+√ The Flash Memo modal on the receiver should not have "System Alert". The Flash Memo should be like opening the note regularly, but with a yellow pulling outline instead of solid blue.
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
@@ -345,6 +356,41 @@ Requested
 -----
 
 
+
+
+
+
+
+
+
+
+
+
+
+- A creator of a note, when opening the note should not see "FROM: SYSTEM" in the header. The FROM is not displayed. The From mis displayed only to another user the note is shared with and is labeled "Shared by", not "FROM". There should also be a mention of who the note is being shared with (e.g. Global, Specific user, Group).
+
+- Clicking outside the note should dismiss it.
+
+
+
+-----
+- the "Flash Memo" ( in the FlashViewer ) should be showing exactly as the note when opening it from the NOTES tab, but with the "Acknowledge" button and its outline yellow.
+
+- the "Flash Memo" should have in its header, under the tile the "Shared by x" and the date shared last. Not the current date. The note shared, when optioning it has the current date in the header. It should be the dated last shared by the "sharer". There should be an option to re-share as well as an option to re-Flash Memo shared by another user. If it is re-shared, there should be a mention of the original sharer ( Shared by ) as well as a ( re-shared by )
+
+- the search bar of the notes should have an "x" to clear the input textfield.
+
+- The "Send Flash Memo" "Select User" dropdown should have the option for selecting Global and Groups.
+
+- A user sharing a note should be able to see who it is shared with and also when a user the note was shared with has deleted it ( is no longer shared )
+
+- In the note list, if a note creator edits a note, the users the note is shared with, if not edited with Flash Memo, should have a badge on it in the NOTES tab, which is dismissed once the user sees it.
+
+- If we have a badge on the Notes for unseen notes, we don't need to send a message when sharing the note.
+
+- I feel like the Message icon would be better on the right of the "Take Control" button on the main page.
+
+- The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
 
 
 -------------------------------------------------------
@@ -393,6 +439,8 @@ UX
 - Can we make the app bi-langual ( French / English )
 
 - When a user have control, the buttons to release should say "Server" and "Cabane", maybe with an icon to indicate to release control. Or a bracket above both with the mention "Release to" or something similar.
+
+- The background opacity and blurriness of all modals should all be the same at the exception of MessageDrawer ( Which background is much clearer as we may spend more time on it than the others ). Let's adjust all the modals background blurriness and opacity to barely opaque and barely blurry including the WeatherModal, UserSettings, FlashViewer
 
 
 -----------------------------------

@@ -69,6 +69,7 @@ db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
+    created_by INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 
@@ -101,14 +102,31 @@ db.serialize(() => {
   )`);
   console.log("✔ Messaging Tables Ready");
 
-  // Optimization Indices
-  db.run("CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id)");
-  db.run("CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)");
-  db.run("CREATE INDEX IF NOT EXISTS idx_messages_group ON messages(group_id)");
-  console.log("✔ Messaging Indices Ready");
+  // ============================================================
+  // 4. NOTES SYSTEM (NEW)
+  // ============================================================
+  db.run(`CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    creator_id INTEGER,
+    title TEXT,
+    content TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(creator_id) REFERENCES users(id)
+  )`);
+
+  // Shared Notes (Many-to-Many)
+  db.run(`CREATE TABLE IF NOT EXISTS note_shares (
+    note_id INTEGER,
+    user_id INTEGER,
+    PRIMARY KEY (note_id, user_id),
+    FOREIGN KEY(note_id) REFERENCES notes(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  )`);
+  console.log("✔ Notes Tables Ready");
 
   // ============================================================
-  // 4. DEFAULT ADMIN CREATION
+  // 5. DEFAULT ADMIN CREATION
   // ============================================================
   const adminName = 'admin';
   const adminPass = 'cabane'; // ⚠️ Change immediately after login
