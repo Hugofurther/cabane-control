@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, User, Lock } from 'lucide-react';
+import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, ToggleLeft } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
 
@@ -25,13 +25,14 @@ const Toggle = ({ checked, onChange, disabled }) => (
     </div>
 );
 
-export const AdminPanel = ({ isOpen, onClose }) => {
+export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     const { showConfirm, showAlert } = useModal();
     const [activeTab, setActiveTab] = useState('USERS');
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
+    // System Settings State
     const [sysSettings, setSysSettings] = useState({
         timezone: 'UTC',
         weather_api_key: '',
@@ -57,12 +58,13 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         { label: "UTC", value: "UTC" }
     ];
 
+    // ✅ FIXED: Fetch triggers on open OR embedded
     const fetchData = async () => {
         setLoading(true);
         const token = localStorage.getItem('cabane_token');
         try {
             const resUsers = await axios.get(`${API_URL}/api/users`, { headers: { Authorization: `Bearer ${token}` } });
-            setUsers(resUsers.data);
+            setUsers(Array.isArray(resUsers.data) ? resUsers.data : []);
 
             const resSettings = await axios.get(`${API_URL}/api/system/settings`, { headers: { Authorization: `Bearer ${token}` } });
             setSysSettings(prev => ({ ...prev, ...resSettings.data }));
@@ -91,8 +93,11 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         finally { setLoading(false); }
     };
 
-    useEffect(() => { if (isOpen) fetchData(); }, [isOpen]);
+    useEffect(() => {
+        if (isOpen || embedded) fetchData();
+    }, [isOpen, embedded]);
 
+    // --- LOGIC ---
     const toggleStation = (id) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
     };
@@ -123,15 +128,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
     // --- CALCULATOR ---
     const calculateApiUsage = () => {
         const activeCount = locations.filter(l => l.enabled).length;
-
-        // ✅ CRITICAL FIX: Return complete object even if 0 active
-        if (activeCount === 0) return {
-            val: '0.00',
-            status: 'SAFE',
-            color: 'text-gray-500',
-            limitMsg: 'Idle',
-            monthly: 0
-        };
+        if (activeCount === 0) return { val: '0.00', status: 'SAFE', color: 'text-gray-500', limitMsg: 'Idle', monthly: 0 };
 
         const callsCurrent = activeCount / (parseInt(sysSettings.weather_update_interval) || 15);
         const callsForecast = activeCount / (parseInt(sysSettings.weather_update_interval_forecast) || 60);
@@ -139,7 +136,7 @@ export const AdminPanel = ({ isOpen, onClose }) => {
 
         const limitMin = parseInt(sysSettings.weather_api_limit_min) || 60;
         const limitMonth = parseInt(sysSettings.weather_api_limit_month) || 1000000;
-        const estimatedMonth = totalPerMin * 43200;
+        const estimatedMonth = totalPerMin * 43200; // 60min * 24hr * 30days
 
         let status = 'SAFE';
         let color = 'text-green-400';
@@ -177,168 +174,185 @@ export const AdminPanel = ({ isOpen, onClose }) => {
         } catch (e) { showAlert("Error", "Failed to save."); }
     };
 
+    // --- USER ACTIONS ---
     const approveUser = async (id) => { await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
     const togglePermission = async (id, type, val) => { await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
     const deleteUser = async (id) => {
         showConfirm({ title: "Delete User", message: "Permanently delete user?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); } catch (e) { } } });
     };
 
-    if (!isOpen) return null;
+    // --- RENDER ---
+    const Wrapper = embedded ? 'div' : 'div';
+    const wrapperClass = embedded ? "h-full flex flex-col bg-gray-900" : "fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 backdrop-blur-sm";
+    const containerClass = embedded ? "flex-grow flex flex-col overflow-hidden" : "bg-cabane-panel border border-gray-600 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]";
 
-    return (
-        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 backdrop-blur-sm" onClick={onClose}>
-            <div className="bg-cabane-panel border border-gray-600 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+    if (!embedded && !isOpen) return null;
 
+    const content = (
+        <div className={containerClass} onClick={e => e.stopPropagation()}>
+
+            {!embedded && (
                 <div className="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-800 shrink-0">
-                    <h2 className="text-xl font-black text-gray-200 flex items-center gap-3 tracking-wide"><Shield className="text-blue-500" size={24} /> ADMINISTRATION</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={28} /></button>
+                    <h2 className="text-xl font-black text-gray-200">ADMINISTRATION</h2>
+                    <button onClick={onClose}><X size={28} /></button>
                 </div>
+            )}
 
-                <div className="flex border-b border-gray-700 bg-gray-900 shrink-0">
-                    <button onClick={() => setActiveTab('USERS')} className={`flex-1 py-3 text-sm font-bold uppercase ${activeTab === 'USERS' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500'}`}>Users</button>
-                    <button onClick={() => setActiveTab('SYSTEM')} className={`flex-1 py-3 text-sm font-bold uppercase ${activeTab === 'SYSTEM' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500'}`}>System Settings</button>
-                </div>
+            <div className="flex border-b border-gray-700 bg-gray-900 shrink-0">
+                <button onClick={() => setActiveTab('USERS')} className={`flex-1 py-3 text-sm font-bold uppercase ${activeTab === 'USERS' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500'}`}>Users</button>
+                <button onClick={() => setActiveTab('SYSTEM')} className={`flex-1 py-3 text-sm font-bold uppercase ${activeTab === 'SYSTEM' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500'}`}>System Settings</button>
+            </div>
 
-                <div className="flex-grow overflow-y-auto p-0">
-                    {activeTab === 'USERS' && (
-                        <table className="w-full text-left border-collapse">
-                            <thead className="bg-gray-900/50 text-gray-400 text-xs uppercase font-mono sticky top-0 z-10">
-                                <tr><th className="p-4">User</th><th className="p-4">Role</th><th className="p-4">Status</th><th className="p-4 text-center">Control</th><th className="p-4 text-center">Logs</th><th className="p-4 text-right">Actions</th></tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-700">
-                                {users.map(u => (
-                                    <tr key={u.id} className="hover:bg-gray-700/50">
-                                        <td className="p-4 font-bold text-gray-200">{u.username}<br /><span className="text-xs text-gray-500">{u.email}</span></td>
-                                        <td className="p-4 text-sm text-gray-400">{u.role}</td>
-                                        <td className="p-4">{u.status === 'ACTIVE' ? <span className="text-green-400 text-xs font-bold">ACTIVE</span> : <span className="text-yellow-400 text-xs font-bold">PENDING</span>}</td>
-                                        <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'control', u.can_control)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_control ? 'bg-blue-900/50 text-blue-400 border-blue-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_control ? "GRANTED" : "DENIED"}</button></td>
-                                        <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'logs', u.can_view_logs)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_view_logs ? 'bg-yellow-900/50 text-yellow-400 border-yellow-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_view_logs ? "VIEWER" : "HIDDEN"}</button></td>
-                                        <td className="p-4 flex justify-end gap-2">{u.status === 'PENDING' && <button onClick={() => approveUser(u.id)} className="p-2 bg-green-700 rounded text-white"><Check size={16} /></button>}{u.username !== 'admin' && <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-700 rounded text-red-400"><Trash2 size={16} /></button>}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    )}
+            <div className="flex-grow overflow-y-auto p-0">
+                {activeTab === 'USERS' && (
+                    <table className="w-full text-left border-collapse">
+                        <thead className="bg-gray-900/50 text-gray-400 text-xs uppercase font-mono sticky top-0 z-10">
+                            <tr><th className="p-4">User</th><th className="p-4">Role</th><th className="p-4">Status</th><th className="p-4 text-center">Control</th><th className="p-4 text-center">Logs</th><th className="p-4 text-right">Actions</th></tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-700">
+                            {users.map(u => (
+                                <tr key={u.id} className="hover:bg-gray-700/50">
+                                    <td className="p-4 font-bold text-gray-200">{u.username}<br /><span className="text-xs text-gray-500">{u.email}</span></td>
+                                    <td className="p-4 text-sm text-gray-400">{u.role}</td>
+                                    <td className="p-4">{u.status === 'ACTIVE' ? <span className="text-green-400 text-xs font-bold">ACTIVE</span> : <span className="text-yellow-400 text-xs font-bold">PENDING</span>}</td>
+                                    <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'control', u.can_control)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_control ? 'bg-blue-900/50 text-blue-400 border-blue-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_control ? "GRANTED" : "DENIED"}</button></td>
+                                    <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'logs', u.can_view_logs)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_view_logs ? 'bg-yellow-900/50 text-yellow-400 border-yellow-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_view_logs ? "VIEWER" : "HIDDEN"}</button></td>
+                                    <td className="p-4 flex justify-end gap-2">{u.status === 'PENDING' && <button onClick={() => approveUser(u.id)} className="p-2 bg-green-700 rounded text-white"><Check size={16} /></button>}{u.username !== 'admin' && <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-700 rounded text-red-400"><Trash2 size={16} /></button>}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                )}
 
-                    {activeTab === 'SYSTEM' && (
-                        <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
-                            {/* Timezone & Disk */}
-                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
-                                <div>
-                                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Globe size={20} className="text-blue-500" /> Timezone</h3>
-                                    <select value={sysSettings.timezone} onChange={(e) => setSysSettings({ ...sysSettings, timezone: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-6 outline-none">
-                                        {timezones.map(tz => <option key={tz.label} value={tz.value}>{tz.label}</option>)}
-                                    </select>
-                                </div>
-                                <div className="pt-4 border-t border-gray-700">
-                                    <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><HardDrive size={20} className="text-purple-500" /> Storage</h3>
-                                    <div className="flex justify-between items-baseline mb-2">
-                                        <div className="text-3xl font-mono font-black text-white">{diskStats.percent} <span className="text-sm text-gray-500 font-sans font-bold">FULL</span></div>
-                                        <div className="text-xs font-bold text-gray-400">{formatBytes(diskStats.size)} TOTAL</div>
-                                    </div>
-                                    <div className="w-full bg-gray-700 rounded-full h-3 mb-3 overflow-hidden border border-gray-600">
-                                        <div className="bg-purple-600 h-full rounded-full transition-all duration-1000 ease-out" style={{ width: diskStats.percent }}></div>
-                                    </div>
-                                    <div className="flex justify-between text-xs text-gray-400">
-                                        <span>Used: {formatBytes(diskStats.used)}</span>
-                                        <span>Free: {formatBytes(diskStats.free)}</span>
-                                    </div>
-                                </div>
+                {/* ✅ FULL SYSTEM TAB CONTENT RESTORED */}
+                {activeTab === 'SYSTEM' && (
+                    <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
+                        {/* 1. Timezone & Disk */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
+                            <div>
+                                <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Globe size={20} className="text-blue-500" /> Timezone</h3>
+                                <select value={sysSettings.timezone} onChange={(e) => setSysSettings({ ...sysSettings, timezone: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white mb-6 outline-none">
+                                    {timezones.map(tz => <option key={tz.label} value={tz.value}>{tz.label}</option>)}
+                                </select>
                             </div>
-
-                            {/* Weather Config */}
-                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
-                                <h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> Weather Services</h3>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-gray-700">
-                                    <div className="md:col-span-1">
-                                        <label className="text-xs font-bold text-gray-500 mb-1 block">API KEY</label>
-                                        <input type="text" value={sysSettings.weather_api_key || ''} onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs" />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 mb-1 block">LIMIT (CALLS/MIN)</label>
-                                        <input type="number" value={sysSettings.weather_api_limit_min} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
-                                    </div>
-                                    <div>
-                                        <label className="text-xs font-bold text-gray-500 mb-1 block">LIMIT (CALLS/MONTH)</label>
-                                        <input type="number" value={sysSettings.weather_api_limit_month} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_month: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
-                                    </div>
+                            <div className="pt-4 border-t border-gray-700">
+                                <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><HardDrive size={20} className="text-purple-500" /> Storage</h3>
+                                <div className="flex justify-between items-baseline mb-2">
+                                    <div className="text-3xl font-mono font-black text-white">{diskStats.percent} <span className="text-sm text-gray-500 font-sans font-bold">FULL</span></div>
+                                    <div className="text-xs font-bold text-gray-400">{formatBytes(diskStats.size)} TOTAL</div>
                                 </div>
-
-                                <div className="grid grid-cols-3 gap-4 pb-6 border-b border-gray-700">
-                                    <div><label className="text-xs font-bold text-gray-500 mb-1 block">CURRENT (MIN)</label><input type="number" min="5" value={sysSettings.weather_update_interval} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
-                                    <div><label className="text-xs font-bold text-gray-500 mb-1 block">FORECAST (MIN)</label><input type="number" min="30" value={sysSettings.weather_update_interval_forecast} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval_forecast: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
-                                    <div><label className="text-xs font-bold text-gray-500 mb-1 block">ROTATION (SEC)</label><input type="number" min="2" value={sysSettings.weather_rotation_interval} onChange={e => setSysSettings({ ...sysSettings, weather_rotation_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
+                                <div className="w-full bg-gray-700 rounded-full h-3 mb-3 overflow-hidden border border-gray-600">
+                                    <div className="bg-purple-600 h-full rounded-full transition-all duration-1000 ease-out" style={{ width: diskStats.percent }}></div>
                                 </div>
-
-                                <div className={`p-3 rounded border flex items-center justify-between ${apiUsage.status.includes('EXCEEDED') ? 'bg-red-900/20 border-red-800' : 'bg-gray-900/50 border-gray-700'}`}>
-                                    <div className="flex items-center gap-2">
-                                        <Calculator size={16} className={apiUsage.color} />
-                                        <div className="flex flex-col">
-                                            <span className="text-xs font-bold text-gray-300">USAGE: <span className={apiUsage.color}>{apiUsage.val}</span> /min</span>
-                                            <span className="text-[9px] text-gray-500">EST. MONTHLY: {apiUsage.monthly.toLocaleString()}</span>
-                                        </div>
-                                    </div>
-                                    <span className={`text-[10px] font-black px-2 py-1 rounded ${apiUsage.status === 'SAFE' ? 'bg-green-900 text-green-400' : 'bg-red-900 text-red-200'}`}>
-                                        {apiUsage.limitMsg}
-                                    </span>
-                                </div>
-
-                                <div className="space-y-4">
-                                    <div className="flex gap-2">
-                                        <input type="text" placeholder="Add City..." value={citySearch} onChange={e => setCitySearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchCity()} className="flex-grow bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
-                                        <button onClick={searchCity} className="p-2 bg-blue-600 rounded text-white hover:bg-blue-500"><Search size={20} /></button>
-                                    </div>
-                                    {cityResults.length > 0 && (
-                                        <ul className="bg-gray-900 border border-gray-600 rounded max-h-40 overflow-y-auto">
-                                            {cityResults.map(city => (
-                                                <li key={`${city.lat}-${city.lon}`} onClick={() => addLocation(city)} className="p-2 hover:bg-blue-900/50 cursor-pointer text-sm text-gray-300 border-b border-gray-700">
-                                                    {city.name}, {city.state ? `${city.state}, ` : ''}{city.country}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    )}
-                                    <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
-                                        {locations.map((loc, i) => (
-                                            <div key={i} className={`flex justify-between items-center p-3 rounded border transition-colors ${loc.enabled ? 'bg-gray-900/50 border-gray-700' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
-                                                <div className="flex items-center gap-3">
-                                                    <Toggle checked={loc.enabled} onChange={() => toggleLocation(i)} />
-                                                    <span className={`text-sm ${loc.enabled ? 'text-gray-300' : 'text-gray-500 line-through'}`}>{loc.name}</span>
-                                                </div>
-                                                <button onClick={() => removeLocation(i)} className="text-red-400 hover:text-white"><Trash2 size={16} /></button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Station Config */}
-                            <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
-                                <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> Station Configuration</h3>
-                                <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                                    {[0, 1, 2, 3, 4, 5].map(id => {
-                                        const isDisabled = disabledStations.includes(id);
-                                        return (
-                                            <button key={id} onClick={() => toggleStation(id)} className={`p-3 rounded border flex flex-col items-center gap-1 transition-all ${isDisabled ? 'bg-red-900/20 border-red-800 text-red-500' : 'bg-green-900/20 border-green-800 text-green-400'}`}>
-                                                <span className="text-xs font-bold">STATION {id}</span>
-                                                <span className="text-[10px] uppercase">{isDisabled ? "DISABLED" : "ENABLED"}</span>
-                                            </button>
-                                        );
-                                    })}
+                                <div className="flex justify-between text-xs text-gray-400">
+                                    <span>Used: {formatBytes(diskStats.used)}</span>
+                                    <span>Free: {formatBytes(diskStats.free)}</span>
                                 </div>
                             </div>
                         </div>
-                    )}
-                </div>
 
-                {activeTab === 'SYSTEM' && (
-                    <div className="p-4 bg-gray-900 border-t border-gray-800 shrink-0 flex justify-end">
-                        <button onClick={saveSettings} disabled={apiUsage.status.includes('EXCEEDED')} className={`w-full md:w-auto px-8 font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all ${apiUsage.status.includes('EXCEEDED') ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
-                            <Save size={20} /> SAVE ALL SETTINGS
-                        </button>
+                        {/* 2. Weather Configuration */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> Weather Services</h3>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-gray-700">
+                                <div className="md:col-span-1">
+                                    <label className="text-xs font-bold text-gray-500 mb-1 block">API KEY</label>
+                                    <input type="text" value={sysSettings.weather_api_key || ''} onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 mb-1 block">LIMIT (CALLS/MIN)</label>
+                                    <input type="number" value={sysSettings.weather_api_limit_min} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 mb-1 block">LIMIT (CALLS/MONTH)</label>
+                                    <input type="number" value={sysSettings.weather_api_limit_month} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_month: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-4 pb-6 border-b border-gray-700">
+                                <div><label className="text-xs font-bold text-gray-500 mb-1 block">CURRENT (MIN)</label><input type="number" min="5" value={sysSettings.weather_update_interval} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
+                                <div><label className="text-xs font-bold text-gray-500 mb-1 block">FORECAST (MIN)</label><input type="number" min="30" value={sysSettings.weather_update_interval_forecast} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval_forecast: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
+                                <div><label className="text-xs font-bold text-gray-500 mb-1 block">ROTATION (SEC)</label><input type="number" min="2" value={sysSettings.weather_rotation_interval} onChange={e => setSysSettings({ ...sysSettings, weather_rotation_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
+                            </div>
+
+                            <div className={`p-3 rounded border flex items-center justify-between ${apiUsage.status.includes('EXCEEDED') ? 'bg-red-900/20 border-red-800' : 'bg-gray-900/50 border-gray-700'}`}>
+                                <div className="flex items-center gap-2">
+                                    <Calculator size={16} className={apiUsage.color} />
+                                    <div className="flex flex-col">
+                                        <span className="text-xs font-bold text-gray-300">USAGE: <span className={apiUsage.color}>{apiUsage.val}</span> /min</span>
+                                        <span className="text-[9px] text-gray-500">EST. MONTHLY: {apiUsage.monthly.toLocaleString()}</span>
+                                    </div>
+                                </div>
+                                <span className={`text-[10px] font-black px-2 py-1 rounded ${apiUsage.status === 'SAFE' ? 'bg-green-900 text-green-400' : 'bg-red-900 text-red-200'}`}>
+                                    {apiUsage.limitMsg}
+                                </span>
+                            </div>
+
+                            <div className="space-y-4">
+                                <div className="flex gap-2">
+                                    <input type="text" placeholder="Add City..." value={citySearch} onChange={e => setCitySearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && searchCity()} className="flex-grow bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" />
+                                    <button onClick={searchCity} className="p-2 bg-blue-600 rounded text-white hover:bg-blue-500"><Search size={20} /></button>
+                                </div>
+                                {cityResults.length > 0 && (
+                                    <ul className="bg-gray-900 border border-gray-600 rounded max-h-40 overflow-y-auto">
+                                        {cityResults.map(city => (
+                                            <li key={`${city.lat}-${city.lon}`} onClick={() => addLocation(city)} className="p-2 hover:bg-blue-900/50 cursor-pointer text-sm text-gray-300 border-b border-gray-700">
+                                                {city.name}, {city.state ? `${city.state}, ` : ''}{city.country}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                                <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-2">
+                                    {locations.map((loc, i) => (
+                                        <div key={i} className={`flex justify-between items-center p-3 rounded border transition-colors ${loc.enabled ? 'bg-gray-900/50 border-gray-700' : 'bg-gray-800 border-gray-700 opacity-50'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <Toggle checked={loc.enabled} onChange={() => toggleLocation(i)} />
+                                                <span className={`text-sm ${loc.enabled ? 'text-gray-300' : 'text-gray-500 line-through'}`}>{loc.name}</span>
+                                            </div>
+                                            <button onClick={() => removeLocation(i)} className="text-red-400 hover:text-white"><Trash2 size={16} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* 3. Station Config */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
+                            <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> Station Configuration</h3>
+                            <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                                {[0, 1, 2, 3, 4, 5].map(id => {
+                                    const isDisabled = disabledStations.includes(id);
+                                    return (
+                                        <button key={id} onClick={() => toggleStation(id)} className={`p-3 rounded border flex flex-col items-center gap-1 transition-all ${isDisabled ? 'bg-red-900/20 border-red-800 text-red-500' : 'bg-green-900/20 border-green-800 text-green-400'}`}>
+                                            <span className="text-xs font-bold">STATION {id}</span>
+                                            <span className="text-[10px] uppercase">{isDisabled ? "DISABLED" : "ENABLED"}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>
+
+            {activeTab === 'SYSTEM' && (
+                <div className="p-4 bg-gray-900 border-t border-gray-800 shrink-0 flex justify-end">
+                    <button onClick={saveSettings} disabled={apiUsage.status && apiUsage.status.includes('EXCEEDED')} className={`w-full md:w-auto px-8 font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all ${apiUsage.status && apiUsage.status.includes('EXCEEDED') ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
+                        <Save size={20} /> SAVE ALL SETTINGS
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+
+    if (embedded) return content;
+
+    return (
+        <div className={wrapperClass} onClick={onClose}>
+            {content}
         </div>
     );
 };

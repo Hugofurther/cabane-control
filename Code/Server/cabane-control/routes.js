@@ -1,5 +1,5 @@
 // ============================================================
-// 🛣️ API ROUTES - FINAL PRODUCTION (v3 Fixed Read Status)
+// 🛣️ API ROUTES - FINAL PRODUCTION (v4 Logs + Weather)
 // ============================================================
 const express = require('express');
 const router = express.Router();
@@ -10,14 +10,13 @@ const sqlite3 = require('sqlite3').verbose();
 const logicEngine = require('./services/logic_engine');
 const { authenticateToken, requireAdmin } = require('./middleware/auth');
 const { sendEmail } = require('./services/email_service');
+const checkDiskSpace = require('check-disk-space').default;
 
 const db = new sqlite3.Database('./cabane.db');
 const PUBLIC_URL = process.env.PUBLIC_URL || 'http://192.168.1.200:3000';
 
 // --- HELPERS ---
 const normalize = (str) => str ? str.trim().toLowerCase() : '';
-const checkDiskSpace = require('check-disk-space').default;
-
 
 const validatePassword = (pwd) => {
     if (pwd.length < 8) return "Password must be at least 8 characters.";
@@ -44,12 +43,8 @@ const logAction = (io, userId, username, type, message) => {
 // ------------------------------------------------------------
 router.get('/system/status', authenticateToken, async (req, res) => {
     try {
-        // Check root volume ('/')
         const space = await checkDiskSpace('/');
-
-        // Calculate percentage
         const percent = Math.round(((space.size - space.free) / space.size) * 100);
-
         res.json({
             diskUsage: `${percent}%`,
             free: space.free,
@@ -57,8 +52,28 @@ router.get('/system/status', authenticateToken, async (req, res) => {
         });
     } catch (e) {
         console.error("[System] Disk check failed:", e);
-        res.json({ diskUsage: 'Unknown' });
+        res.json({ diskUsage: 'Unknown', free: 0, size: 0 });
     }
+});
+
+// ============================================================
+// 📜 LOGS (The Missing Route)
+// ============================================================
+router.get('/logs', authenticateToken, (req, res) => {
+    // Check permission
+    db.get("SELECT role, can_view_logs FROM users WHERE id = ?", [req.user.id], (err, user) => {
+        if (!user) return res.status(403).json({ error: "Access denied" });
+        if (user.role !== 'ADMIN' && !user.can_view_logs) return res.status(403).json({ error: "Access denied" });
+
+        // Limit query parameter
+        const limit = parseInt(req.query.limit) || 100;
+
+        // Fetch logs with usernames
+        db.all(`SELECT l.*, u.username FROM logs l LEFT JOIN users u ON l.user_id = u.id ORDER BY l.timestamp DESC LIMIT ?`, [limit], (err, rows) => {
+            if (err) return res.status(500).json({ error: "DB Error" });
+            res.json(rows);
+        });
+    });
 });
 
 // ============================================================
@@ -123,7 +138,7 @@ router.post('/auth/login', (req, res) => {
         let userSettings = {};
         try { userSettings = user.settings ? JSON.parse(user.settings) : {} } catch (e) { }
 
-        // ✅ CHANGE: Read setting or default to 60 days
+        // Respect session setting
         const expiresIn = userSettings.tokenExpiration || '60d';
 
         const token = jwt.sign(
@@ -198,9 +213,8 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                     if (settings.timezone && logicEngine.updateTimezone) logicEngine.updateTimezone(settings.timezone);
                     if (settings.disabled_stations && logicEngine.updateDisabled) logicEngine.updateDisabled(settings.disabled_stations);
 
-                    // Check Weather settings
-                    if (settings.weather_locations || settings.weather_update_interval) {
-                        // Require weather service if available in scope, or assume service handles poll
+                    // Weather Reload
+                    if (settings.weather_locations || settings.weather_update_interval || settings.weather_api_key) {
                         const weatherService = require('./services/weather_service');
                         if (weatherService.reloadSettings) weatherService.reloadSettings();
                     }
@@ -267,7 +281,18 @@ router.post('/users/approve', authenticateToken, requireAdmin, (req, res) => {
 router.post('/users/permission', authenticateToken, requireAdmin, (req, res) => {
     const { userId, type, value } = req.body;
     const col = type === 'control' ? 'can_control' : 'can_view_logs';
-    db.run(`UPDATE users SET ${col} = ? WHERE id = ?`, [value ? 1 : 0, userId], (err) => {
+    const newVal = value ? 1 : 0;
+
+    db.run(`UPDATE users SET ${col} = ? WHERE id = ?`, [newVal, userId], (err) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+
+        // Broadcast Permission Update
+        req.io.emit('USER_PERMISSION_UPDATE', {
+            userId,
+            key: col,
+            value: newVal
+        });
+
         res.json({ success: true });
     });
 });
@@ -278,15 +303,10 @@ router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
 
     db.run("DELETE FROM users WHERE id = ?", [userId], function (err) {
         if (this.changes === 0) return res.status(404).json();
-
-        // ✅ Trigger Check
         reevaluateUrgentMessages(req.io);
-
         res.json({ success: true });
     });
 });
-
-
 
 // ============================================================
 // 🏭 CONTROL
@@ -329,15 +349,12 @@ router.post('/control/toggle', authenticateToken, (req, res) => {
 });
 
 // ============================================================
-// 💬 MESSAGING SYSTEM (UPDATED)
+// 💬 MESSAGING SYSTEM
 // ============================================================
 
-// GET MESSAGES (Pagination Support)
 router.get('/messages', authenticateToken, (req, res) => {
     const { type, targetId } = req.query;
     const userId = req.user.id;
-
-    // Pagination Params (Default 50)
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
 
@@ -382,22 +399,18 @@ router.get('/messages', authenticateToken, (req, res) => {
         params.push(userId, userId, userId);
     }
 
-    // Apply Pagination
     sql += ` ORDER BY m.timestamp DESC LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: "DB Error" });
-        // Return reversed so they appear chronological (Oldest -> Newest)
         res.json(rows.reverse());
     });
 });
 
-// POST: Mark Read (Per User)
 router.post('/messages/read', authenticateToken, (req, res) => {
     const { messageIds } = req.body;
     if (!messageIds || messageIds.length === 0) return res.json({ success: true });
-
     const userId = req.user.id;
 
     db.serialize(() => {
@@ -407,23 +420,18 @@ router.post('/messages/read', authenticateToken, (req, res) => {
         stmt.finalize();
         db.run("COMMIT", (err) => {
             if (err) return res.status(500).json({ error: "Update failed" });
-            // Emit event so frontend updates badges instantly
             if (req.io) req.io.emit('MESSAGES_READ', { userId, messageIds });
             res.json({ success: true });
         });
     });
 });
 
-// POST: Create Message (With Echo)
 router.post('/messages', authenticateToken, (req, res) => {
     const { content, recipientId, groupId, priority, tempId } = req.body;
     const rId = recipientId || null;
     const gId = groupId || null;
-
-    // ✅ FIX 1: Generate Master Timestamp here (ISO 8601 UTC)
     const masterTimestamp = new Date().toISOString();
 
-    // ✅ FIX 2: Explicitly insert this timestamp into DB
     const stmt = db.prepare("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, ?, ?, ?)");
 
     stmt.run(req.user.id, rId, gId, content, priority || 'NORMAL', masterTimestamp, function (err) {
@@ -433,7 +441,7 @@ router.post('/messages', authenticateToken, (req, res) => {
             req.io.emit('NEW_MESSAGE', {
                 id: this.lastID,
                 tempId: tempId,
-                timestamp: masterTimestamp, // ✅ Send EXACT same string to socket
+                timestamp: masterTimestamp,
                 sender_id: req.user.id,
                 sender: req.user.username,
                 recipient_id: rId,
@@ -449,103 +457,65 @@ router.post('/messages', authenticateToken, (req, res) => {
     stmt.finalize();
 });
 
-// POST: Acknowledge/Downgrade Urgency
 router.post('/messages/downgrade', authenticateToken, (req, res) => {
     const { messageId } = req.body;
     const userId = req.user.id;
 
-    // 1. Mark as Acked by this user
-    db.run("INSERT OR IGNORE INTO message_urgency_acks (message_id, user_id) VALUES (?, ?)",
-        [messageId, userId],
-        function (err) {
-            if (err) return res.status(500).json({ error: "Update failed" });
+    db.run("INSERT OR IGNORE INTO message_urgency_acks (message_id, user_id) VALUES (?, ?)", [messageId, userId], function (err) {
+        if (err) return res.status(500).json({ error: "Update failed" });
 
-            // 2. CHECK IF ALL RECIPIENTS HAVE ACKED
-            // Logic:
-            // A. Get message info (Recipient/Group/Global)
-            // B. Count total target users
-            // C. Count total acks
+        const sqlCheck = `
+            SELECT m.id, m.sender_id, m.recipient_id, m.group_id, m.priority,
+                   (SELECT COUNT(*) FROM message_urgency_acks WHERE message_id = m.id) as ack_count,
+                   (SELECT COUNT(*) FROM group_members WHERE group_id = m.group_id) as group_count,
+                   (SELECT COUNT(*) FROM users WHERE status='ACTIVE') as global_count
+            FROM messages m WHERE m.id = ?
+        `;
 
-            const sqlCheck = `
-                SELECT m.id, m.sender_id, m.recipient_id, m.group_id, m.priority,
-                       (SELECT COUNT(*) FROM message_urgency_acks WHERE message_id = m.id) as ack_count,
-                       (SELECT COUNT(*) FROM group_members WHERE group_id = m.group_id) as group_count,
-                       (SELECT COUNT(*) FROM users WHERE status='ACTIVE') as global_count
-                FROM messages m WHERE m.id = ?
-            `;
+        db.get(sqlCheck, [messageId], (err, row) => {
+            if (!row) return res.json({ success: true });
 
-            db.get(sqlCheck, [messageId], (err, row) => {
-                if (!row) return res.json({ success: true }); // Should not happen
+            let targetCount = 0;
+            let isDowngradeNeeded = false;
 
-                let targetCount = 0;
-                let isDowngradeNeeded = false;
+            if (row.recipient_id) targetCount = 1;
+            else if (row.group_id) targetCount = row.group_count - 1;
+            else targetCount = row.global_count - 1;
 
-                if (row.recipient_id) {
-                    targetCount = 1; // Just the recipient
-                } else if (row.group_id) {
-                    // Group Size - 1 (Sender doesn't ack)
-                    targetCount = row.group_count - 1;
-                } else {
-                    // Global (All Active Users - 1)
-                    targetCount = row.global_count - 1;
-                }
+            if (row.ack_count >= targetCount) isDowngradeNeeded = true;
 
-                // If everyone acked, downgrade!
-                // Note: ack_count includes sender if they acked? No, sender UI doesn't usually allow acking own msg.
-                // Assuming normal flow:
-                if (row.ack_count >= targetCount) {
-                    isDowngradeNeeded = true;
-                }
-
-                if (isDowngradeNeeded && row.priority === 'URGENT') {
-                    db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [messageId], () => {
-                        if (req.io) {
-                            req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
-                        }
-                    });
-                }
-            });
-
-            res.json({ success: true });
-        }
-    );
+            if (isDowngradeNeeded && row.priority === 'URGENT') {
+                db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [messageId], () => {
+                    if (req.io) req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
+                });
+            }
+        });
+        res.json({ success: true });
+    });
 });
 
-// POST: Sender Cancels Urgency
 router.post('/messages/cancel-urgency', authenticateToken, (req, res) => {
     const { messageId } = req.body;
     const userId = req.user.id;
-
-    // Verify ownership and update
-    db.run(
-        "UPDATE messages SET priority = 'NORMAL' WHERE id = ? AND sender_id = ?",
-        [messageId, userId],
-        function (err) {
-            if (err) return res.status(500).json({ error: "DB Error" });
-            if (this.changes === 0) return res.status(403).json({ error: "Not sender or msg not found" });
-
-            // Emit Global Update (Closes FlashViewers for everyone)
-            if (req.io) {
-                req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
-            }
-            res.json({ success: true });
-        }
-    );
+    db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ? AND sender_id = ?", [messageId, userId], function (err) {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        if (this.changes === 0) return res.status(403).json({ error: "Not sender or msg not found" });
+        if (req.io) req.io.emit('UPDATE_MESSAGE', { id: messageId, priority: 'NORMAL' });
+        res.json({ success: true });
+    });
 });
 
-// ... Group Routes (Create, Leave) ...
+// ... Group Routes (Directory, Conversations, Delete, Create, Rename, Members, Transfer, Leave) ...
 router.get('/users/directory', authenticateToken, (req, res) => {
     db.all("SELECT id, username, role, status FROM users WHERE status='ACTIVE'", [], (err, rows) => res.json(rows));
 });
 
-// GET CONVERSATIONS (Updated to include created_by)
 router.get('/conversations', authenticateToken, (req, res) => {
     const userId = req.user.id;
     const conversations = [];
     conversations.push({ type: 'GLOBAL', name: 'Global Chat', id: 'global' });
     conversations.push({ type: 'NOTES', name: 'My Notes', id: 'notes' });
 
-    // ✅ ADDED g.created_by
     const groupSql = `
         SELECT g.id, g.name, g.created_by, GROUP_CONCAT(u.username, ', ') as members 
         FROM groups g 
@@ -556,13 +526,7 @@ router.get('/conversations', authenticateToken, (req, res) => {
     `;
 
     db.all(groupSql, [userId], (err, groups) => {
-        if (groups) groups.forEach(g => conversations.push({
-            type: 'GROUP',
-            name: g.name,
-            id: g.id,
-            members: g.members,
-            created_by: g.created_by // ✅ Pass to frontend
-        }));
+        if (groups) groups.forEach(g => conversations.push({ type: 'GROUP', name: g.name, id: g.id, members: g.members, created_by: g.created_by }));
 
         const dmSql = `SELECT DISTINCT u.id, u.username FROM users u JOIN messages m ON (m.sender_id = u.id AND m.recipient_id = ?) OR (m.recipient_id = u.id AND m.sender_id = ?) WHERE u.id != ?`;
         db.all(dmSql, [userId, userId, userId], (err, users) => {
@@ -584,16 +548,12 @@ router.post('/api/messages/delete', authenticateToken, (req, res) => {
     });
 });
 
-// ============================================================
-// 👥 GROUP MANAGEMENT
-// ============================================================
-
-// 1. CREATE GROUP
 router.post('/groups', authenticateToken, async (req, res) => {
     const { name, memberIds } = req.body;
     const creatorId = req.user.id;
     const allMemberIds = [...new Set([...memberIds, creatorId])];
 
+    // Check constraint
     const placeholders = allMemberIds.map(() => '?').join(',');
     const checkSql = `SELECT u.username FROM users u JOIN group_members gm ON u.id = gm.user_id JOIN groups g ON gm.group_id = g.id WHERE g.name = ? AND u.id IN (${placeholders})`;
 
@@ -602,36 +562,18 @@ router.post('/groups', authenticateToken, async (req, res) => {
 
         db.run("INSERT INTO groups (name, created_by) VALUES (?, ?)", [name, creatorId], function (err) {
             if (err) return res.status(500).json({ error: "DB Error" });
-
             const groupId = this.lastID;
             const insertMember = db.prepare("INSERT INTO group_members (group_id, user_id) VALUES (?, ?)");
             allMemberIds.forEach(uid => insertMember.run(groupId, uid));
             insertMember.finalize();
 
-            // Notify System
             const sysMsg = `Group "${name}" created by ${req.user.username}`;
             db.run("INSERT INTO messages (sender_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)",
                 [creatorId, groupId, sysMsg, new Date().toISOString()],
                 function () {
                     if (req.io) {
-                        req.io.emit('NEW_MESSAGE', {
-                            id: this.lastID,
-                            sender_id: creatorId,
-                            sender: 'SYSTEM',
-                            group_id: groupId,
-                            content: sysMsg,
-                            priority: 'URGENT',
-                            timestamp: new Date().toISOString()
-                        });
-
-                        // ✅ NEW: Notify all members to update their Group List
-                        allMemberIds.forEach(uid => {
-                            req.io.emit('GROUP_MEMBERSHIP_UPDATE', {
-                                targetUserId: uid,
-                                groupId: groupId,
-                                action: 'ADD'
-                            });
-                        });
+                        req.io.emit('NEW_MESSAGE', { id: this.lastID, sender_id: creatorId, sender: 'SYSTEM', group_id: groupId, content: sysMsg, priority: 'URGENT', timestamp: new Date().toISOString() });
+                        allMemberIds.forEach(uid => req.io.emit('GROUP_MEMBERSHIP_UPDATE', { targetUserId: uid, groupId: groupId, action: 'ADD' }));
                     }
                 }
             );
@@ -640,62 +582,30 @@ router.post('/groups', authenticateToken, async (req, res) => {
     });
 });
 
-// 2. RENAME GROUP (With Flash Notification)
 router.post('/groups/:id/rename', authenticateToken, (req, res) => {
     const groupId = req.params.id;
     const { newName } = req.body;
     const userId = req.user.id;
 
-    // Check Permissions & Execute
     db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
         if (!group) return res.status(404).json({ error: "Group not found" });
-        if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Only the creator can rename." });
+        if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Permission denied." });
 
-        // Check Name Constraint for ALL current members
-        const checkSql = `
-            SELECT u.username 
-            FROM users u
-            JOIN group_members gm ON u.id = gm.user_id
-            JOIN groups g ON gm.group_id = g.id
-            WHERE g.name = ? AND g.id != ? AND u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)
-        `;
-
+        const checkSql = `SELECT u.username FROM users u JOIN group_members gm ON u.id = gm.user_id JOIN groups g ON gm.group_id = g.id WHERE g.name = ? AND g.id != ? AND u.id IN (SELECT user_id FROM group_members WHERE group_id = ?)`;
         db.get(checkSql, [newName, groupId, groupId], (err, conflict) => {
-            if (conflict) {
-                return res.status(409).json({ error: `Cannot rename: User '${conflict.username}' is already in another group named '${newName}'.` });
-            }
+            if (conflict) return res.status(409).json({ error: `User '${conflict.username}' is already in another group named '${newName}'.` });
 
-            // Update Name
             db.run("UPDATE groups SET name = ? WHERE id = ?", [newName, groupId], () => {
-
-                // ⚡ SEND FLASH MEMO (URGENT)
-                const alertMsg = `⚠️ GROUP RENAMED\n\nThis group has been renamed from "${group.name}" to "${newName}".\nPlease acknowledge.`;
-
-                db.run("INSERT INTO messages (sender_id, group_id, content, priority) VALUES (?, ?, ?, 'URGENT')",
-                    [userId, groupId, alertMsg],
-                    function () {
-                        if (req.io) {
-                            req.io.emit('NEW_MESSAGE', {
-                                id: this.lastID,
-                                sender_id: userId,
-                                sender: 'SYSTEM',
-                                group_id: groupId,
-                                content: alertMsg,
-                                priority: 'URGENT', // FLASH
-                                timestamp: new Date().toISOString(),
-                                is_read_by_me: 0,
-                                is_ack_by_me: 0
-                            });
-                        }
-                    }
-                );
+                const alertMsg = `⚠️ GROUP RENAMED\n\nThis group has been renamed from "${group.name}" to "${newName}".`;
+                db.run("INSERT INTO messages (sender_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)", [userId, groupId, alertMsg, new Date().toISOString()], function () {
+                    if (req.io) req.io.emit('NEW_MESSAGE', { id: this.lastID, sender_id: userId, sender: 'SYSTEM', group_id: groupId, content: alertMsg, priority: 'URGENT', timestamp: new Date().toISOString() });
+                });
                 res.json({ success: true });
             });
         });
     });
 });
 
-// 3. MANAGE MEMBERS
 router.post('/groups/:id/members', authenticateToken, (req, res) => {
     const groupId = req.params.id;
     const { targetUserId, action, notificationType } = req.body;
@@ -713,23 +623,19 @@ router.post('/groups/:id/members', authenticateToken, (req, res) => {
                 const checkSql = `SELECT 1 FROM groups g JOIN group_members gm ON g.id = gm.group_id WHERE g.name = ? AND gm.user_id = ?`;
                 db.get(checkSql, [group.name, targetUserId], (err, conflict) => {
                     if (conflict) return res.status(409).json({ error: "User already in a group with this name." });
-
                     db.run("INSERT OR IGNORE INTO group_members (group_id, user_id) VALUES (?, ?)", [groupId, targetUserId], function () {
                         if (this.changes > 0) {
                             handleMemberNotification(req.io, userId, groupId, targetUserId, 'ADDED', notificationType, group.name, targetName);
-                            // ✅ NEW: Notify Target
                             req.io.emit('GROUP_MEMBERSHIP_UPDATE', { targetUserId, groupId, action: 'ADD' });
                         }
                         res.json({ success: true });
                     });
                 });
-            }
-            else if (action === 'REMOVE') {
+            } else if (action === 'REMOVE') {
                 db.run("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", [groupId, targetUserId], function () {
                     if (this.changes > 0) {
                         handleMemberNotification(req.io, userId, groupId, targetUserId, 'REMOVED', notificationType, group.name, targetName);
                         reevaluateUrgentMessages(req.io);
-                        // ✅ NEW: Notify Target
                         req.io.emit('GROUP_MEMBERSHIP_UPDATE', { targetUserId, groupId, action: 'REMOVE' });
                     }
                     res.json({ success: true });
@@ -739,60 +645,34 @@ router.post('/groups/:id/members', authenticateToken, (req, res) => {
     });
 });
 
-// 4. DELETE GROUP
 router.post('/groups/:id/delete', authenticateToken, (req, res) => {
     const groupId = req.params.id;
     const userId = req.user.id;
-
     db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
         if (!group) return res.status(404).json();
         if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Permission denied" });
-
         db.run("DELETE FROM groups WHERE id = ?", [groupId], () => {
             reevaluateUrgentMessages(req.io);
-            // ✅ NEW: Notify Everyone to remove this group
             req.io.emit('GROUP_DELETED', { groupId });
             res.json({ success: true });
         });
     });
 });
 
-// 5. TRANSFER OWNERSHIP
 router.post('/groups/:id/transfer', authenticateToken, (req, res) => {
     const groupId = req.params.id;
     const { newAdminId } = req.body;
     const userId = req.user.id;
-
     db.get("SELECT * FROM groups WHERE id = ?", [groupId], (err, group) => {
         if (!group) return res.status(404).json();
         if (group.created_by !== userId && req.user.role !== 'ADMIN') return res.status(403).json({ error: "Permission denied" });
-
-        // Get New Admin Name
         db.get("SELECT username FROM users WHERE id = ?", [newAdminId], (err, newAdmin) => {
             if (!newAdmin) return res.status(404).json({ error: "New admin not found" });
-
             db.run("UPDATE groups SET created_by = ? WHERE id = ?", [newAdminId, groupId], () => {
-
-                // Notify Group via Flash Message
                 const alertMsg = `⚠️ ADMIN TRANSFER\n\nOwnership of this group has been transferred to ${newAdmin.username}.`;
-                const timestamp = new Date().toISOString();
-
-                db.run("INSERT INTO messages (sender_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)",
-                    [userId, groupId, alertMsg, timestamp],
-                    function () {
-                        if (req.io) {
-                            req.io.emit('NEW_MESSAGE', {
-                                id: this.lastID,
-                                sender_id: userId,
-                                sender: 'SYSTEM',
-                                group_id: groupId,
-                                content: alertMsg,
-                                priority: 'URGENT',
-                                timestamp: timestamp
-                            });
-                        }
-                    }
-                );
+                db.run("INSERT INTO messages (sender_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)", [userId, groupId, alertMsg, new Date().toISOString()], function () {
+                    if (req.io) req.io.emit('NEW_MESSAGE', { id: this.lastID, sender_id: userId, sender: 'SYSTEM', group_id: groupId, content: alertMsg, priority: 'URGENT', timestamp: new Date().toISOString() });
+                });
                 res.json({ success: true });
             });
         });
@@ -802,73 +682,32 @@ router.post('/groups/:id/transfer', authenticateToken, (req, res) => {
 router.post('/groups/leave', authenticateToken, (req, res) => {
     const { groupId } = req.body;
     db.run("DELETE FROM group_members WHERE group_id=? AND user_id=?", [groupId, req.user.id], () => {
-        // ✅ Trigger Check
         reevaluateUrgentMessages(req.io);
         res.json({ success: true });
     });
 });
 
-// ============================================================
-// 🧹 HELPERS
-// ============================================================
-
-// Re-evaluates ALL active urgent messages to see if they can be downgraded
-// (Run this after a user is deleted or leaves a group)
+// Helpers
 const reevaluateUrgentMessages = (io) => {
     const sql = `SELECT id, recipient_id, group_id, sender_id FROM messages WHERE priority = 'URGENT'`;
-
     db.all(sql, [], (err, messages) => {
-        if (err || !messages || messages.length === 0) return;
-
+        if (err || !messages) return;
         messages.forEach(msg => {
-            // Define who still NEEDS to ack 
-            // Logic: Count (Target Users) MINUS (Users who already acked)
             let pendingSql = "";
             let params = [];
-
             if (msg.recipient_id) {
-                // DM: Check if the specific recipient is pending
-                // (If recipient was deleted, count will be 0)
-                pendingSql = `
-                    SELECT COUNT(*) as pending 
-                    FROM users 
-                    WHERE id = ? 
-                    AND id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)
-                `;
+                pendingSql = `SELECT COUNT(*) as pending FROM users WHERE id = ? AND id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)`;
                 params = [msg.recipient_id, msg.id];
-            }
-            else if (msg.group_id) {
-                // Group: Active Members excluding Sender and Ackers
-                pendingSql = `
-                    SELECT COUNT(*) as pending 
-                    FROM group_members gm
-                    JOIN users u ON gm.user_id = u.id
-                    WHERE gm.group_id = ? 
-                    AND u.status = 'ACTIVE'
-                    AND u.id != ?
-                    AND u.id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)
-                `;
+            } else if (msg.group_id) {
+                pendingSql = `SELECT COUNT(*) as pending FROM group_members gm JOIN users u ON gm.user_id = u.id WHERE gm.group_id = ? AND u.status = 'ACTIVE' AND u.id != ? AND u.id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)`;
                 params = [msg.group_id, msg.sender_id, msg.id];
-            }
-            else {
-                // Global: All Active Users excluding Sender and Ackers
-                pendingSql = `
-                    SELECT COUNT(*) as pending 
-                    FROM users 
-                    WHERE status = 'ACTIVE'
-                    AND id != ?
-                    AND id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)
-                `;
+            } else {
+                pendingSql = `SELECT COUNT(*) as pending FROM users WHERE status = 'ACTIVE' AND id != ? AND id NOT IN (SELECT user_id FROM message_urgency_acks WHERE message_id = ?)`;
                 params = [msg.sender_id, msg.id];
             }
-
             db.get(pendingSql, params, (err, row) => {
                 if (!row) return;
-
-                // If NO ONE is pending (count is 0), the message is resolved
                 if (row.pending === 0) {
-                    console.log(`[Urgency] Auto-downgrading Message ${msg.id} (All recipients acknowledged or deleted)`);
-
                     db.run("UPDATE messages SET priority = 'NORMAL' WHERE id = ?", [msg.id], () => {
                         if (io) io.emit('UPDATE_MESSAGE', { id: msg.id, priority: 'NORMAL' });
                     });
@@ -878,15 +717,10 @@ const reevaluateUrgentMessages = (io) => {
     });
 };
 
-// Helper for Member Notifications
-// ✅ Updated signature to accept targetName
 function handleMemberNotification(io, adminId, groupId, targetId, action, type, groupName, targetName) {
     if (type === 'QUIET') return;
-
     const timestamp = new Date().toISOString();
     const priority = 'URGENT';
-
-    // 1. Primary Message (The requested one)
     let content = "";
     let recipientId = null;
     let targetGroupId = null;
@@ -894,38 +728,17 @@ function handleMemberNotification(io, adminId, groupId, targetId, action, type, 
     if (type === 'PRIVATE') {
         recipientId = targetId;
         content = `NOTICE: You have been ${action} ${action === 'ADDED' ? 'to' : 'from'} the group "${groupName}".`;
-    }
-    else if (type === 'PUBLIC') {
+    } else if (type === 'PUBLIC') {
         targetGroupId = groupId;
         content = `GROUP UPDATE: User "${targetName}" has been ${action}.`;
     }
 
     const insertMsg = (rId, gId, txt) => {
-        db.run("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            [adminId, rId, gId, txt, priority, timestamp],
-            function () {
-                if (io) {
-                    io.emit('NEW_MESSAGE', {
-                        id: this.lastID,
-                        sender_id: adminId,
-                        sender: 'SYSTEM',
-                        recipient_id: rId,
-                        group_id: gId,
-                        content: txt,
-                        priority,
-                        timestamp,
-                        is_read_by_me: 0,
-                        is_ack_by_me: 0
-                    });
-                }
-            }
-        );
+        db.run("INSERT INTO messages (sender_id, recipient_id, group_id, content, priority, timestamp) VALUES (?, ?, ?, ?, ?, ?)", [adminId, rId, gId, txt, priority, timestamp], function () {
+            if (io) io.emit('NEW_MESSAGE', { id: this.lastID, sender_id: adminId, sender: 'SYSTEM', recipient_id: rId, group_id: gId, content: txt, priority, timestamp, is_read_by_me: 0, is_ack_by_me: 0 });
+        });
     };
-
-    // Send Primary
     insertMsg(recipientId, targetGroupId, content);
-
-    // 2. ✅ SECONDARY: If Public Remove, ALSO notify the removed user via DM
     if (type === 'PUBLIC' && action === 'REMOVED') {
         const dmContent = `NOTICE: You have been REMOVED from the group "${groupName}" (Publicly).`;
         insertMsg(targetId, null, dmContent);

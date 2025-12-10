@@ -314,18 +314,32 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ In AdminPanel, for the weather locations, when toggling the last remaining location, I get the blank page.
 
+√ in UserSettings, clicking on the "LOGS" tab gives me the blank page. Same with Admin > System Settings. Also, the ADMIN > USERS doesn't display the users.
+
+√ We need to move access to the AdminPanel as well as the Log in the UserSettings instead of in separate icons on the main page. A simple user would not have access to the AdminPanel tab and that tab would be hidden. Same with the log for the users without log access.
+
+√ The log export, filter and search are not in the log window anymore.
+
+√ "LOGS" tab in the Admin Panel, when the admin revokes the "Control" permission for a user, the "Take Control" button on that user should become hidden instantly.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
-- We need to move access to the AdminPanel as well as the Log in the UserSettings instead of in separate icons on the main page. A simple user would not have access to the AdminPanel tab and that tab would be hidden. Same with the log for the users without log access.
+- the Admin. User account should be able to transfer the admin to another user. Like we did with the Group messaging.
+
+- in a StationCard, the switches should be aligned vertically together and the labels aligned together vertically separately from the switches. We had that previously, but then was removed somehow.
 
 -----
+
+
+
 
 -------------------------------------------------------
 -------------------------------------------------------
 Debug
 
+- Scroll when overing the MessageDrawer should only scroll the message thread and not the main page. When the MessageDrawer is open and the mouse is Off of the MessageDrawer, it scrolls the main pager otherwise scrolls the message thread. This was working previously.
 
 
 
@@ -359,11 +373,19 @@ SERVER
 
 -----------------------------------
 UX
-- Is it possible for the app to be detect when the screen start to re-arrange the layout when the screen becomes too small to fit as intended. Before re-arranging the layout, reduce the size of the cards and elements in the card to a certain point, then only after reducing the size of the components, then re-organize the layout, but before re-organizing the layout, hide the disabled stations to reduce clutter.
+- Is it possible for the app to be detect when the screen start to re-arrange the layout when the screen becomes too small to fit as intended. Before re-arranging the layout, reduce the size of the cards and elements to a certain point, then only after reducing the size of the components, then re-organize the layout, but before re-organizing the layout, hide the disabled stations to reduce clutter.
+
+- Let's add 2 user setting for the disabled stations to toggle displaying the offline stations on/off
+	- setting 1: if the screen is large enough to show all of the stations without scrolling after resizing, but before rearranging the layouts, show/hide disabled stations
+	- setting 2: if the screen is too small to show all of the stations without scrolling after resizing, show/hide disabled stations
+
+
 
 - When overing over a component, can we have a tiny comment or pop up explanation of the feature (e.g. overing over "Flash Message" -> pop-up content: Add this option to display the message in a big message viewer on the recipient's screen)
 
 - Can we make the app bi-langual ( French / English )
+
+- When a user have control, the buttons to release should say "Server" and "Cabane", maybe with an icon to indicate to release control. Or a bracket above both with the mention "Release to" or something similar.
 
 
 -----------------------------------
@@ -376,15 +398,9 @@ LAYOUT
 
 
 
-- Can we have the buttons and font to resize smaller before the switches get displayed differently
-
-- ( after messaging )Can I have a dropdown list of which users are online.
-
-- When a station goes offline, since the station keeps its last switch states and feedback, the app should also keep the last known switch states and feedback until the station becomes online again.
-
 -----------------------------------
 CONNECTION
-
+- Using DHCP for IP assignment, Once the Server or the Main Controller ( Whoever acts as the DHCP Server ) detects a new station without IP, a valid IP is assigned to it and stored in server setting and in the Arduinos Persistent memory.
 
 ARDUINO
 - 
@@ -399,7 +415,7 @@ IOS
 
 
 ------------------------------------------------------------
-
+- Cloudflare disable Dev mode: https://dash.cloudflare.com > Caching → Configuration
 
 
 - Get an complete and updated "setup_db.js" file with all additions to the database.

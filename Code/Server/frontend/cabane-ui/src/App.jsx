@@ -1,22 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Shield, LogOut, ScrollText, User, Settings, Mail, StickyNote, Activity } from 'lucide-react';
+import { Settings, Mail, StickyNote, Activity, LogOut } from 'lucide-react';
 import axios from 'axios';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
 import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
-import { AdminPanel } from './components/AdminPanel';
-import { LogViewer } from './components/LogViewer';
 import { MessageDrawer } from './components/MessageDrawer';
 import { Clock } from './components/Clock';
 import { Weather } from './components/Weather';
-import { FlashViewer } from './components/FlashViewer'; // ✅ CRITICAL IMPORT
+import { FlashViewer } from './components/FlashViewer';
 import { PANEL_LAYOUT } from './config/stations';
+import { ModalProvider } from './contexts/ModalContext';
+import { GlobalModal } from './components/GlobalModal';
 
-import { ModalProvider } from './contexts/ModalContext'; // ✅ New Import
-import { GlobalModal } from './components/GlobalModal';   // ✅ New Import
-
+console.log("🚀 CABANE UI VERSION: 3.5 - LOG FILTERS ADDED");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
@@ -31,12 +29,10 @@ function Dashboard() {
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false);
-  const [showLogs, setShowLogs] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
 
   const [notification, setNotification] = useState(null);
-  const [flashMessages, setFlashMessages] = useState([]); // ✅ Flash Message State
+  const [flashMessages, setFlashMessages] = useState([]);
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotes, setHasNotes] = useState(false);
@@ -56,6 +52,8 @@ function Dashboard() {
             if (st !== undefined && bit !== undefined) {
               const isSwitchOn = (controller === 'CABANE') ? !!physicalSwitches[ctrl.idx] : !!virtualSwitches[ctrl.idx];
               const isFeedbackOn = ((stationFeedback[st] >> bit) & 1) === 0;
+
+              // Only trigger if commanded ON but feedback OFF
               if (isSwitchOn && !isFeedbackOn) {
                 sources.push(`${card.name} - ${ctrl.label.replace('\n', ' ')}`);
               }
@@ -99,7 +97,7 @@ function Dashboard() {
 
   // --- FLASH MESSAGE LOGIC ---
   const checkFlashMessages = async () => {
-    if (!user) return 0; // Return 0 if no user
+    if (!user) return 0;
     const token = localStorage.getItem('cabane_token');
     try {
       const res = await axios.get(`${API_URL}/api/messages`, { headers: { Authorization: `Bearer ${token}` } });
@@ -112,38 +110,27 @@ function Dashboard() {
       );
 
       setFlashMessages(urgentUnacked);
-      return urgentUnacked.length; // ✅ RETURN COUNT
+      return urgentUnacked.length;
     } catch (e) { return 0; }
   };
 
   const handleDismissFlash = async (msgId) => {
-    // 1. Clear popup
     setFlashMessages(prev => prev.filter(m => m.id !== msgId));
-
     const token = localStorage.getItem('cabane_token');
     try {
-      // 2. Acknowledge Urgency (Stops Blinking/Siren)
       await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: msgId }, { headers: { Authorization: `Bearer ${token}` } });
-
-      // 3. ✅ MARK AS READ (Clears Badge)
       await axios.post(`${API_URL}/api/messages/read`, { messageIds: [msgId] }, { headers: { Authorization: `Bearer ${token}` } });
     } catch (e) { console.error(e); }
   };
-
 
   // Poll for Flash Messages
   useEffect(() => {
     if (!socket) return;
 
     const handleNewMessage = (msg) => {
-      // 1. FILTER: If it's a Private DM for someone else, IGNORE IT completely.
-      if (msg.recipient_id && String(msg.recipient_id) !== String(user?.id)) {
-        return;
-      }
+      if (msg.recipient_id && String(msg.recipient_id) !== String(user?.id)) return;
 
-      // 2. CHECK: If Urgent, verify with API before beeping (Handles Public Group Removal)
       if (msg.priority === 'URGENT' && String(msg.sender_id) !== String(user?.id)) {
-        // Only beep if the server confirms we actually have a flash message waiting
         checkFlashMessages().then((count) => {
           if (count > 0) playTone('CHIRP');
         });
@@ -196,10 +183,8 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20" onClick={wakeAudio} onTouchStart={wakeAudio}>
 
-      {/* 1. NOTIFICATION BANNER */}
       {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
 
-      {/* 2. FLASH VIEWER (Auto Popup) */}
       {flashMessages.length > 0 && (
         <FlashViewer
           messages={flashMessages}
@@ -208,7 +193,7 @@ function Dashboard() {
         />
       )}
 
-      {/* 3. HEADER */}
+      {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6">
 
         {/* LEFT: Status */}
@@ -242,10 +227,8 @@ function Dashboard() {
 
         {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
-          {user?.role === 'ADMIN' && <button onClick={() => setShowAdmin(true)} className="p-3 rounded bg-gray-700 hover:bg-blue-900 text-blue-400 hover:text-white transition-colors border border-blue-900/30" title="Admin"><Shield size={20} /></button>}
-          {(user?.can_view_logs || user?.role === 'ADMIN') && <button onClick={() => setShowLogs(true)} className="p-3 rounded bg-gray-700 hover:bg-gray-600 text-yellow-500 transition-colors" title="Logs"><ScrollText size={20} /></button>}
 
-          {/* MESSAGING BUTTON */}
+          {/* Messages */}
           <button
             onClick={() => setShowMessageDrawer(true)}
             className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
@@ -255,10 +238,9 @@ function Dashboard() {
             {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
           </button>
 
-          {/* NOTE INDICATOR */}
           {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
 
-          {/* CONTROLS */}
+          {/* Controls */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap">Take Control</button>
@@ -267,29 +249,23 @@ function Dashboard() {
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2">
-              {/* HOLD BUTTON (Always Available) */}
-              <button
-                onClick={releaseToServer}
-                className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap"
-              >
-                Hold
-              </button>
+              <button onClick={releaseToServer} className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Hold</button>
 
-              {/* RELEASE BUTTON (Hidden if Main Controller is Offline) */}
+              {/* Hide release button if physical master is offline to prevent accidents */}
               {systemState.mainControllerOnline && (
-                <button
-                  onClick={releaseToCabane}
-                  className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap"
-                >
-                  Release
-                </button>
+                <button onClick={releaseToCabane} className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Release</button>
               )}
             </div>
           )}
 
+          {/* User Settings (Mega Menu) */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500">
-            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings"><User size={16} className="text-blue-400" /> {user?.username || "GUEST"}</button>
-            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title="Logout"><LogOut size={18} /></button>
+            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
+              <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
+            </button>
+            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title="Logout">
+              <LogOut size={18} />
+            </button>
           </div>
         </div>
       </div>
@@ -305,8 +281,6 @@ function Dashboard() {
 
       {/* MODALS */}
       <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} />
-      <AdminPanel isOpen={showAdmin} onClose={() => setShowAdmin(false)} />
-      <LogViewer isOpen={showLogs} onClose={() => setShowLogs(false)} />
       <MessageDrawer isOpen={showMessageDrawer} onClose={() => setShowMessageDrawer(false)} onUnreadChange={handleUnreadChange} />
     </div>
   );
@@ -330,10 +304,10 @@ const MainLayout = () => {
 
 export default function App() {
   return (
-    <ModalProvider>      {/* ✅ Wrap Everything */}
+    <ModalProvider>
       <SocketProvider>
         <MainLayout />
-        <GlobalModal /> {/* ✅ Render the Modal Container */}
+        <GlobalModal />
       </SocketProvider>
     </ModalProvider>
   );
