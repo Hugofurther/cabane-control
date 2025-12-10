@@ -322,13 +322,25 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ "LOGS" tab in the Admin Panel, when the admin revokes the "Control" permission for a user, the "Take Control" button on that user should become hidden instantly.
 
+√ the Admin. User account should be able to transfer the admin to another user. Like we did with the Group messaging.
+
+√ in a StationCard, the switches should be aligned vertically together and the labels aligned together vertically separately from the switches. We had that previously, but then was removed somehow.
+
+√ Can we have a FlashViewer message send the the user getting the Admin Role when it is transferred?
+
+√ When the cursor overs over the MessageDrawer or a pop-up modal, the background ( main page ) should not scroll while swiping up and down. only when the cursor is off of the MessageDrawer or the pop-up modal, the main page scrolls... when either are showing.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
-- the Admin. User account should be able to transfer the admin to another user. Like we did with the Group messaging.
-
-- in a StationCard, the switches should be aligned vertically together and the labels aligned together vertically separately from the switches. We had that previously, but then was removed somehow.
+- Notes should be different than a simple message.
+	- The note window should be like a folder with a list of note titles with their date of last modification and user who created it.
+	- Notes are personal to user, but can be shared to selected users. The user the note is shared with has the note with the name of the user who created it.	
+	- When clicking on a note, it displays the full content of the note in the FlashViewer ( It should already do that. ) 
+	- A user can open one of their note onto another user as a type of memo reminder. This is acting like sending a "FlashMessage" but instead of just being a message that will be lost in the thread, The user can re-use the same note over and over as a recurring reminder or else. If the user receiver of the note FlashViewer already has the note, they still receive the FlashView pop-up modal
+	- The note list can be searched for the titles and body.
+	- a note can be copied and deleted. If a user copy a shared note from another user, this new copy belongs to the copier, but with a note mentioning it has been copied from user "x"
 
 -----
 
@@ -339,7 +351,6 @@ Requested
 -------------------------------------------------------
 Debug
 
-- Scroll when overing the MessageDrawer should only scroll the message thread and not the main page. When the MessageDrawer is open and the mouse is Off of the MessageDrawer, it scrolls the main pager otherwise scrolls the message thread. This was working previously.
 
 
 
@@ -347,11 +358,7 @@ Debug
 -------------------------------------------------------
 
 NOTES
-- Notes should be different than a simple message.
-	- The note window should be like a folder with a list of note titles with their date of last modification and user who created it.
-	- Notes are personal to user, but can be shared to selected users.
-	- When clicking on a note, it displays the full content of the note in the FlashViewer ( It should already do that. ) 
-	- A user can open one of their note onto another user as a type of memo reminder. This is acting like sending a "FlashMessage" but instead of just being a message that will be lost in the thread, The user can re-use the same note over and over as a recurring reminder or else.
+
 
 
 -----------------------------------
@@ -524,6 +531,7 @@ Veuillez activer l’interrupteur du buzzer.
 <server.js terminal>
 
 </server.js terminal>
+
 
 
 

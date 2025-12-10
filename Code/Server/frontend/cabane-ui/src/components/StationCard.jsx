@@ -22,12 +22,10 @@ export const StationCard = ({ card, isRemote }) => {
         return () => clearInterval(timer);
     }, []);
 
-    // Parse Disabled List
     const disabledList = useMemo(() => {
         try { return JSON.parse(siteSettings.disabled_stations || '[]'); } catch (e) { return []; }
     }, [siteSettings.disabled_stations]);
 
-    // Offline / Disabled Logic
     const offlineLabels = [];
     let isAnyOffline = false;
 
@@ -65,7 +63,7 @@ export const StationCard = ({ card, isRemote }) => {
     const handleToggle = (idx, val) => toggleSwitch(idx, val);
 
     return (
-        <div className={clsx("border rounded-lg p-4 flex flex-col transition-colors duration-500 relative min-h-[160px]", bgClass, card.span)}>
+        <div className={clsx("border rounded-lg p-4 flex flex-col transition-colors duration-500 relative min-h-[220px]", bgClass, card.span)}>
 
             {showOfflineLabel && (
                 <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20">
@@ -77,26 +75,25 @@ export const StationCard = ({ card, isRemote }) => {
                 </div>
             )}
 
-            <h3 className={clsx("font-black tracking-widest text-lg mb-2 border-b-2 pb-2 text-center whitespace-pre-line h-16 flex items-center justify-center", textClass)}>
+            <h3 className={clsx("font-black tracking-widest text-lg mb-0 border-b-2 pb-2 text-center whitespace-pre-line h-14 flex items-center justify-center", textClass)}>
                 {card.name}
             </h3>
 
-            <div className={clsx("flex flex-wrap gap-x-6 gap-y-6 justify-center items-center flex-grow my-auto", (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50")}>
+            {/* Layout Container */}
+            <div className={clsx("flex flex-wrap gap-4 justify-center items-start flex-grow mt-6", (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50")}>
                 {card.controls.map((ctrl) => {
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
-                    // Check if this specific control's station is disabled or offline
                     const isDisabled = targetSt !== undefined && disabledList.includes(targetSt);
                     const isOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
                     const isControlUnavailable = isDisabled || isOffline;
 
-                    // ✅ MODIFIED: Use the state directly. Do not force false if offline.
                     const virtualOn = !!systemState.virtualSwitches[ctrl.idx];
-
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
                     const isLocked = !isRemote || isControlUnavailable;
 
+                    // Pass NULL label to suppress internal label rendering
                     const props = {
-                        label: ctrl.label,
+                        label: null,
                         idx: ctrl.idx,
                         feedback: ctrl.fb,
                         special: ctrl.special,
@@ -104,11 +101,27 @@ export const StationCard = ({ card, isRemote }) => {
                         isActive: isRemote && !isControlUnavailable,
                     };
 
-                    if (ctrl.type === 'button') {
-                        return <HaloButton key={ctrl.idx} {...props} onPress={() => handleToggle(ctrl.idx, true)} onRelease={() => handleToggle(ctrl.idx, false)} />;
-                    } else {
-                        return <RockerSwitch key={ctrl.idx} {...props} isOn={virtualOn} physicalOn={physicalOn} onChange={(val) => handleToggle(ctrl.idx, val)} />;
-                    }
+                    return (
+                        <div key={ctrl.idx} className="flex flex-col items-center gap-2 w-24">
+
+                            {/* 1. SWITCH AREA */}
+                            {/* ✅ FIXED: Use 'items-center' to vertically center buttons and switches */}
+                            <div className="h-24 flex items-center justify-center">
+                                {ctrl.type === 'button' ? (
+                                    <HaloButton {...props} onPress={() => handleToggle(ctrl.idx, true)} onRelease={() => handleToggle(ctrl.idx, false)} />
+                                ) : (
+                                    <RockerSwitch {...props} isOn={virtualOn} physicalOn={physicalOn} onChange={(val) => handleToggle(ctrl.idx, val)} />
+                                )}
+                            </div>
+
+                            {/* 2. LABEL AREA */}
+                            <div className="h-10 flex items-start justify-center">
+                                <span className={clsx("text-xs font-bold text-center leading-tight uppercase", isRemote ? "text-gray-800" : "text-gray-400")}>
+                                    {ctrl.label}
+                                </span>
+                            </div>
+                        </div>
+                    );
                 })}
             </div>
         </div>

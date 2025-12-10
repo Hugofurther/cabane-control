@@ -257,6 +257,69 @@ router.post('/user/password', authenticateToken, async (req, res) => {
     });
 });
 
+// ✅ NEW: Transfer Global Admin Rights
+router.post('/users/transfer-admin', authenticateToken, requireAdmin, (req, res) => {
+    const currentAdminId = req.user.id;
+    const { newAdminId } = req.body;
+
+    if (String(currentAdminId) === String(newAdminId)) {
+        return res.status(400).json({ error: "Cannot transfer to yourself." });
+    }
+
+    const timestamp = new Date().toISOString();
+
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+
+        // 1. Promote New Admin
+        db.run("UPDATE users SET role = 'ADMIN', can_control = 1, can_view_logs = 1 WHERE id = ?", [newAdminId]);
+
+        // 2. Demote Old Admin
+        db.run("UPDATE users SET role = 'USER' WHERE id = ?", [currentAdminId]);
+
+        // 3. Log it
+        db.run("INSERT INTO logs (user_id, type, message, timestamp) VALUES (?, 'SYSTEM', 'Transferred Global Admin Rights', ?)",
+            [currentAdminId, timestamp]);
+
+        // 4. ✅ SEND FLASH MESSAGE TO NEW ADMIN
+        const alertMsg = "👑 SYSTEM NOTICE\n\nYou have been promoted to Global Administrator.\nYou now have full control over the system.";
+        db.run("INSERT INTO messages (sender_id, recipient_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)",
+            [currentAdminId, newAdminId, alertMsg, timestamp],
+            function (err) {
+                if (!err && req.io) {
+                    req.io.emit('NEW_MESSAGE', {
+                        id: this.lastID,
+                        sender_id: currentAdminId,
+                        sender: 'SYSTEM',
+                        recipient_id: newAdminId,
+                        group_id: null,
+                        content: alertMsg,
+                        priority: 'URGENT',
+                        timestamp: timestamp,
+                        is_read_by_me: 0,
+                        is_ack_by_me: 0
+                    });
+                }
+            }
+        );
+
+        db.run("COMMIT", (err) => {
+            if (err) {
+                console.error("Transfer failed", err);
+                return res.status(500).json({ error: "Database transaction failed." });
+            }
+
+            // 5. Notify Clients to refresh permissions
+            req.io.emit('USER_PERMISSION_UPDATE', { userId: currentAdminId, key: 'role', value: 'USER' });
+            req.io.emit('USER_PERMISSION_UPDATE', { userId: newAdminId, key: 'role', value: 'ADMIN' });
+            req.io.emit('USER_PERMISSION_UPDATE', { userId: newAdminId, key: 'can_control', value: 1 });
+            req.io.emit('USER_PERMISSION_UPDATE', { userId: newAdminId, key: 'can_view_logs', value: 1 });
+
+            res.json({ success: true });
+        });
+    });
+});
+
 // ============================================================
 // 👑 ADMIN
 // ============================================================

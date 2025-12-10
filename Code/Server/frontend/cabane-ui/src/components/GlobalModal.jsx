@@ -1,9 +1,11 @@
 import React from 'react';
-import { AlertTriangle, Info, X } from 'lucide-react';
+import { AlertTriangle, Info } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 
 export const GlobalModal = () => {
-    const { modalConfig, hideModal } = useModal();
+    const { modalConfig } = useModal(); // ✅ Removed unused 'hideModal' destructuring if not used directly in JSX logic, but modalConfig handles it via callbacks
+
+    // ✅ NOTE: Scroll Lock useEffect REMOVED.
 
     if (!modalConfig) return null;
 
@@ -38,8 +40,8 @@ export const GlobalModal = () => {
                     <button
                         onClick={onConfirm}
                         className={`px-6 py-2 rounded-lg text-sm font-bold text-white shadow-lg transition-all transform active:scale-95 ${isDestructive
-                                ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20'
-                                : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'
+                            ? 'bg-red-600 hover:bg-red-500 shadow-red-900/20'
+                            : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'
                             }`}
                     >
                         {type === 'ALERT' ? 'OK' : (isDestructive ? 'Confirm' : 'Yes')}

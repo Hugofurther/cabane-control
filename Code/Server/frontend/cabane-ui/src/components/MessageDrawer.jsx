@@ -4,11 +4,11 @@ import { X, Send, AlertTriangle, Users, Plus, ArrowLeft, Search, Clock, Trash2, 
 import { useSocket } from '../contexts/SocketContext';
 import { clsx } from 'clsx';
 import { FlashViewer } from './FlashViewer';
-import { useModal } from '../contexts/ModalContext'; // ✅ Hook
+import { useModal } from '../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-// --- HELPERS ---
+// ... (Keep getUserColor, formatSmartTime helpers) ...
 const getUserColor = (username) => {
     if (!username) return 'border-gray-500 text-gray-400 bg-gray-800';
     const colors = ['border-emerald-500 text-emerald-400 bg-emerald-900/10', 'border-purple-500 text-purple-400 bg-purple-900/10', 'border-orange-500 text-orange-400 bg-orange-900/10', 'border-pink-500 text-pink-400 bg-pink-900/10', 'border-cyan-500 text-cyan-400 bg-cyan-900/10', 'border-indigo-500 text-indigo-400 bg-indigo-900/10'];
@@ -29,10 +29,9 @@ const formatSmartTime = (isoString) => {
 };
 
 export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
-    const { showConfirm, showAlert } = useModal(); // ✅ Use Global Modal
+    const { showConfirm, showAlert } = useModal();
     const { user, socket, onlineList } = useSocket();
 
-    // --- STATE ---
     const [activeTab, setActiveTab] = useState('GLOBAL');
     const [selectedTarget, setSelectedTarget] = useState(null);
     const [isCreatingGroup, setIsCreatingGroup] = useState(false);
@@ -47,7 +46,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [isUrgent, setIsUrgent] = useState(false);
 
-    // Group Mgmt
     const [newGroupName, setNewGroupName] = useState('');
     const [newGroupMembers, setNewGroupMembers] = useState([]);
     const [renameInput, setRenameInput] = useState('');
@@ -55,7 +53,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     const [zoomedMessage, setZoomedMessage] = useState(null);
 
-    // Scroll & Ref
     const [showScrollButton, setShowScrollButton] = useState(false);
     const messagesEndRef = useRef(null);
     const chatContainerRef = useRef(null);
@@ -65,6 +62,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const isAtBottomRef = useRef(true);
     const hasInitialScrolledRef = useRef(false);
     const prevMessagesLength = useRef(0);
+
+    // ✅ NOTE: Scroll Lock useEffect REMOVED here.
 
     // --- BADGE LOGIC ---
     useEffect(() => {
@@ -310,7 +309,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { }
     };
 
-    // ✅ REFACTORED: Cancel Urgency
     const handleCancelUrgency = (id) => {
         showConfirm({
             title: "Cancel Flash Message",
@@ -325,7 +323,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         });
     };
 
-    // ✅ REFACTORED: Delete Message
     const handleDeleteMessage = (id) => {
         showConfirm({
             title: "Delete Message",
@@ -341,7 +338,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     };
 
     // --- GROUP MGMT ---
-    // ✅ REFACTORED: Create Group (Alert only)
     const handleCreateGroup = async () => {
         if (!newGroupName) return;
         try {
@@ -351,7 +347,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
     };
 
-    // ✅ REFACTORED: Rename Group (Alert only)
     const handleRenameGroup = async () => {
         if (!renameInput) return;
         try {
@@ -362,7 +357,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); }
     };
 
-    // ✅ REFACTORED: Delete Group
     const handleDeleteGroup = () => {
         if (!selectedTarget) return;
         showConfirm({
@@ -379,7 +373,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         });
     };
 
-    // ✅ REFACTORED: Transfer Admin
     const handleTransferAdmin = (newAdminId) => {
         showConfirm({
             title: "Transfer Ownership",
@@ -397,7 +390,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         });
     };
 
-    // ✅ REFACTORED: Manage Member (Alert only)
     const handleManageMember = async (targetId, action) => {
         try {
             const token = localStorage.getItem('cabane_token');

@@ -11,9 +11,6 @@ import { LogViewer } from './LogViewer';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-
-
-
 export const UserSettings = ({ isOpen, onClose }) => {
     const { user, updateSettings, logout } = useSocket();
     const { showAlert } = useModal();
@@ -31,16 +28,6 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const canAdmin = user?.role === 'ADMIN';
     const canLogs = canAdmin || user?.can_view_logs;
 
-    // ✅ FIXED: Auto-Switch Tab if Permission Lost
-    useEffect(() => {
-        if (!canLogs && activeTab === 'LOGS') {
-            setActiveTab('GENERAL');
-        }
-        if (!canAdmin && activeTab === 'ADMIN') {
-            setActiveTab('GENERAL');
-        }
-    }, [canLogs, canAdmin, activeTab]); // Dependencies ensure reactivity
-
     useEffect(() => {
         if (isOpen && user) {
             setActiveTab('GENERAL');
@@ -57,7 +44,9 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     if (!isOpen || !user) return null;
 
-    // ... (Keep toggleSetting, setSetting, handleSaveAll, handlePasswordChange logic same as before) ...
+    // ✅ NOTE: Scroll Lock useEffect REMOVED.
+
+    // ... (Keep Toggle Logic, Save Logic, Password Change Logic)
     const toggleSetting = (key) => setLocalSettings(prev => ({ ...prev, [key]: !prev[key] }));
     const setSetting = (key, value) => setLocalSettings(prev => ({ ...prev, [key]: value }));
     const handleSaveAll = async () => {
@@ -113,10 +102,9 @@ export const UserSettings = ({ isOpen, onClose }) => {
                     {canAdmin && <button onClick={() => setActiveTab('ADMIN')} className={`flex-1 min-w-[80px] py-3 text-sm font-bold uppercase ${activeTab === 'ADMIN' ? 'text-red-400 border-t-2 border-red-500 bg-gray-800' : 'text-gray-500 hover:text-gray-300'}`}>Admin</button>}
                 </div>
 
-                {/* BODY: ✅ UPDATED LAYOUT LOGIC */}
+                {/* BODY */}
                 <div className={clsx(
                     "flex-grow bg-gray-900 p-0 relative",
-                    // If embedded panel, disable scrolling here and use flex col to let child fill height
                     (activeTab === 'LOGS' || activeTab === 'ADMIN') ? "overflow-hidden flex flex-col" : "overflow-y-auto"
                 )}>
 
@@ -190,13 +178,12 @@ export const UserSettings = ({ isOpen, onClose }) => {
                         </div>
                     )}
 
-                    {/* ✅ EMBEDDED PANELS (Scroll managed internally) */}
                     {activeTab === 'ADMIN' && <AdminPanel embedded={true} />}
                     {activeTab === 'LOGS' && <LogViewer embedded={true} />}
 
                 </div>
 
-                {/* FOOTER (Only for Settings) */}
+                {/* FOOTER */}
                 {(activeTab === 'GENERAL' || activeTab === 'PROFILE') && (
                     <div className="p-4 bg-gray-900 border-t border-gray-800 flex gap-3 shrink-0">
                         <button onClick={() => { logout(); onClose(); }} className="flex-1 py-3 bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded font-bold uppercase tracking-widest transition-all text-xs flex items-center justify-center gap-2"><LogOut size={16} /> Sign Out</button>

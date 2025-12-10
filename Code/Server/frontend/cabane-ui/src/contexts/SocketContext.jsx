@@ -15,7 +15,6 @@ export const SocketProvider = ({ children }) => {
     const [isConnected, setIsConnected] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
 
-    // System State
     const [systemState, setSystemState] = useState({
         controller: 'CABANE',
         currentUser: null,
@@ -34,7 +33,6 @@ export const SocketProvider = ({ children }) => {
     const [siteSettings, setSiteSettings] = useState({ timezone: 'UTC' });
     const [weatherData, setWeatherData] = useState([]);
 
-    // Auth State
     const [token, setToken] = useState(localStorage.getItem('cabane_token'));
     const [user, setUser] = useState(null);
     const [onlineList, setOnlineList] = useState([]);
@@ -78,26 +76,25 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('ONLINE_USERS', (users) => setOnlineList(users || []));
         newSocket.on('WEATHER_FULL_UPDATE', (data) => setWeatherData(Array.isArray(data) ? data : []));
 
-        // ✅ FIXED: Live Permission Updates with Debugging
+        // ✅ FIXED: Correctly handle non-boolean values (like Role strings)
         newSocket.on('USER_PERMISSION_UPDATE', ({ userId, key, value }) => {
             console.log(`[Socket] Permission Update: User ${userId}, ${key} = ${value}`);
 
             setUser(prevUser => {
-                // 1. Check if user is logged in and ID matches
                 if (!prevUser) return null;
-
-                // Note: comparing as strings to avoid type issues (1 vs "1")
+                // Comparing as strings for safety
                 if (String(prevUser.id) !== String(userId)) return prevUser;
 
-                // 2. Create new object to force re-render
-                const newUser = { ...prevUser, [key]: !!value };
-                console.log("[Socket] User State Updated:", newUser);
+                // Only cast to boolean if it's NOT the role
+                const finalValue = (key === 'role') ? value : !!value;
+
+                const newUser = { ...prevUser, [key]: finalValue };
                 return newUser;
             });
         });
 
         return () => newSocket.close();
-    }, []); // Empty dependency array ensures this runs once on mount
+    }, []);
 
     // --- SESSION RESTORE ---
     useEffect(() => {
@@ -138,7 +135,6 @@ export const SocketProvider = ({ children }) => {
             const { token, role, settings } = res.data;
             localStorage.setItem('cabane_token', token);
             setToken(token);
-            // We fetch the full user profile immediately to ensure we have the ID
             const meRes = await axios.get(`${API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } });
             setUser(meRes.data);
             return true;

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, ToggleLeft } from 'lucide-react';
+import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, User, Lock, Crown } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
+import { useSocket } from '../contexts/SocketContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -26,6 +27,7 @@ const Toggle = ({ checked, onChange, disabled }) => (
 );
 
 export const AdminPanel = ({ embedded, isOpen, onClose }) => {
+    const { user: currentUser } = useSocket();
     const { showConfirm, showAlert } = useModal();
     const [activeTab, setActiveTab] = useState('USERS');
     const [users, setUsers] = useState([]);
@@ -58,7 +60,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         { label: "UTC", value: "UTC" }
     ];
 
-    // ✅ FIXED: Fetch triggers on open OR embedded
     const fetchData = async () => {
         setLoading(true);
         const token = localStorage.getItem('cabane_token');
@@ -177,13 +178,29 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     // --- USER ACTIONS ---
     const approveUser = async (id) => { await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
     const togglePermission = async (id, type, val) => { await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
+
     const deleteUser = async (id) => {
         showConfirm({ title: "Delete User", message: "Permanently delete user?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); } catch (e) { } } });
     };
 
+    const transferAdmin = async (targetId, targetName) => {
+        showConfirm({
+            title: "Transfer System Admin?",
+            message: `Are you sure you want to transfer GLOBAL ADMIN rights to "${targetName}"?\n\nYou will be demoted to a regular User. This cannot be undone by you.`,
+            isDestructive: false,
+            onConfirm: async () => {
+                try {
+                    await axios.post(`${API_URL}/api/users/transfer-admin`, { newAdminId: targetId }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
+                    showAlert("Success", "Admin rights transferred.");
+                    fetchData();
+                } catch (e) {
+                    showAlert("Error", e.response?.data?.error || "Transfer failed.");
+                }
+            }
+        });
+    };
+
     // --- RENDER ---
-    const Wrapper = embedded ? 'div' : 'div';
-    const wrapperClass = embedded ? "h-full flex flex-col bg-gray-900" : "fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 backdrop-blur-sm";
     const containerClass = embedded ? "flex-grow flex flex-col overflow-hidden" : "bg-cabane-panel border border-gray-600 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]";
 
     if (!embedded && !isOpen) return null;
@@ -193,8 +210,8 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
 
             {!embedded && (
                 <div className="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-800 shrink-0">
-                    <h2 className="text-xl font-black text-gray-200">ADMINISTRATION</h2>
-                    <button onClick={onClose}><X size={28} /></button>
+                    <h2 className="text-xl font-black text-gray-200 flex items-center gap-3 tracking-wide"><Shield className="text-blue-500" size={24} /> ADMINISTRATION</h2>
+                    <button onClick={onClose} className="text-gray-400 hover:text-white"><X size={28} /></button>
                 </div>
             )}
 
@@ -217,17 +234,26 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                     <td className="p-4">{u.status === 'ACTIVE' ? <span className="text-green-400 text-xs font-bold">ACTIVE</span> : <span className="text-yellow-400 text-xs font-bold">PENDING</span>}</td>
                                     <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'control', u.can_control)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_control ? 'bg-blue-900/50 text-blue-400 border-blue-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_control ? "GRANTED" : "DENIED"}</button></td>
                                     <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'logs', u.can_view_logs)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_view_logs ? 'bg-yellow-900/50 text-yellow-400 border-yellow-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_view_logs ? "VIEWER" : "HIDDEN"}</button></td>
-                                    <td className="p-4 flex justify-end gap-2">{u.status === 'PENDING' && <button onClick={() => approveUser(u.id)} className="p-2 bg-green-700 rounded text-white"><Check size={16} /></button>}{u.username !== 'admin' && <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-700 rounded text-red-400"><Trash2 size={16} /></button>}</td>
+                                    <td className="p-4 flex justify-end gap-2">
+                                        {u.status === 'PENDING' && <button onClick={() => approveUser(u.id)} className="p-2 bg-green-700 rounded text-white" title="Approve"><Check size={16} /></button>}
+
+                                        {u.status === 'ACTIVE' && currentUser && String(u.id) !== String(currentUser.id) && (
+                                            <button onClick={() => transferAdmin(u.id, u.username)} className="p-2 bg-gray-700 hover:bg-yellow-900/50 text-yellow-500 rounded transition-colors" title="Transfer Admin Rights">
+                                                <Crown size={16} />
+                                            </button>
+                                        )}
+
+                                        {u.username !== 'admin' && String(u.id) !== String(currentUser?.id) && <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-700 rounded text-red-400 hover:bg-red-900/50" title="Delete"><Trash2 size={16} /></button>}
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 )}
 
-                {/* ✅ FULL SYSTEM TAB CONTENT RESTORED */}
                 {activeTab === 'SYSTEM' && (
                     <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
-                        {/* 1. Timezone & Disk */}
+                        {/* Timezone & Disk */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
                             <div>
                                 <h3 className="text-lg font-bold text-white mb-2 flex items-center gap-2"><Globe size={20} className="text-blue-500" /> Timezone</h3>
@@ -251,7 +277,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
-                        {/* 2. Weather Configuration */}
+                        {/* Weather Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
                             <div className="flex justify-between items-center">
                                 <h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> Weather Services</h3>
@@ -319,7 +345,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
-                        {/* 3. Station Config */}
+                        {/* Station Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> Station Configuration</h3>
                             <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
@@ -340,7 +366,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
 
             {activeTab === 'SYSTEM' && (
                 <div className="p-4 bg-gray-900 border-t border-gray-800 shrink-0 flex justify-end">
-                    <button onClick={saveSettings} disabled={apiUsage.status && apiUsage.status.includes('EXCEEDED')} className={`w-full md:w-auto px-8 font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all ${apiUsage.status && apiUsage.status.includes('EXCEEDED') ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
+                    <button onClick={saveSettings} disabled={apiUsage.status.includes('EXCEEDED')} className={`w-full md:w-auto px-8 font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-all ${apiUsage.status.includes('EXCEEDED') ? 'bg-gray-700 text-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}>
                         <Save size={20} /> SAVE ALL SETTINGS
                     </button>
                 </div>
@@ -351,7 +377,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     if (embedded) return content;
 
     return (
-        <div className={wrapperClass} onClick={onClose}>
+        <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[60] p-4 backdrop-blur-sm" onClick={onClose}>
             {content}
         </div>
     );

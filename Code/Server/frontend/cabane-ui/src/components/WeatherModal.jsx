@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, ChevronLeft, ChevronRight, Droplets, Wind, Thermometer, Calendar, ArrowUp } from 'lucide-react';
 
-// Helper: Degrees to Cardinal
 const getCardinal = (deg) => {
     const val = Math.floor((deg / 45) + 0.5);
     const arr = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -13,24 +12,20 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
     const [isPaused, setIsPaused] = useState(false);
     const rotationTimer = useRef(null);
 
-    // ✅ FIX: Only sync index when OPENING. Ignore parent updates while open.
+    // ✅ NOTE: Scroll Lock useEffect REMOVED.
+
     useEffect(() => {
         if (isOpen) {
             setCurrentIndex(initialIndex || 0);
             setIsPaused(false);
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen]);
 
-    // Rotation Logic
     useEffect(() => {
-        // If closed, paused, or not enough data, stop timer
         if (!isOpen || isPaused || weatherData.length <= 1) return;
-
         rotationTimer.current = setInterval(() => {
             setCurrentIndex(prev => (prev + 1) % weatherData.length);
         }, 5000);
-
         return () => clearInterval(rotationTimer.current);
     }, [isOpen, isPaused, weatherData.length]);
 
@@ -41,8 +36,6 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
     const forecast = data.forecast;
 
     const handleContentClick = (e) => { e.stopPropagation(); setIsPaused(!isPaused); };
-
-    // Manual Navigation (Always Pauses)
     const handleNext = (e) => { e.stopPropagation(); setCurrentIndex((prev) => (prev + 1) % weatherData.length); setIsPaused(true); };
     const handlePrev = (e) => { e.stopPropagation(); setCurrentIndex((prev) => (prev - 1 + weatherData.length) % weatherData.length); setIsPaused(true); };
 
@@ -76,12 +69,7 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
                     <p className="text-blue-300 text-sm font-bold uppercase mb-6">{current.weather[0].description}</p>
 
                     <div className="flex justify-center items-center gap-6 mb-6">
-                        <img
-                            src={`https://openweathermap.org/img/wn/${current.weather[0].icon}@4x.png`}
-                            // ✅ MODIFIED: Grayscale + Brightness 200% = Pure White Icon
-                            className="w-24 h-24 filter grayscale brightness-200 drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]"
-                            alt="icon"
-                        />
+                        <img className="w-24 h-24 filter grayscale brightness-200 drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]" src={`https://openweathermap.org/img/wn/${current.weather[0].icon}@4x.png`} alt="icon" />
                         <div className="text-7xl font-bold text-white tracking-tighter">{Math.round(current.main.temp)}°</div>
                     </div>
 
@@ -94,7 +82,6 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
                         <div className="bg-white/10 rounded p-2 flex flex-col items-center">
                             <div className="flex items-center gap-1 mb-1">
                                 <Wind size={16} className="text-gray-400" />
-                                {/* ✅ MODIFIED: Bold White Arrow */}
                                 <div style={{ transform: `rotate(${windDeg + 180}deg)` }} className="transition-transform duration-700">
                                     <ArrowUp size={16} strokeWidth={3} className="text-white drop-shadow-md" />
                                 </div>
@@ -120,12 +107,7 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
                             <div key={day} className="flex items-center justify-between bg-gray-700/50 p-3 rounded-lg border border-gray-600">
                                 <div className="w-12 font-bold text-gray-200">{day}</div>
                                 <div className="flex items-center gap-2 flex-grow justify-center">
-                                    <img
-                                        src={`https://openweathermap.org/img/wn/${midItem.weather[0].icon}.png`}
-                                        // ✅ MODIFIED: Pure White Icons in List
-                                        className="w-8 h-8 filter grayscale brightness-200"
-                                        alt="icon"
-                                    />
+                                    <img className="w-8 h-8 filter grayscale brightness-200" src={`https://openweathermap.org/img/wn/${midItem.weather[0].icon}.png`} alt="icon" />
                                     <span className="text-xs text-gray-400 font-bold uppercase w-20">{midItem.weather[0].main}</span>
                                 </div>
                                 <div className="flex gap-3 text-sm font-mono font-bold">
