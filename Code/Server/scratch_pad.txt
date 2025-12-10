@@ -341,44 +341,80 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ The Flash Memo should have similar flow as the sharing.
 
 √ The Flash Memo modal on the receiver should not have "System Alert". The Flash Memo should be like opening the note regularly, but with a yellow pulling outline instead of solid blue.
+
+√ Notes should be different than a simple message.
+	√ The note window should be like a folder with a list of note titles with their date of last modification and user who created it.
+	√ Notes are personal to user, but can be shared to selected users. The user the note is shared with has the note with the name of the user who created it.	
+	√ When clicking on a note, it displays the full content of the note in the FlashViewer ( It should already do that. ) 
+	√ A user can open one of their note onto another user as a type of memo reminder. This is acting like sending a "FlashMessage" but instead of just being a message that will be lost in the thread, The user can re-use the same note over and over as a recurring reminder or else. If the user receiver of the note FlashViewer already has the note, they still receive the FlashView pop-up modal
+	√ The note list can be searched for the titles and body.
+	√ a note can be copied and deleted. If a user copy a shared note from another user, this new copy belongs to the copier, but with a note mentioning it has been copied from user "x"
+
+√ A creator of a note, when opening the note should not see "FROM: SYSTEM" in the header. The FROM is not displayed. The From mis displayed only to another user the note is shared with and is labeled "Shared by", not "FROM".
+
+√ Clicking outside the note should dismiss it.
+
+√ the search bar of the notes should have an "x" to clear the input textfield.
+
+√ the header of a note should the timestamp of the creation and last edit next to the "shared by".
+
+√ The "History" in the Note modal is behind the body layer. The History should also be displayed on the regular note, not just on the Flash Memo.
+
+√ Let's make some changes to the Note and Flash Memo.
+	√ Let's make the "Share by" a dropdown replacing the "History" dropdown. The content of the History should now be in the "Shared by" dropdown.
+	√ if the note is shared by the note creator, it can only be "Shared by" no matter how many times the creator shares it. Only other users can "Re-Share"
+	√ "Shared by" should not be displayed for the creator.
+	√ To the right of the "Shared by" or "Re-shared by" should be a "Shared with ↓" dropdown of the list of active users. If a user deletes the note from their Notes list, they get removed from the Shared with.
+	√ To the right of the "Shared with" should be the edited date as a dropdown showing the created date.
+
+√ Let's make more changes to the Note and Flash Memo.
+	√ The "Shared by" dropdown list is not updated immediately to other users as it should. Currently the user needs to reload the page to see this list updated.
+	√ I have changed my mind. The creator of the note should also have the "Shared by" same as other users.
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
-- Notes should be different than a simple message.
-	- The note window should be like a folder with a list of note titles with their date of last modification and user who created it.
-	- Notes are personal to user, but can be shared to selected users. The user the note is shared with has the note with the name of the user who created it.	
-	- When clicking on a note, it displays the full content of the note in the FlashViewer ( It should already do that. ) 
-	- A user can open one of their note onto another user as a type of memo reminder. This is acting like sending a "FlashMessage" but instead of just being a message that will be lost in the thread, The user can re-use the same note over and over as a recurring reminder or else. If the user receiver of the note FlashViewer already has the note, they still receive the FlashView pop-up modal
-	- The note list can be searched for the titles and body.
-	- a note can be copied and deleted. If a user copy a shared note from another user, this new copy belongs to the copier, but with a note mentioning it has been copied from user "x"
+- In the Note View, when a dropdown list is expanded, clicking outside of that dropdown should dismiss the dropdown.
 
------
+- the edited should have a timestamp with hh:mm and its dropdown should be updated instantly like the other dropdown as well as dismissed when clicked outside of it.
+
+- A note can be re-shared by users other than the creator in the same way the note creator can share it. The other users should have the share and flash memo icons on the note created by others to be able to re-share.
 
 
+---
 
 
+- In the Note View ( FlashViewer ), We should also have a button to Flash Memo or simply share it directly from the Note. If the creator, share. Any other user, re-share
 
-
+- In the header of the Note View ( FlashViewer ), the "shared by" or "Re-Shared by" should be closer to the left border of the modal. ( less padding on the left.)
 
 
 
+---
+
+- In the Note view, the "Shared by" or "Re-shared by" should lead the line ( be displayed to the right ) the order should be 1. Shared by, 2. Edited, 3. Created. The created and edited should be smaller and not as obvious as the "Shared by" or "Re-shared by"
+
+- In the note's header, the user should have the option to share or re-share.
+
+---
+- should a creator of a not who shared a note can revoke the sharing with selected users?
 
 
 
 
-- A creator of a note, when opening the note should not see "FROM: SYSTEM" in the header. The FROM is not displayed. The From mis displayed only to another user the note is shared with and is labeled "Shared by", not "FROM". There should also be a mention of who the note is being shared with (e.g. Global, Specific user, Group).
-
-- Clicking outside the note should dismiss it.
+---
 
 
 
------
+- in the "Send Flash Memo modal, the label "Urgent Flash Memo" should just be "Flash Memo"
+
 - the "Flash Memo" ( in the FlashViewer ) should be showing exactly as the note when opening it from the NOTES tab, but with the "Acknowledge" button and its outline yellow.
 
-- the "Flash Memo" should have in its header, under the tile the "Shared by x" and the date shared last. Not the current date. The note shared, when optioning it has the current date in the header. It should be the dated last shared by the "sharer". There should be an option to re-share as well as an option to re-Flash Memo shared by another user. If it is re-shared, there should be a mention of the original sharer ( Shared by ) as well as a ( re-shared by )
+- the "Flash Memo" should have in its header, under the tile the "Shared by x" and the timestamp shared last. Not the current date. The note shared, when optioning it, currently has the current date in the header. It should be the timestamp of last shared by the "sharer". There should be an option to re-share as well as an option to re-Flash Memo shared by another user. If it is re-shared, there should be a mention of the original sharer ( Shared by ) as well as a ( re-shared by )
 
-- the search bar of the notes should have an "x" to clear the input textfield.
+- In a shared note, There should also be a mention of who the note is being shared with (e.g. Global, Specific user, Group).
+
+- In the Note viewer (FlashViewer) header, the line below the Title should lead with the "Shared by" or "Re-shared by"
 
 - The "Send Flash Memo" "Select User" dropdown should have the option for selecting Global and Groups.
 
@@ -391,6 +427,8 @@ Requested
 - I feel like the Message icon would be better on the right of the "Take Control" button on the main page.
 
 - The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
+
+-----
 
 
 -------------------------------------------------------
@@ -416,6 +454,7 @@ MESSAGIN
 -----------------------------------
 WEATHER
 
+- Does open weather has forecast for how much precipitation?
 
 -----------------------------------
 SERVER
@@ -457,10 +496,19 @@ LAYOUT
 CONNECTION
 - Using DHCP for IP assignment, Once the Server or the Main Controller ( Whoever acts as the DHCP Server ) detects a new station without IP, a valid IP is assigned to it and stored in server setting and in the Arduinos Persistent memory.
 
+-----------------------------------
 ARDUINO
-- 
+
+- Alerts when a user has control should be sent to the Main Controller and it's buzzer should be heard regardless of its buzzer switch position.
+ 
 - Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
-- Add Clement alarm. Input from either ST2 or ST3 -> Output to St0
+
+- Main Controller - Buzzer
+	- the timer to alternate sound ON and Sound OFF should reset at all pass until there is an actual alert or reminder live. This would allow the buzzer to be heard as soon as the condition becomes true.
+	- Reminder chirp is not working when the buzzer switch is OFF and there is no alert active.
+
+
+- Add Clement alarm. Input from bot ST2 or ST3 feedback 5 (D6) -> Output to ST0 relay A3
 
 
 IOS

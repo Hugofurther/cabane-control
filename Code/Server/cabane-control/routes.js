@@ -1,5 +1,5 @@
 // ============================================================
-// 🛣️ API ROUTES - FINAL PRODUCTION (v4 Logs + Weather)
+// 🛣️ API ROUTES - FINAL PRODUCTION (v5 Notes & Metadata)
 // ============================================================
 const express = require('express');
 const router = express.Router();
@@ -751,19 +751,42 @@ router.post('/groups/leave', authenticateToken, (req, res) => {
 });
 
 // ============================================================
-// 📝 NOTES SYSTEM
+// 📝 NOTES SYSTEM (Real-time Updated)
 // ============================================================
+
+// Helper to fetch single note with full metadata
+const fetchNoteAndEmit = (noteId, io) => {
+    const sql = `
+        SELECT n.*, u.username as creator_name,
+        GROUP_CONCAT(s.username, ', ') as shared_with_names
+        FROM notes n
+        JOIN users u ON n.creator_id = u.id
+        LEFT JOIN note_shares ns ON n.id = ns.note_id
+        LEFT JOIN users s ON ns.user_id = s.id
+        WHERE n.id = ?
+        GROUP BY n.id
+    `;
+    db.get(sql, [noteId], (err, note) => {
+        if (!err && note && io) {
+            io.emit('NOTE_UPDATE', note); // ⚡ Real-time update
+        }
+    });
+};
 
 // GET NOTES (Owned + Shared)
 router.get('/notes', authenticateToken, (req, res) => {
     const userId = req.user.id;
     const sql = `
         SELECT n.*, u.username as creator_name,
-        CASE WHEN n.creator_id = ? THEN 1 ELSE 0 END as is_owner
+        CASE WHEN n.creator_id = ? THEN 1 ELSE 0 END as is_owner,
+        GROUP_CONCAT(s.username, ', ') as shared_with_names
         FROM notes n
         JOIN users u ON n.creator_id = u.id
+        LEFT JOIN note_shares ns ON n.id = ns.note_id
+        LEFT JOIN users s ON ns.user_id = s.id
         WHERE n.creator_id = ? 
            OR n.id IN (SELECT note_id FROM note_shares WHERE user_id = ?)
+        GROUP BY n.id
         ORDER BY n.updated_at DESC
     `;
     db.all(sql, [userId, userId, userId], (err, rows) => {
@@ -777,17 +800,19 @@ router.post('/notes', authenticateToken, (req, res) => {
     const { title, content } = req.body;
     const creatorId = req.user.id;
     const timestamp = new Date().toISOString();
+    const history = JSON.stringify([{ action: 'CREATED', user: req.user.username, timestamp }]);
 
-    db.run("INSERT INTO notes (creator_id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-        [creatorId, title, content, timestamp, timestamp],
+    db.run("INSERT INTO notes (creator_id, title, content, share_history, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        [creatorId, title, content, history, timestamp, timestamp],
         function (err) {
             if (err) return res.status(500).json({ error: "Create failed" });
+            fetchNoteAndEmit(this.lastID, req.io);
             res.json({ success: true, id: this.lastID });
         }
     );
 });
 
-// UPDATE NOTE (Owner Only)
+// UPDATE NOTE
 router.put('/notes/:id', authenticateToken, (req, res) => {
     const { title, content } = req.body;
     const noteId = req.params.id;
@@ -799,26 +824,31 @@ router.put('/notes/:id', authenticateToken, (req, res) => {
         function (err) {
             if (err) return res.status(500).json({ error: "Update failed" });
             if (this.changes === 0) return res.status(403).json({ error: "Not owner or not found" });
+            fetchNoteAndEmit(noteId, req.io);
             res.json({ success: true });
         }
     );
 });
 
-// DELETE NOTE (Owner Deletes / Viewer Unsubscribes)
+// DELETE NOTE
 router.delete('/notes/:id', authenticateToken, (req, res) => {
     const noteId = req.params.id;
     const userId = req.user.id;
 
-    // Check ownership
     db.get("SELECT creator_id FROM notes WHERE id = ?", [noteId], (err, note) => {
         if (!note) return res.status(404).json({ error: "Note not found" });
 
         if (note.creator_id === userId) {
-            // Owner -> Hard Delete (Cascade deletes shares)
-            db.run("DELETE FROM notes WHERE id = ?", [noteId], () => res.json({ success: true }));
+            db.run("DELETE FROM notes WHERE id = ?", [noteId], () => {
+                req.io.emit('NOTE_DELETE', { id: noteId });
+                res.json({ success: true });
+            });
         } else {
-            // Viewer -> Remove Share
-            db.run("DELETE FROM note_shares WHERE note_id = ? AND user_id = ?", [noteId, userId], () => res.json({ success: true }));
+            db.run("DELETE FROM note_shares WHERE note_id = ? AND user_id = ?", [noteId, userId], () => {
+                // Viewer removed themselves, update the "Shared With" list for others
+                fetchNoteAndEmit(noteId, req.io);
+                res.json({ success: true });
+            });
         }
     });
 });
@@ -827,36 +857,44 @@ router.delete('/notes/:id', authenticateToken, (req, res) => {
 router.post('/notes/:id/share', authenticateToken, (req, res) => {
     const noteId = req.params.id;
     const { targetUserId } = req.body;
-    const userId = req.user.id; // Owner
+    const userId = req.user.id;
 
-    // Verify ownership
-    db.get("SELECT creator_id, title FROM notes WHERE id = ?", [noteId], (err, note) => {
-        if (!note || note.creator_id !== userId) return res.status(403).json({ error: "Permission denied" });
+    db.get("SELECT * FROM notes WHERE id = ?", [noteId], (err, note) => {
+        if (!note) return res.status(404).json();
 
-        db.run("INSERT OR IGNORE INTO note_shares (note_id, user_id) VALUES (?, ?)", [noteId, targetUserId], function () {
-            if (this.changes > 0 && req.io) {
-                // Notify recipient to refresh note list (optional but nice)
-                // We'll just rely on them refreshing or next login, 
-                // OR we could send a system DM saying "User X shared a note".
-                const sysMsg = `📄 SHARED NOTE: "${note.title}"\nHas been shared with you by ${req.user.username}. Check your Notes tab.`;
-                const timestamp = new Date().toISOString();
+        // Check Permissions (Owner OR Existing Share)
+        const checkAccessSql = `SELECT 1 FROM note_shares WHERE note_id = ? AND user_id = ?`;
+        db.get(checkAccessSql, [noteId, userId], (err, share) => {
+            if (note.creator_id !== userId && !share) return res.status(403).json({ error: "Permission denied" });
 
-                db.run("INSERT INTO messages (sender_id, recipient_id, content, priority, timestamp) VALUES (?, ?, ?, 'NORMAL', ?)",
-                    [userId, targetUserId, sysMsg, timestamp],
-                    function () {
-                        req.io.emit('NEW_MESSAGE', {
-                            id: this.lastID, sender_id: userId, sender: 'SYSTEM', recipient_id: targetUserId,
-                            content: sysMsg, priority: 'NORMAL', timestamp, is_read_by_me: 0, is_ack_by_me: 0
-                        });
-                    }
-                );
-            }
-            res.json({ success: true });
+            db.run("INSERT OR IGNORE INTO note_shares (note_id, user_id) VALUES (?, ?)", [noteId, targetUserId], function () {
+                // Update History
+                let history = [];
+                try { history = JSON.parse(note.share_history || '[]'); } catch (e) { }
+
+                // Add Re-Share or Share Action
+                const action = (note.creator_id === userId) ? 'SHARED' : 'RE-SHARED';
+                history.push({ action, user: req.user.username, timestamp: new Date().toISOString() });
+
+                db.run("UPDATE notes SET share_history = ? WHERE id = ?", [JSON.stringify(history), noteId]);
+
+                if (this.changes > 0 && req.io) {
+                    const sysMsg = `📄 SHARED NOTE: "${note.title}"\nHas been shared with you by ${req.user.username}. Check your Notes tab.`;
+                    const timestamp = new Date().toISOString();
+                    db.run("INSERT INTO messages (sender_id, recipient_id, content, priority, timestamp) VALUES (?, ?, ?, 'NORMAL', ?)", [userId, targetUserId, sysMsg, timestamp], () => {
+                        req.io.emit('NEW_MESSAGE', { id: this.lastID, sender_id: userId, sender: 'SYSTEM', recipient_id: targetUserId, content: sysMsg, priority: 'NORMAL', timestamp, is_read_by_me: 0, is_ack_by_me: 0 });
+                    });
+                }
+
+                // ✅ EMIT UPDATE
+                fetchNoteAndEmit(noteId, req.io);
+                res.json({ success: true });
+            });
         });
     });
 });
 
-// COPY NOTE (Fork)
+// COPY NOTE
 router.post('/notes/:id/copy', authenticateToken, (req, res) => {
     const noteId = req.params.id;
     const userId = req.user.id;
@@ -864,15 +902,15 @@ router.post('/notes/:id/copy', authenticateToken, (req, res) => {
 
     db.get("SELECT title, content, creator_id FROM notes WHERE id = ?", [noteId], (err, note) => {
         if (!note) return res.status(404).json();
-
-        // Get creator name
         db.get("SELECT username FROM users WHERE id = ?", [note.creator_id], (err, creator) => {
             const creatorName = creator ? creator.username : "Unknown";
-            const newContent = `[Copied from ${creatorName}]\n\n${note.content}`;
+            const newContent = `${note.content}`;
+            const history = JSON.stringify([{ action: 'COPIED', user: req.user.username, from: creatorName, timestamp }]);
 
-            db.run("INSERT INTO notes (creator_id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                [userId, note.title + " (Copy)", newContent, timestamp, timestamp],
+            db.run("INSERT INTO notes (creator_id, title, content, share_history, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                [userId, note.title + " (Copy)", newContent, history, timestamp, timestamp],
                 function () {
+                    fetchNoteAndEmit(this.lastID, req.io);
                     res.json({ success: true, id: this.lastID });
                 }
             );
@@ -880,40 +918,50 @@ router.post('/notes/:id/copy', authenticateToken, (req, res) => {
     });
 });
 
-// FLASH NOTE (Memo Reminder)
+// FLASH NOTE
 router.post('/notes/:id/flash', authenticateToken, (req, res) => {
     const noteId = req.params.id;
     const { targetUserId } = req.body;
     const userId = req.user.id;
 
-    db.get("SELECT title, content FROM notes WHERE id = ?", [noteId], (err, note) => {
+    db.get("SELECT * FROM notes WHERE id = ?", [noteId], (err, note) => {
         if (!note) return res.status(404).json();
 
-        const timestamp = new Date().toISOString();
-        const flashContent = `📝 MEMO: ${note.title}\n\n${note.content}`;
+        // 1. Ensure receiver has access
+        db.run("INSERT OR IGNORE INTO note_shares (note_id, user_id) VALUES (?, ?)", [noteId, targetUserId]);
 
-        db.run("INSERT INTO messages (sender_id, recipient_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)",
-            [userId, targetUserId, flashContent, timestamp],
-            function () {
-                if (req.io) {
-                    req.io.emit('NEW_MESSAGE', {
-                        id: this.lastID,
-                        sender_id: userId,
-                        sender: req.user.username,
-                        recipient_id: targetUserId,
-                        group_id: null,
-                        content: flashContent,
-                        priority: 'URGENT',
-                        timestamp: timestamp,
-                        is_read_by_me: 0,
-                        is_ack_by_me: 0
-                    });
-                }
-                res.json({ success: true });
+        // 2. Update History
+        let history = [];
+        try { history = JSON.parse(note.share_history || '[]'); } catch (e) { }
+        const action = (note.creator_id === userId) ? 'FLASHED' : 'RE-FLASHED';
+        history.push({ action, user: req.user.username, timestamp: new Date().toISOString() });
+
+        db.run("UPDATE notes SET share_history = ? WHERE id = ?", [JSON.stringify(history), noteId]);
+
+        // 3. Emit Updates
+        fetchNoteAndEmit(noteId, req.io);
+
+        // 4. Send Message
+        const timestamp = new Date().toISOString();
+        const payload = JSON.stringify({
+            type: 'NOTE_FLASH',
+            noteId: note.id,
+            title: note.title,
+            content: note.content,
+            sharedBy: req.user.username,
+            shareHistory: history,
+            originalCreatorId: note.creator_id
+        });
+
+        db.run("INSERT INTO messages (sender_id, recipient_id, content, priority, timestamp) VALUES (?, ?, ?, 'URGENT', ?)", [userId, targetUserId, payload, timestamp], function () {
+            if (req.io) {
+                req.io.emit('NEW_MESSAGE', { id: this.lastID, sender_id: userId, sender: req.user.username, recipient_id: targetUserId, group_id: null, content: payload, priority: 'URGENT', timestamp, is_read_by_me: 0, is_ack_by_me: 0 });
             }
-        );
+            res.json({ success: true });
+        });
     });
 });
+
 
 // Helpers
 const reevaluateUrgentMessages = (io) => {

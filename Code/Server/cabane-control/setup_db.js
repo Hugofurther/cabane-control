@@ -103,13 +103,14 @@ db.serialize(() => {
   console.log("✔ Messaging Tables Ready");
 
   // ============================================================
-  // 4. NOTES SYSTEM (NEW)
+  // 4. NOTES SYSTEM
   // ============================================================
   db.run(`CREATE TABLE IF NOT EXISTS notes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     creator_id INTEGER,
     title TEXT,
     content TEXT,
+    share_history TEXT DEFAULT '[]', -- JSON Array of history
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(creator_id) REFERENCES users(id)
@@ -126,10 +127,18 @@ db.serialize(() => {
   console.log("✔ Notes Tables Ready");
 
   // ============================================================
-  // 5. DEFAULT ADMIN CREATION
+  // 5. MIGRATIONS (Auto-Fix Existing DBs)
+  // ============================================================
+  // Attempt to add share_history column if it's missing (fails silently if exists)
+  db.run("ALTER TABLE notes ADD COLUMN share_history TEXT DEFAULT '[]'", (err) => {
+    if (!err) console.log("✨ MIGRATION: Added 'share_history' column to notes table.");
+  });
+
+  // ============================================================
+  // 6. DEFAULT ADMIN CREATION
   // ============================================================
   const adminName = 'admin';
-  const adminPass = 'cabane'; // ⚠️ Change immediately after login
+  const adminPass = 'cabane';
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@local.host';
 
   db.get("SELECT * FROM users WHERE username = ?", [adminName], (err, row) => {

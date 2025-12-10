@@ -1,71 +1,94 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AlertTriangle, X, Check, Edit3, Lock, Zap } from 'lucide-react';
+import { AlertTriangle, X, Check, Edit3, Zap, ChevronDown, Share2, Users, Calendar } from 'lucide-react';
 import { clsx } from 'clsx';
 
-export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, isOwner, initialEditMode = false }) => {
+export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, onShare, isOwner, initialEditMode = false }) => {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [editMode, setEditMode] = useState(initialEditMode);
     const [editContent, setEditContent] = useState('');
     const [editTitle, setEditTitle] = useState('');
 
-    // Auto-focus ref
-    const textareaRef = useRef(null);
+    // Dropdown States
+    const [activeDropdown, setActiveDropdown] = useState(null);
+    const toggleDropdown = (name) => setActiveDropdown(prev => prev === name ? null : name);
 
+    const textareaRef = useRef(null);
     const currentMsg = messages[currentIndex];
 
-    // Reset state when switching messages
+    // --- PARSE CONTENT ---
+    let noteData = null;
+    let displayContent = "";
+
+    if (currentMsg) {
+        try {
+            if (currentMsg.content && currentMsg.content.startsWith('{') && currentMsg.content.includes('NOTE_FLASH')) {
+                noteData = JSON.parse(currentMsg.content);
+                displayContent = noteData.content;
+            } else {
+                displayContent = currentMsg.content;
+            }
+        } catch (e) {
+            displayContent = currentMsg.content;
+        }
+    }
+
     useEffect(() => {
         if (currentMsg) {
-            setEditContent(currentMsg.content || '');
-            setEditTitle(currentMsg.title || '');
-            // Only set edit mode if explicitly requested (creation)
+            setEditContent(displayContent || '');
+            setEditTitle(currentMsg.title || noteData?.title || '');
             if (initialEditMode) setEditMode(true);
         }
-    }, [currentMsg, initialEditMode]);
+    }, [currentMsg, initialEditMode, displayContent]);
 
-    // Auto-focus textarea when entering edit mode
     useEffect(() => {
         if (editMode && textareaRef.current) {
             textareaRef.current.focus();
-            // Move cursor to end
             textareaRef.current.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
         }
     }, [editMode]);
 
     if (!currentMsg) return null;
 
-    // --- LOGIC ---
-    // 1. Detect Flash Memo vs System Alarm
+    // --- FLAGS ---
     const isUrgent = currentMsg.priority === 'URGENT';
-    const isMemo = isUrgent && (currentMsg.content || "").startsWith("📝 MEMO:");
-    const isSystemAlarm = isUrgent && !isMemo;
+    const isFlashMemo = !!noteData;
+    const isNote = !!currentMsg.title && !isFlashMemo;
+    const isSystemAlarm = isUrgent && !isFlashMemo;
 
-    // 2. Identify Note
-    const isNote = !!currentMsg.title;
+    // --- METADATA LOGIC ---
 
-    // 3. Sender Label Logic
-    let senderLabel = "";
-    if (isNote) {
-        if (!isOwner) senderLabel = `Shared by ${currentMsg.creator_name || 'Unknown'}`;
-        // If owner, we show nothing or "Personal Note"
-    } else if (isUrgent) {
-        senderLabel = `FROM: ${currentMsg.sender || 'SYSTEM'}`;
+    // 1. History (Chain of Custody)
+    const history = noteData?.shareHistory || (currentMsg.share_history ? JSON.parse(currentMsg.share_history) : []);
+    const lastShare = history.length > 0 ? history[history.length - 1] : null;
+    const creatorName = currentMsg.creator_name || noteData?.creatorName || 'Unknown';
+
+    // 2. Shared By Label
+    // Rules: 
+    // - Always show "Shared by X"
+    // - If X is NOT creator, show "Re-Shared by X"
+    let sharedByLabel = `Shared by ${creatorName}`;
+    if (lastShare) {
+        const actionPrefix = (lastShare.action === 'RE-SHARED' || lastShare.action === 'RE-FLASHED' || lastShare.user !== creatorName)
+            ? "Re-Shared" : "Shared";
+        sharedByLabel = `${actionPrefix} by ${lastShare.user}`;
     }
+
+    // 3. Shared With List
+    const sharedWithList = currentMsg.shared_with_names ? currentMsg.shared_with_names.split(', ') : [];
+
+    // 4. Dates
+    const updatedDate = new Date(currentMsg.updated_at || Date.now()).toLocaleDateString();
+    const createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleDateString();
 
     const handleSave = () => {
         if (onSave) {
             onSave(currentMsg.id, editTitle, editContent);
             setEditMode(false);
-            onClose(); // ✅ Dismiss on Save
+            onClose();
         }
     };
 
-    // Parse Memo Content (Remove "📝 MEMO: Title" line for clean display if needed, 
-    // or keep it. Let's keep it simple for now, or strip the header if it's redundant).
-    const displayContent = editMode ? editContent : currentMsg.content;
-
     // --- STYLES ---
-    // Blue (Standard), Yellow (Memo), Red (Alarm)
     let borderColor = "border-gray-600";
     let shadowColor = "shadow-2xl";
     let headerBg = "bg-gray-800 border-gray-700";
@@ -76,13 +99,13 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, is
         shadowColor = "shadow-red-900/50";
         headerBg = "bg-red-900/80 border-red-500";
         pulseClass = "bg-red-500/10 animate-pulse";
-    } else if (isMemo) {
+    } else if (isFlashMemo) {
         borderColor = "border-yellow-500";
-        shadowColor = "shadow-yellow-900/50";
-        headerBg = "bg-yellow-900/80 border-yellow-500";
+        shadowColor = "shadow-yellow-500/50";
+        headerBg = "bg-yellow-900/90 border-yellow-500";
         pulseClass = "bg-yellow-500/10 animate-pulse";
     } else if (isNote) {
-        borderColor = "border-blue-500"; // Solid blue for notes
+        borderColor = "border-blue-500";
         headerBg = "bg-gray-800 border-gray-700";
     }
 
@@ -90,17 +113,19 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, is
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
             <div className={clsx("w-full max-w-2xl bg-gray-900 border-2 rounded-2xl overflow-hidden flex flex-col relative max-h-[90vh]", borderColor, shadowColor)} onClick={e => e.stopPropagation()}>
 
-                {/* ANIMATED BACKGROUND */}
                 {pulseClass && <div className={`absolute inset-0 ${pulseClass} pointer-events-none`} />}
 
                 {/* HEADER */}
-                <div className={clsx("p-6 flex justify-between items-center z-10 border-b", headerBg)}>
-                    <div className="flex items-center gap-3">
-                        {isSystemAlarm && <AlertTriangle className="text-white animate-bounce" size={32} />}
-                        {isMemo && <Zap className="text-yellow-200" size={28} />}
-                        {isNote && !isMemo && !isSystemAlarm && <Edit3 className="text-blue-400" size={24} />}
+                <div className={clsx("p-6 flex justify-between items-start z-30 border-b relative", headerBg)}>
+                    <div className="flex items-start gap-3 w-full">
+                        <div className="mt-1">
+                            {isSystemAlarm && <AlertTriangle className="text-white animate-bounce" size={32} />}
+                            {isFlashMemo && <Zap className="text-yellow-400" size={28} />}
+                            {isNote && <Edit3 className="text-blue-400" size={24} />}
+                        </div>
 
                         <div className="flex-grow min-w-0">
+                            {/* TITLE */}
                             {editMode ? (
                                 <input
                                     value={editTitle}
@@ -111,37 +136,89 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, is
                                     autoFocus
                                 />
                             ) : (
-                                <h2 className="text-2xl font-black text-white uppercase tracking-widest leading-none truncate">
-                                    {currentMsg.title || (isMemo ? "MEMO REMINDER" : (isUrgent ? "SYSTEM ALERT" : "MESSAGE"))}
+                                <h2 className="text-2xl font-black text-white uppercase tracking-widest leading-tight break-words">
+                                    {editTitle || currentMsg.title || (isFlashMemo ? "MEMO REMINDER" : "MESSAGE")}
                                 </h2>
                             )}
 
-                            {/* SUBTEXT */}
-                            {(senderLabel || currentMsg.timestamp) && (
-                                <p className="text-xs font-bold opacity-80 uppercase mt-1 flex items-center gap-2">
-                                    {senderLabel}
-                                    {senderLabel && <span>•</span>}
-                                    {new Date(currentMsg.timestamp || Date.now()).toLocaleString()}
-                                </p>
-                            )}
+                            {/* METADATA ROW */}
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 pl-0">
+
+                                {/* 1. SHARED BY (History) */}
+                                <HeaderDropdown
+                                    icon={<Share2 size={12} />}
+                                    label={sharedByLabel}
+                                    isOpen={activeDropdown === 'SHARED_BY'}
+                                    onToggle={() => toggleDropdown('SHARED_BY')}
+                                    color="text-blue-300"
+                                >
+                                    <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Chain of Custody</div>
+                                    {history.length === 0 ? <div className="text-gray-500 italic">No history</div> :
+                                        history.slice().reverse().map((h, i) => (
+                                            <div key={i} className="mb-2 last:mb-0">
+                                                <span className="text-yellow-500 font-bold">{h.action}</span> <span className="text-gray-400">by {h.user}</span>
+                                                <div className="text-[10px] text-gray-600">{new Date(h.timestamp).toLocaleString()}</div>
+                                            </div>
+                                        ))
+                                    }
+                                </HeaderDropdown>
+
+                                {/* 2. SHARED WITH */}
+                                {sharedWithList.length > 0 && (
+                                    <HeaderDropdown
+                                        icon={<Users size={12} />}
+                                        label={`Shared with ${sharedWithList.length}`}
+                                        isOpen={activeDropdown === 'SHARED_WITH'}
+                                        onToggle={() => toggleDropdown('SHARED_WITH')}
+                                        color="text-green-300"
+                                    >
+                                        <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Active Users</div>
+                                        {sharedWithList.map((u, i) => (
+                                            <div key={i} className="text-gray-300 py-0.5">{u}</div>
+                                        ))}
+                                    </HeaderDropdown>
+                                )}
+
+                                {/* 3. DATES */}
+                                {(updatedDate) && (
+                                    <HeaderDropdown
+                                        icon={<Calendar size={12} />}
+                                        label={`Edited: ${updatedDate}`}
+                                        isOpen={activeDropdown === 'DATES'}
+                                        onToggle={() => toggleDropdown('DATES')}
+                                        color="text-gray-400"
+                                    >
+                                        <div className="mb-2">
+                                            <span className="text-gray-500 font-bold uppercase text-[10px]">Created</span>
+                                            <div className="text-gray-300">{createdDate}</div>
+                                        </div>
+                                    </HeaderDropdown>
+                                )}
+                            </div>
                         </div>
                     </div>
 
-                    <div className="flex gap-2">
-                        {/* EDIT BUTTON (Only for Notes + Owner) */}
-                        {isNote && isOwner && !editMode && (
-                            <button onClick={() => setEditMode(true)} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors"><Edit3 size={20} /></button>
+                    {/* ACTIONS */}
+                    <div className="flex gap-2 shrink-0 ml-4">
+                        {/* SHARE BUTTON (Visible to everyone with access) */}
+                        {onShare && (
+                            <button onClick={onShare} className="p-2 bg-black/20 hover:bg-blue-600/50 text-blue-400 hover:text-white rounded transition-colors" title="Share / Re-Share">
+                                <Zap size={20} />
+                            </button>
                         )}
-                        {/* SAVE BUTTON */}
+
+                        {isNote && isOwner && !editMode && (
+                            <button onClick={() => setEditMode(true)} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors" title="Edit"><Edit3 size={20} /></button>
+                        )}
                         {editMode && (
-                            <button onClick={handleSave} className="p-2 bg-green-600 hover:bg-green-500 rounded text-white shadow-lg transition-colors"><Check size={20} /></button>
+                            <button onClick={handleSave} className="p-2 bg-green-600 hover:bg-green-500 rounded text-white shadow-lg transition-colors" title="Save"><Check size={20} /></button>
                         )}
                         <button onClick={onClose} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors"><X size={24} /></button>
                     </div>
                 </div>
 
                 {/* CONTENT */}
-                <div className="p-8 overflow-y-auto flex-grow z-10 bg-gray-900/90 min-h-[250px]">
+                <div className="p-8 overflow-y-auto flex-grow z-0 bg-gray-900/95 min-h-[250px]">
                     {editMode ? (
                         <textarea
                             ref={textareaRef}
@@ -151,17 +228,17 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, is
                             placeholder="Type your note content here..."
                         />
                     ) : (
-                        <div className={clsx("whitespace-pre-wrap leading-relaxed font-medium text-lg", isUrgent ? "text-white drop-shadow-md" : "text-gray-300")}>
+                        <div className={clsx("whitespace-pre-wrap leading-relaxed font-medium text-lg", isUrgent ? "text-white drop-shadow-sm" : "text-gray-300")}>
                             {displayContent}
                         </div>
                     )}
                 </div>
 
-                {/* FOOTER ACTION (Acknowledge for Receiver) */}
+                {/* FOOTER */}
                 {!readOnly && isUrgent && !isOwner && (
-                    <div className="p-6 bg-gray-900 border-t border-gray-800 z-10 flex justify-center">
-                        <button onClick={() => onDismiss(currentMsg.id)} className="w-full py-4 bg-white text-gray-900 hover:bg-gray-200 font-black text-xl uppercase tracking-[0.2em] rounded shadow-xl transition-transform active:scale-95 flex items-center justify-center gap-3">
-                            <Check size={28} strokeWidth={3} className="text-green-600" /> Acknowledge
+                    <div className="p-4 bg-gray-900 border-t border-gray-800 z-10 flex gap-4">
+                        <button onClick={() => onDismiss(currentMsg.id)} className={clsx("flex-grow py-4 font-black text-xl uppercase tracking-[0.2em] rounded shadow-xl transition-transform active:scale-95 flex items-center justify-center gap-3", isFlashMemo ? "bg-yellow-500 text-black hover:bg-yellow-400" : "bg-white text-red-600 hover:bg-gray-200")}>
+                            <Check size={28} strokeWidth={3} /> Acknowledge
                         </button>
                     </div>
                 )}
@@ -169,3 +246,21 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, is
         </div>
     );
 };
+
+// Reusable Dropdown
+const HeaderDropdown = ({ icon, label, children, isOpen, onToggle, color = "text-gray-400" }) => (
+    <div className="relative">
+        <button
+            onClick={(e) => { e.stopPropagation(); onToggle(); }}
+            className={`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`}
+        >
+            {icon} {label} <ChevronDown size={10} />
+        </button>
+
+        {isOpen && (
+            <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 z-[100] w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100" onClick={e => e.stopPropagation()}>
+                {children}
+            </div>
+        )}
+    </div>
+);

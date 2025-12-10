@@ -59,6 +59,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     // Share Data
     const [shareTargetNote, setShareTargetNote] = useState(null); // The note being shared
     const [shareModalOpen, setShareModalOpen] = useState(false);
+    const [shareModalIsFlash, setShareModalIsFlash] = useState(false);
 
     // Chat Inputs
     const [input, setInput] = useState('');
@@ -228,9 +229,32 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             });
         };
 
+        // ✅ NEW: Live Note Updates
+        const handleNoteUpdate = (updatedNote) => {
+            setNotes(prev => {
+                const exists = prev.find(n => n.id === updatedNote.id);
+                if (exists) {
+                    return prev.map(n => n.id === updatedNote.id ? { ...n, ...updatedNote, is_owner: n.creator_id === user.id ? 1 : 0 } : n);
+                } else {
+                    // Only add if we are involved (Creator or Shared)
+                    if (updatedNote.creator_id === user.id || (updatedNote.shared_with_names && updatedNote.shared_with_names.includes(user.username))) {
+                        return [updatedNote, ...prev];
+                    }
+                    return prev;
+                }
+            });
+
+            // Update open viewer
+            setViewingNote(prev => (prev && prev.id === updatedNote.id) ? { ...prev, ...updatedNote } : prev);
+        };
+
         const handleDelete = ({ id }) => setMessages(prev => prev.filter(m => m.id !== id));
         const handleUpdate = ({ id, priority }) => setMessages(prev => prev.map(m => m.id === id ? { ...m, priority } : m));
         const handleRead = ({ userId, messageIds }) => { if (String(userId) === String(user.id)) setMessages(prev => prev.map(m => messageIds.includes(m.id) ? { ...m, is_read_by_me: 1 } : m)); };
+        const handleNoteDelete = ({ id }) => {
+            setNotes(prev => prev.filter(n => n.id !== id));
+            setViewingNote(prev => (prev && String(prev.id) === String(id)) ? null : prev);
+        };
 
         socket.on('NEW_MESSAGE', handleNew);
         socket.on('DELETE_MESSAGE', handleDelete);
@@ -238,6 +262,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         socket.on('MESSAGES_READ', handleRead);
         socket.on('GROUP_MEMBERSHIP_UPDATE', handleMembership);
         socket.on('GROUP_DELETED', handleGroupDeleted);
+        socket.on('NOTE_UPDATE', handleNoteUpdate);
+        socket.on('NOTE_DELETE', handleNoteDelete);
 
         return () => {
             socket.off('NEW_MESSAGE', handleNew);
@@ -246,6 +272,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             socket.off('MESSAGES_READ', handleRead);
             socket.off('GROUP_MEMBERSHIP_UPDATE', handleMembership);
             socket.off('GROUP_DELETED', handleGroupDeleted);
+            socket.off('NOTE_UPDATE', handleNoteUpdate);
+            socket.off('NOTE_DELETE', handleNoteDelete);
         };
     }, [socket, user, activeTab, selectedTarget]);
 
@@ -425,7 +453,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
     const openShareModal = (note, isFlash = false) => {
         setShareTargetNote(note);
-        setIsUrgent(isFlash);
+        setShareModalIsFlash(isFlash);
         setShareModalOpen(true);
     };
 
@@ -513,7 +541,18 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 <div className="p-3 bg-gray-900 border-b border-gray-700 flex gap-2">
                     <div className="relative flex-grow">
                         <Search className="absolute left-2 top-2 text-gray-500" size={14} />
-                        <input type="text" placeholder="Search notes..." value={noteSearch} onChange={e => setNoteSearch(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded pl-8 p-1.5 text-sm text-white outline-none" />
+                        <input
+                            type="text"
+                            placeholder="Search notes..."
+                            value={noteSearch}
+                            onChange={e => setNoteSearch(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded pl-8 pr-8 p-1.5 text-sm text-white outline-none focus:border-blue-500 transition-colors"
+                        />
+                        {noteSearch && (
+                            <button onClick={() => setNoteSearch('')} className="absolute right-2 top-2 text-gray-500 hover:text-white">
+                                <X size={14} />
+                            </button>
+                        )}
                     </div>
                     <button onClick={() => setIsCreatingNote(!isCreatingNote)} className="bg-blue-600 p-2 rounded text-white hover:bg-blue-500"><Plus size={16} /></button>
                 </div>
@@ -797,7 +836,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 <ShareModal
                     note={shareTargetNote}
                     users={userList.filter(u => u.id !== user?.id)}
-                    isFlash={isUrgent} // Passed from toggle logic
+                    isFlash={shareModalIsFlash} // ✅ Correct Prop
+                    showAlert={showAlert} // ✅ Pass Alert Handle
                     onClose={() => setShareModalOpen(false)}
                 />
             )}
@@ -806,7 +846,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 };
 
 // --- SUB-COMPONENT: SHARE MODAL ---
-const ShareModal = ({ note, users, isFlash, onClose }) => {
+const ShareModal = ({ note, users, isFlash, showAlert, onClose }) => {
     const [selectedUser, setSelectedUser] = useState('');
     const [flashEnabled, setFlashEnabled] = useState(isFlash);
     const [status, setStatus] = useState('IDLE'); // IDLE, SUCCESS
@@ -822,9 +862,9 @@ const ShareModal = ({ note, users, isFlash, onClose }) => {
                 { headers: { Authorization: `Bearer ${token}` } }
             );
             setStatus('SUCCESS');
-            setTimeout(onClose, 1500); // Close after success animation
+            setTimeout(onClose, 1500);
         } catch (e) {
-            alert("Failed to share."); // Fallback
+            showAlert("Error", "Failed to share.");
         }
     };
 
@@ -874,7 +914,7 @@ const ShareModal = ({ note, users, isFlash, onClose }) => {
                                 : (flashEnabled ? "bg-yellow-600 hover:bg-yellow-500 text-black" : "bg-blue-600 hover:bg-blue-500 text-white")
                         )}
                     >
-                        {status === 'SUCCESS' ? <Check size={24} strokeWidth={3} /> : (flashEnabled ? "SEND ALERT" : "SHARE")}
+                        {status === 'SUCCESS' ? <Check size={24} strokeWidth={3} /> : (flashEnabled ? "SEND FLASH MEMO" : "SHARE")}
                     </button>
                 </div>
             </div>
