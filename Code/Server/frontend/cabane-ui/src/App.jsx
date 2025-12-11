@@ -14,7 +14,7 @@ import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 
-console.log("🚀 CABANE UI VERSION: 3.5 - LOG FILTERS ADDED");
+console.log("🚀 CABANE UI VERSION: 3.6 - WORKING ON NOTES");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');

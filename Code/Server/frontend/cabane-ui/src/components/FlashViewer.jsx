@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, X, Check, Edit3, Zap, ChevronDown, Share2, Users, Calendar } from 'lucide-react';
 import { clsx } from 'clsx';
 
-export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, onShare, isOwner, initialEditMode = false }) => {
+export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, onShare, onUnshare, isOwner, initialEditMode = false }) => {
+    // ... [State setup same as before] ...
     const [currentIndex, setCurrentIndex] = useState(0);
     const [editMode, setEditMode] = useState(initialEditMode);
     const [editContent, setEditContent] = useState('');
@@ -19,11 +20,15 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     let noteData = null;
     let displayContent = "";
 
+    // ✅ Define realNoteId at scope level
+    let realNoteId = currentMsg?.id;
+
     if (currentMsg) {
         try {
             if (currentMsg.content && currentMsg.content.startsWith('{') && currentMsg.content.includes('NOTE_FLASH')) {
                 noteData = JSON.parse(currentMsg.content);
                 displayContent = noteData.content;
+                if (noteData.noteId) realNoteId = noteData.noteId;
             } else {
                 displayContent = currentMsg.content;
             }
@@ -57,15 +62,12 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
     // --- METADATA LOGIC ---
 
-    // 1. History (Chain of Custody)
+    // 1. History
     const history = noteData?.shareHistory || (currentMsg.share_history ? JSON.parse(currentMsg.share_history) : []);
     const lastShare = history.length > 0 ? history[history.length - 1] : null;
     const creatorName = currentMsg.creator_name || noteData?.creatorName || 'Unknown';
 
     // 2. Shared By Label
-    // Rules: 
-    // - Always show "Shared by X"
-    // - If X is NOT creator, show "Re-Shared by X"
     let sharedByLabel = `Shared by ${creatorName}`;
     if (lastShare) {
         const actionPrefix = (lastShare.action === 'RE-SHARED' || lastShare.action === 'RE-FLASHED' || lastShare.user !== creatorName)
@@ -74,15 +76,17 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     }
 
     // 3. Shared With List
-    const sharedWithList = currentMsg.shared_with_names ? currentMsg.shared_with_names.split(', ') : [];
+    const rawSharedWith = noteData?.sharedWith || currentMsg.shared_with_names || "";
+    const sharedWithList = rawSharedWith ? rawSharedWith.split(', ').filter(s => s.trim() !== '') : [];
 
     // 4. Dates
-    const updatedDate = new Date(currentMsg.updated_at || Date.now()).toLocaleDateString();
-    const createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleDateString();
+    const dateOpts = { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    const updatedDate = new Date(currentMsg.updated_at || Date.now()).toLocaleString([], dateOpts);
+    const createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleString([], dateOpts);
 
     const handleSave = () => {
         if (onSave) {
-            onSave(currentMsg.id, editTitle, editContent);
+            onSave(realNoteId, editTitle, editContent);
             setEditMode(false);
             onClose();
         }
@@ -115,8 +119,13 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
                 {pulseClass && <div className={`absolute inset-0 ${pulseClass} pointer-events-none`} />}
 
+                {/* ✅ CLICK OUTSIDE OVERLAY */}
+                {activeDropdown && (
+                    <div className="fixed inset-0 z-[30] cursor-default" onClick={() => setActiveDropdown(null)} />
+                )}
+
                 {/* HEADER */}
-                <div className={clsx("p-6 flex justify-between items-start z-30 border-b relative", headerBg)}>
+                <div className={clsx("p-6 flex justify-between items-start z-20 border-b relative", headerBg)}>
                     <div className="flex items-start gap-3 w-full">
                         <div className="mt-1">
                             {isSystemAlarm && <AlertTriangle className="text-white animate-bounce" size={32} />}
@@ -148,15 +157,16 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                 <HeaderDropdown
                                     icon={<Share2 size={12} />}
                                     label={sharedByLabel}
-                                    isOpen={activeDropdown === 'SHARED_BY'}
+                                    isActive={activeDropdown === 'SHARED_BY'}
                                     onToggle={() => toggleDropdown('SHARED_BY')}
                                     color="text-blue-300"
                                 >
-                                    <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Chain of Custody</div>
+                                    <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Share History</div>
                                     {history.length === 0 ? <div className="text-gray-500 italic">No history</div> :
                                         history.slice().reverse().map((h, i) => (
                                             <div key={i} className="mb-2 last:mb-0">
                                                 <span className="text-yellow-500 font-bold">{h.action}</span> <span className="text-gray-400">by {h.user}</span>
+                                                {h.target && <div className="text-xs text-red-400">Revoked access for {h.target}</div>}
                                                 <div className="text-[10px] text-gray-600">{new Date(h.timestamp).toLocaleString()}</div>
                                             </div>
                                         ))
@@ -168,13 +178,31 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                     <HeaderDropdown
                                         icon={<Users size={12} />}
                                         label={`Shared with ${sharedWithList.length}`}
-                                        isOpen={activeDropdown === 'SHARED_WITH'}
+                                        isActive={activeDropdown === 'SHARED_WITH'}
                                         onToggle={() => toggleDropdown('SHARED_WITH')}
                                         color="text-green-300"
                                     >
                                         <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Active Users</div>
                                         {sharedWithList.map((u, i) => (
-                                            <div key={i} className="text-gray-300 py-0.5">{u}</div>
+                                            <div key={i} className="flex justify-between items-center py-1.5 px-2 group hover:bg-gray-800 rounded transition-colors">
+                                                <span className="text-gray-300">{u}</span>
+
+                                                {/* ✅ UPDATED BUTTON: Lighter color, larger click area */}
+                                                {isOwner && onUnshare && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            console.log("Clicking Unshare for:", u); // Check console for this
+                                                            onUnshare(realNoteId, u.trim());
+                                                        }}
+                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center"
+                                                        title="Revoke Access"
+                                                    >
+                                                        <X size={14} />
+                                                    </button>
+                                                )}
+                                            </div>
                                         ))}
                                     </HeaderDropdown>
                                 )}
@@ -184,7 +212,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                     <HeaderDropdown
                                         icon={<Calendar size={12} />}
                                         label={`Edited: ${updatedDate}`}
-                                        isOpen={activeDropdown === 'DATES'}
+                                        isActive={activeDropdown === 'DATES'}
                                         onToggle={() => toggleDropdown('DATES')}
                                         color="text-gray-400"
                                     >
@@ -200,10 +228,9 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
                     {/* ACTIONS */}
                     <div className="flex gap-2 shrink-0 ml-4">
-                        {/* SHARE BUTTON (Visible to everyone with access) */}
                         {onShare && (
                             <button onClick={onShare} className="p-2 bg-black/20 hover:bg-blue-600/50 text-blue-400 hover:text-white rounded transition-colors" title="Share / Re-Share">
-                                <Zap size={20} />
+                                <Share2 size={20} />
                             </button>
                         )}
 
@@ -248,8 +275,8 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 };
 
 // Reusable Dropdown
-const HeaderDropdown = ({ icon, label, children, isOpen, onToggle, color = "text-gray-400" }) => (
-    <div className="relative">
+const HeaderDropdown = ({ icon, label, children, isActive, onToggle, color = "text-gray-400" }) => (
+    <div className={clsx("relative", isActive && "z-[40]")}>
         <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
             className={`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`}
@@ -257,8 +284,8 @@ const HeaderDropdown = ({ icon, label, children, isOpen, onToggle, color = "text
             {icon} {label} <ChevronDown size={10} />
         </button>
 
-        {isOpen && (
-            <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 z-[100] w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100" onClick={e => e.stopPropagation()}>
+        {isActive && (
+            <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100" onClick={e => e.stopPropagation()}>
                 {children}
             </div>
         )}

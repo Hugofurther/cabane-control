@@ -12,7 +12,7 @@ import { useModal } from '../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-// --- HELPERS ---
+// ... [Helpers same as before] ...
 const getUserColor = (username) => {
     if (!username) return 'border-gray-500 text-gray-400 bg-gray-800';
     const colors = ['border-emerald-500 text-emerald-400 bg-emerald-900/10', 'border-purple-500 text-purple-400 bg-purple-900/10', 'border-orange-500 text-orange-400 bg-orange-900/10', 'border-pink-500 text-pink-400 bg-pink-900/10', 'border-cyan-500 text-cyan-400 bg-cyan-900/10', 'border-indigo-500 text-indigo-400 bg-indigo-900/10'];
@@ -54,10 +54,10 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const [viewingNote, setViewingNote] = useState(null);
     const [isCreatingNote, setIsCreatingNote] = useState(false);
     const [newNoteTitle, setNewNoteTitle] = useState('');
-    const [initialEditMode, setInitialEditMode] = useState(false); // For new notes
+    const [initialEditMode, setInitialEditMode] = useState(false);
 
     // Share Data
-    const [shareTargetNote, setShareTargetNote] = useState(null); // The note being shared
+    const [shareTargetNote, setShareTargetNote] = useState(null);
     const [shareModalOpen, setShareModalOpen] = useState(false);
     const [shareModalIsFlash, setShareModalIsFlash] = useState(false);
 
@@ -216,6 +216,27 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             }
         };
 
+        const handleNoteUpdate = (updatedNote) => {
+            setNotes(prev => {
+                const exists = prev.find(n => n.id === updatedNote.id);
+                if (exists) {
+                    return prev.map(n => n.id === updatedNote.id ? { ...n, ...updatedNote, is_owner: n.creator_id === user.id ? 1 : 0 } : n);
+                } else {
+                    if (updatedNote.creator_id === user.id || (updatedNote.shared_with_names && updatedNote.shared_with_names.includes(user.username))) {
+                        return [updatedNote, ...prev];
+                    }
+                    return prev;
+                }
+            });
+            setViewingNote(prev => (prev && prev.id === updatedNote.id) ? { ...prev, ...updatedNote } : prev);
+        };
+
+        const handleNoteDelete = ({ id, targetUserId }) => {
+            if (targetUserId && String(targetUserId) !== String(user.id)) return;
+            setNotes(prev => prev.filter(n => n.id !== id));
+            setViewingNote(prev => (prev && String(prev.id) === String(id)) ? null : prev);
+        };
+
         const handleNew = (msg) => {
             setMessages(prev => {
                 if (prev.some(p => p.id === msg.id)) return prev;
@@ -229,32 +250,9 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             });
         };
 
-        // ✅ NEW: Live Note Updates
-        const handleNoteUpdate = (updatedNote) => {
-            setNotes(prev => {
-                const exists = prev.find(n => n.id === updatedNote.id);
-                if (exists) {
-                    return prev.map(n => n.id === updatedNote.id ? { ...n, ...updatedNote, is_owner: n.creator_id === user.id ? 1 : 0 } : n);
-                } else {
-                    // Only add if we are involved (Creator or Shared)
-                    if (updatedNote.creator_id === user.id || (updatedNote.shared_with_names && updatedNote.shared_with_names.includes(user.username))) {
-                        return [updatedNote, ...prev];
-                    }
-                    return prev;
-                }
-            });
-
-            // Update open viewer
-            setViewingNote(prev => (prev && prev.id === updatedNote.id) ? { ...prev, ...updatedNote } : prev);
-        };
-
         const handleDelete = ({ id }) => setMessages(prev => prev.filter(m => m.id !== id));
         const handleUpdate = ({ id, priority }) => setMessages(prev => prev.map(m => m.id === id ? { ...m, priority } : m));
         const handleRead = ({ userId, messageIds }) => { if (String(userId) === String(user.id)) setMessages(prev => prev.map(m => messageIds.includes(m.id) ? { ...m, is_read_by_me: 1 } : m)); };
-        const handleNoteDelete = ({ id }) => {
-            setNotes(prev => prev.filter(n => n.id !== id));
-            setViewingNote(prev => (prev && String(prev.id) === String(id)) ? null : prev);
-        };
 
         socket.on('NEW_MESSAGE', handleNew);
         socket.on('DELETE_MESSAGE', handleDelete);
@@ -277,7 +275,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         };
     }, [socket, user, activeTab, selectedTarget]);
 
-    // --- SORT & SCROLL ---
+    // ... [Sort & Scroll Unchanged] ...
     const currentMessages = useMemo(() => {
         return messages.filter(m => {
             if (activeTab === 'GLOBAL') return !m.recipient_id && !m.group_id;
@@ -398,10 +396,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         try {
             const token = localStorage.getItem('cabane_token');
             const res = await axios.post(`${API_URL}/api/notes`, { title: titleToCreate, content: "" }, { headers: { Authorization: `Bearer ${token}` } });
-
             setNewNoteTitle('');
             setIsCreatingNote(false);
-
             const newNote = {
                 id: res.data.id,
                 title: titleToCreate,
@@ -410,11 +406,9 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString()
             };
-
             fetchNotes();
             setViewingNote(newNote);
             setInitialEditMode(true);
-
         } catch (e) { showAlert("Error", "Failed to create note."); }
     };
 
@@ -451,12 +445,95 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         } catch (e) { showAlert("Error", "Copy failed."); }
     };
 
+    // --- ✅ FIXED UNSHARE LOGIC ---
+    const handleUnshareNote = (noteId, username) => {
+        console.log(`[Unshare] Attempting to unshare Note ${noteId} from ${username}`);
+
+        if (!userList || userList.length === 0) {
+            console.warn("[Unshare] User list empty. Triggering fetch...");
+            fetchData(); // Try to recover
+            showAlert("System Loading", "User directory not loaded. Please try again in a moment.");
+            return;
+        }
+
+        const targetUser = userList.find(u => u.username.toLowerCase() === username.trim().toLowerCase());
+
+        if (!targetUser) {
+            console.error(`[Unshare] User '${username}' not found in directory of ${userList.length} users.`);
+            showAlert("Error", "User not found in directory.");
+            return;
+        }
+
+        // Ask for mode
+        showConfirm({
+            title: "Revoke Access",
+            message: `Remove ${targetUser.username} from this note?`,
+            isDestructive: true,
+            onConfirm: async () => {
+                // OPTIMISTIC UPDATE
+                const updateSharedWith = (currentList) => {
+                    if (!currentList) return "";
+                    return currentList.split(', ')
+                        .filter(u => u.toLowerCase() !== username.trim().toLowerCase())
+                        .join(', ');
+                };
+
+                setNotes(prev => prev.map(n => n.id === noteId ? { ...n, shared_with_names: updateSharedWith(n.shared_with_names) } : n));
+                setViewingNote(prev => (prev && prev.id === noteId) ? { ...prev, shared_with_names: updateSharedWith(prev.shared_with_names) } : prev);
+
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.post(`${API_URL}/api/notes/${noteId}/unshare`,
+                        { targetUserId: targetUser.id },
+                        { headers: { Authorization: `Bearer ${token}` } }
+                    );
+                } catch (e) {
+                    showAlert("Error", "Failed to revoke access.");
+                    fetchNotes(); // Revert
+                }
+            }
+        });
+    };
+
+    const handleShareNote = (note) => {
+        const targetName = prompt("Enter username to share with:");
+        if (!targetName) return;
+        const targetUser = userList.find(u => u.username.toLowerCase() === targetName.toLowerCase());
+        if (!targetUser) { showAlert("Error", "User not found."); return; }
+
+        try {
+            const token = localStorage.getItem('cabane_token');
+            axios.post(`${API_URL}/api/notes/${note.id}/share`, { targetUserId: targetUser.id }, { headers: { Authorization: `Bearer ${token}` } });
+            showAlert("Success", `Shared with ${targetUser.username}`);
+        } catch (e) { showAlert("Error", "Share failed."); }
+    };
+
+    const handleFlashNote = (note) => {
+        const targetName = prompt("Enter username to Flash Memo to:");
+        if (!targetName) return;
+        const targetUser = userList.find(u => u.username.toLowerCase() === targetName.toLowerCase());
+        if (!targetUser) { showAlert("Error", "User not found."); return; }
+
+        showConfirm({
+            title: "Send Memo?",
+            message: `This will trigger an URGENT alarm on ${targetUser.username}'s screen showing this note.`,
+            onConfirm: async () => {
+                try {
+                    const token = localStorage.getItem('cabane_token');
+                    await axios.post(`${API_URL}/api/notes/${note.id}/flash`, { targetUserId: targetUser.id }, { headers: { Authorization: `Bearer ${token}` } });
+                    showAlert("Sent", "Memo Alert Sent.");
+                } catch (e) { showAlert("Error", "Failed to send."); }
+            }
+        });
+    };
+
     const openShareModal = (note, isFlash = false) => {
         setShareTargetNote(note);
         setShareModalIsFlash(isFlash);
         setShareModalOpen(true);
     };
 
+    // ... [Group Mgmt and Renders Unchanged] ...
     // --- GROUP MGMT ---
     const handleCreateGroup = async () => {
         if (!newGroupName) return;
@@ -578,7 +655,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     {filteredNotes.map(note => {
                         const isOwner = note.is_owner === 1;
                         return (
-                            <div key={note.id} onClick={() => { setViewingNote(note); setInitialEditMode(false); }} className="bg-gray-800 border border-gray-700 rounded p-3 cursor-pointer hover:border-blue-500 transition-colors group relative">
+                            <div key={note.id} onClick={() => { setViewingNote(note); setInitialEditMode(note.is_owner === 1); }} className="bg-gray-800 border border-gray-700 rounded p-3 cursor-pointer hover:border-blue-500 transition-colors group relative">
                                 <div className="flex justify-between items-start">
                                     <div className="flex items-center gap-2">
                                         {isOwner ? <StickyNote size={16} className="text-yellow-500" /> : <Share2 size={16} className="text-blue-400" />}
@@ -591,6 +668,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
 
                                 {/* ACTIONS (Hover) */}
                                 <div className="absolute right-2 bottom-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 p-1 rounded shadow-lg border border-gray-700">
+                                    {/* ✅ ACTIONS FOR OWNER */}
                                     {isOwner && (
                                         <>
                                             <button onClick={(e) => { e.stopPropagation(); openShareModal(note, false); }} className="p-1.5 hover:bg-blue-900/50 text-blue-400 rounded" title="Share"><Share2 size={12} /></button>
@@ -598,8 +676,11 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                                             <button onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }} className="p-1.5 hover:bg-red-900/50 text-red-400 rounded" title="Delete"><Trash2 size={12} /></button>
                                         </>
                                     )}
+                                    {/* ✅ ACTIONS FOR RECIPIENT */}
                                     {!isOwner && (
                                         <>
+                                            <button onClick={(e) => { e.stopPropagation(); openShareModal(note, false); }} className="p-1.5 hover:bg-blue-900/50 text-blue-400 rounded" title="Re-Share"><Share2 size={12} /></button>
+                                            <button onClick={(e) => { e.stopPropagation(); openShareModal(note, true); }} className="p-1.5 hover:bg-yellow-900/50 text-yellow-400 rounded" title="Flash Memo"><Zap size={12} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); handleCopyNote(note.id); }} className="p-1.5 hover:bg-green-900/50 text-green-400 rounded" title="Save Copy"><Copy size={12} /></button>
                                             <button onClick={(e) => { e.stopPropagation(); handleDeleteNote(note.id); }} className="p-1.5 hover:bg-red-900/50 text-red-400 rounded" title="Dismiss Share"><Trash2 size={12} /></button>
                                         </>
@@ -817,7 +898,15 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             </div>
 
             {/* MESSAGE VIEWER */}
-            {zoomedMessage && <FlashViewer messages={[zoomedMessage]} readOnly={true} onDismiss={() => handleDowngradeUrgency(zoomedMessage.id)} onClose={() => setZoomedMessage(null)} />}
+            {zoomedMessage && <FlashViewer messages={[zoomedMessage]} readOnly={true} onDismiss={() => handleDowngradeUrgency(zoomedMessage.id)} onClose={() => setZoomedMessage(null)}
+                // Allow re-sharing Flash Memos too
+                onShare={() => openShareModal({
+                    id: zoomedMessage.noteId || zoomedMessage.id,
+                    title: zoomedMessage.title || "Flash Memo"
+                }, true)}
+                onUnshare={handleUnshareNote}
+                userList={userList} // ✅ Critical for unshare logic
+            />}
 
             {/* NOTE VIEWER */}
             {viewingNote && (
@@ -828,16 +917,19 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     initialEditMode={initialEditMode}
                     onClose={() => setViewingNote(null)}
                     onSave={handleUpdateNote}
+                    onShare={() => openShareModal(viewingNote, false)}
+                    onUnshare={handleUnshareNote}
+                    userList={userList} // ✅ Critical for unshare logic
                 />
             )}
 
             {/* SHARE MODAL (INTERNAL) */}
-            {shareModalOpen && (
+            {shareModalOpen && shareTargetNote && (
                 <ShareModal
                     note={shareTargetNote}
                     users={userList.filter(u => u.id !== user?.id)}
-                    isFlash={shareModalIsFlash} // ✅ Correct Prop
-                    showAlert={showAlert} // ✅ Pass Alert Handle
+                    isFlash={shareModalIsFlash}
+                    showAlert={showAlert}
                     onClose={() => setShareModalOpen(false)}
                 />
             )}
@@ -845,79 +937,4 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     );
 };
 
-// --- SUB-COMPONENT: SHARE MODAL ---
-const ShareModal = ({ note, users, isFlash, showAlert, onClose }) => {
-    const [selectedUser, setSelectedUser] = useState('');
-    const [flashEnabled, setFlashEnabled] = useState(isFlash);
-    const [status, setStatus] = useState('IDLE'); // IDLE, SUCCESS
-
-    const handleShare = async () => {
-        if (!selectedUser) return;
-        const token = localStorage.getItem('cabane_token');
-        const endpoint = flashEnabled ? 'flash' : 'share';
-
-        try {
-            await axios.post(`${API_URL}/api/notes/${note.id}/${endpoint}`,
-                { targetUserId: selectedUser },
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
-            setStatus('SUCCESS');
-            setTimeout(onClose, 1500);
-        } catch (e) {
-            showAlert("Error", "Failed to share.");
-        }
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
-            <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
-                <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-850">
-                    <h3 className="font-bold text-white flex items-center gap-2">
-                        {flashEnabled ? <Zap className="text-yellow-400" size={18} /> : <Share2 className="text-blue-400" size={18} />}
-                        {flashEnabled ? "Send Flash Memo" : "Share Note"}
-                    </h3>
-                    <button onClick={onClose}><X size={20} className="text-gray-500 hover:text-white" /></button>
-                </div>
-
-                <div className="p-6 space-y-4">
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 block mb-2">SELECT USER</label>
-                        <select
-                            className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white outline-none text-sm"
-                            value={selectedUser}
-                            onChange={e => setSelectedUser(e.target.value)}
-                        >
-                            <option value="">-- Choose User --</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>{u.username}</option>
-                            ))}
-                        </select>
-                    </div>
-
-                    <div onClick={() => setFlashEnabled(!flashEnabled)} className="flex items-center gap-3 p-3 bg-gray-800/50 rounded border border-gray-700 cursor-pointer hover:bg-gray-800 transition-colors">
-                        <div className={clsx("w-5 h-5 rounded border flex items-center justify-center", flashEnabled ? "bg-yellow-500 border-yellow-500" : "border-gray-500")}>
-                            {flashEnabled && <Check size={14} className="text-black" />}
-                        </div>
-                        <div>
-                            <p className={clsx("text-sm font-bold", flashEnabled ? "text-yellow-400" : "text-gray-400")}>Urgent Flash Memo</p>
-                            <p className="text-[10px] text-gray-500">Triggers an alarm on user's screen.</p>
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={handleShare}
-                        disabled={!selectedUser || status === 'SUCCESS'}
-                        className={clsx(
-                            "w-full py-3 rounded-lg font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all",
-                            status === 'SUCCESS'
-                                ? "bg-green-600 text-white scale-105"
-                                : (flashEnabled ? "bg-yellow-600 hover:bg-yellow-500 text-black" : "bg-blue-600 hover:bg-blue-500 text-white")
-                        )}
-                    >
-                        {status === 'SUCCESS' ? <Check size={24} strokeWidth={3} /> : (flashEnabled ? "SEND FLASH MEMO" : "SHARE")}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
+// ... [ShareModal remains the same] ...

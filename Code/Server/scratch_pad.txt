@@ -370,45 +370,61 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ Let's make more changes to the Note and Flash Memo.
 	√ The "Shared by" dropdown list is not updated immediately to other users as it should. Currently the user needs to reload the page to see this list updated.
 	√ I have changed my mind. The creator of the note should also have the "Shared by" same as other users.
+
+√ the edited should have a timestamp with hh:mm and its dropdown should be updated instantly like the other dropdown as well as dismissed when clicked outside of it.
+
+√ A note can be re-shared by users other than the creator in the same way the note creator can share it. The other users should have the share and flash memo icons on the note created by others to be able to re-share.
+
+√ the dropdown list for the Shared with should have a more suitable title than "Chain of Custody". The note remains owned by the creator. The "shared with" user only re-share, so "share History" might be a better title.
+
+√ In the Note View, when a dropdown list is expanded ("Shared by", "Shared with" and timestamp ) , clicking outside of that dropdown should dismiss the dropdown. This was requested before and not fixed.
+
+√ In the Note View ( FlashViewer ), We should also have a button to Flash Memo or simply share it directly from the Note. If the creator, share. Any other user, re-share
+
+√ the "Flash Memo" ( in the FlashViewer ) should be showing exactly as the note when opening it from the NOTES tab, but with the "Acknowledge" button and its outline yellow.
+
+√ The Flash Memo should have the "Shared with" dropdown to the right of the "Shared by" or "Re-Shared by", like the normal Note.
+
+√ In the Note view, the "Shared by" or "Re-shared by" should lead the line ( be displayed to the right ) the order should be 1. Shared by, 2. Edited, 3. Created. The created and edited should be smaller and not as obvious as the "Shared by" or "Re-shared by"
+
+√ When a creator of a note opens the note, the note should open in edit mode automatically if they have permission to edit.
+
+√ In the note's header, the user should have the option to share or re-share.
+
+√ in the Note View, can we replace the "lightning" icon with the "share" icon. That would be better I think.
+
+√ if a note is "Shared with 0" the "Shared by" should be hidden.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
-- In the Note View, when a dropdown list is expanded, clicking outside of that dropdown should dismiss the dropdown.
 
-- the edited should have a timestamp with hh:mm and its dropdown should be updated instantly like the other dropdown as well as dismissed when clicked outside of it.
-
-- A note can be re-shared by users other than the creator in the same way the note creator can share it. The other users should have the share and flash memo icons on the note created by others to be able to re-share.
+- A creator of a note who shared a note can revoke the sharing with selected users?
 
 
----
-
-
-- In the Note View ( FlashViewer ), We should also have a button to Flash Memo or simply share it directly from the Note. If the creator, share. Any other user, re-share
-
-- In the header of the Note View ( FlashViewer ), the "shared by" or "Re-Shared by" should be closer to the left border of the modal. ( less padding on the left.)
-
-
-
----
-
-- In the Note view, the "Shared by" or "Re-shared by" should lead the line ( be displayed to the right ) the order should be 1. Shared by, 2. Edited, 3. Created. The created and edited should be smaller and not as obvious as the "Shared by" or "Re-shared by"
-
-- In the note's header, the user should have the option to share or re-share.
-
----
-- should a creator of a not who shared a note can revoke the sharing with selected users?
 
 
 
 
 ---
 
+- when a user gets removed from the "Shared with" list, or the note gets deleted, they should have a message sent in their dm from the creator of the app.
+
+- in the "Send Flash Memo modal, the label "Urgent Flash Memo" should just be "Flash Memo" and the explanation below should be more like "Display the note on user's screen".
+
+- Sharing a note or a Flash Memo should not use messages. Actually the Note feature should not use the messages. If there is a new note shared with a user and the user hasn't seen it, we'll use the badges on the messaging icon, then on the NOTES tab, then on the new note unseen ( un-opened.)
+
+- when creating a new note or editing an existing one, selecting the share / flash memo and sending the message as such should save the note first and send/share the updated version.
+
+---
+
+- A user setting should enable/disable flash memo sound notifications. Can you explain what how the sound notification for the flash memo functions?
 
 
-- in the "Send Flash Memo modal, the label "Urgent Flash Memo" should just be "Flash Memo"
 
-- the "Flash Memo" ( in the FlashViewer ) should be showing exactly as the note when opening it from the NOTES tab, but with the "Acknowledge" button and its outline yellow.
+
+
 
 - the "Flash Memo" should have in its header, under the tile the "Shared by x" and the timestamp shared last. Not the current date. The note shared, when optioning it, currently has the current date in the header. It should be the timestamp of last shared by the "sharer". There should be an option to re-share as well as an option to re-Flash Memo shared by another user. If it is re-shared, there should be a mention of the original sharer ( Shared by ) as well as a ( re-shared by )
 
@@ -427,6 +443,8 @@ Requested
 - I feel like the Message icon would be better on the right of the "Take Control" button on the main page.
 
 - The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
+
+- In the header of the Note View ( FlashViewer ), the "shared by" or "Re-Shared by" should be closer to the left border of the modal. ( less padding on the left.)
 
 -----
 
@@ -454,7 +472,7 @@ MESSAGIN
 -----------------------------------
 WEATHER
 
-- Does open weather has forecast for how much precipitation?
+- In the forecast, can we add the "Rain volume for past 3 hours" and "Rain volume for past 3 hours"
 
 -----------------------------------
 SERVER
