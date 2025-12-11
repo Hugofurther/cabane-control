@@ -533,6 +533,14 @@ IOS
 
 - Since we can, we should implement app notification when an alert is triggered. Optionally SMS / Email as well as push notification
 
+----
+TESTING
+
+- can we have a page that would simulate the 6 stations.
+	- eat relays should be represented by an icon with animation to represent a relay ON and static when OFF. We could add a glow to it when ON. Could be a gear or else. Need to be obvious difference between ON/OFF
+	- To simulate the feedback to the station, we would need toggles to toggle manually, so the user can simulate when the feedback on the action is negative.
+	- We should have a toggle option to enable these feedbacks to be automatic or manual. If in automatic, the toggles are switching automatically on the UI. 
+
 
 
 ------------------------------------------------------------

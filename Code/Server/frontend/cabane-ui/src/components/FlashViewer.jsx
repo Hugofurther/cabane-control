@@ -3,7 +3,6 @@ import { AlertTriangle, X, Check, Edit3, Zap, ChevronDown, Share2, Users, Calend
 import { clsx } from 'clsx';
 
 export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, onShare, onUnshare, isOwner, initialEditMode = false }) => {
-    // ... [State setup same as before] ...
     const [currentIndex, setCurrentIndex] = useState(0);
     const [editMode, setEditMode] = useState(initialEditMode);
     const [editContent, setEditContent] = useState('');
@@ -20,7 +19,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     let noteData = null;
     let displayContent = "";
 
-    // ✅ Define realNoteId at scope level
+    // Define realNoteId
     let realNoteId = currentMsg?.id;
 
     if (currentMsg) {
@@ -61,13 +60,11 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const isSystemAlarm = isUrgent && !isFlashMemo;
 
     // --- METADATA LOGIC ---
-
-    // 1. History
     const history = noteData?.shareHistory || (currentMsg.share_history ? JSON.parse(currentMsg.share_history) : []);
     const lastShare = history.length > 0 ? history[history.length - 1] : null;
     const creatorName = currentMsg.creator_name || noteData?.creatorName || 'Unknown';
 
-    // 2. Shared By Label
+    // Shared By Label
     let sharedByLabel = `Shared by ${creatorName}`;
     if (lastShare) {
         const actionPrefix = (lastShare.action === 'RE-SHARED' || lastShare.action === 'RE-FLASHED' || lastShare.user !== creatorName)
@@ -75,11 +72,11 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
         sharedByLabel = `${actionPrefix} by ${lastShare.user}`;
     }
 
-    // 3. Shared With List
+    // Shared With List
     const rawSharedWith = noteData?.sharedWith || currentMsg.shared_with_names || "";
     const sharedWithList = rawSharedWith ? rawSharedWith.split(', ').filter(s => s.trim() !== '') : [];
 
-    // 4. Dates
+    // Dates
     const dateOpts = { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
     const updatedDate = new Date(currentMsg.updated_at || Date.now()).toLocaleString([], dateOpts);
     const createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleString([], dateOpts);
@@ -119,13 +116,10 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
                 {pulseClass && <div className={`absolute inset-0 ${pulseClass} pointer-events-none`} />}
 
-                {/* ✅ CLICK OUTSIDE OVERLAY */}
-                {activeDropdown && (
-                    <div className="fixed inset-0 z-[30] cursor-default" onClick={() => setActiveDropdown(null)} />
-                )}
+                {/* NOTE: Global click-outside overlay removed. Now handled inside HeaderDropdown. */}
 
-                {/* HEADER */}
-                <div className={clsx("p-6 flex justify-between items-start z-20 border-b relative", headerBg)}>
+                {/* HEADER (Z-20) */}
+                <div className={clsx("p-6 flex justify-between items-start z-20 border-b relative transition-none", headerBg)}>
                     <div className="flex items-start gap-3 w-full">
                         <div className="mt-1">
                             {isSystemAlarm && <AlertTriangle className="text-white animate-bounce" size={32} />}
@@ -186,17 +180,15 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                         {sharedWithList.map((u, i) => (
                                             <div key={i} className="flex justify-between items-center py-1.5 px-2 group hover:bg-gray-800 rounded transition-colors">
                                                 <span className="text-gray-300">{u}</span>
-
-                                                {/* ✅ UPDATED BUTTON: Lighter color, larger click area */}
+                                                {/* ✅ REMOVE BUTTON */}
                                                 {isOwner && onUnshare && (
                                                     <button
                                                         onClick={(e) => {
                                                             e.preventDefault();
                                                             e.stopPropagation();
-                                                            console.log("Clicking Unshare for:", u); // Check console for this
                                                             onUnshare(realNoteId, u.trim());
                                                         }}
-                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center"
+                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer"
                                                         title="Revoke Access"
                                                     >
                                                         <X size={14} />
@@ -233,7 +225,6 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                 <Share2 size={20} />
                             </button>
                         )}
-
                         {isNote && isOwner && !editMode && (
                             <button onClick={() => setEditMode(true)} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors" title="Edit"><Edit3 size={20} /></button>
                         )}
@@ -244,7 +235,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                     </div>
                 </div>
 
-                {/* CONTENT */}
+                {/* CONTENT (Z-0) */}
                 <div className="p-8 overflow-y-auto flex-grow z-0 bg-gray-900/95 min-h-[250px]">
                     {editMode ? (
                         <textarea
@@ -274,20 +265,30 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     );
 };
 
-// Reusable Dropdown
+// ✅ REUSABLE DROPDOWN WITH INTERNAL OVERLAY
 const HeaderDropdown = ({ icon, label, children, isActive, onToggle, color = "text-gray-400" }) => (
-    <div className={clsx("relative", isActive && "z-[40]")}>
+    <div className="relative">
         <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            className={`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`}
+            // Z-50 when active to stay clickable above the internal overlay
+            className={clsx(`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`, isActive && "relative z-[50]")}
         >
             {icon} {label} <ChevronDown size={10} />
         </button>
 
         {isActive && (
-            <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100" onClick={e => e.stopPropagation()}>
-                {children}
-            </div>
+            <>
+                {/* 1. INVISIBLE OVERLAY (Z-40) - Detects clicks outside */}
+                <div
+                    className="fixed inset-0 z-[40] cursor-default"
+                    onClick={(e) => { e.stopPropagation(); onToggle(); }}
+                />
+
+                {/* 2. MENU (Z-50) - Sits on top */}
+                <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100 z-[50]" onClick={e => e.stopPropagation()}>
+                    {children}
+                </div>
+            </>
         )}
     </div>
 );

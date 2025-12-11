@@ -1,17 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo, useLayoutEffect } from 'react';
 import axios from 'axios';
-import { X, CheckCheck, ArrowLeft, Settings, Edit3, UserMinus, Crown, Trash, Check, ChevronDown } from 'lucide-react';
-import { useSocket } from '../../contexts/SocketContext';
+import { X, CheckCheck, ArrowLeft, Settings, Edit3, UserMinus, Crown, Trash, Check, ChevronDown, Plus, Search, Send, AlertTriangle, Clock } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useSocket } from '../../contexts/SocketContext';
 import { useModal } from '../../contexts/ModalContext';
 import { FlashViewer } from '../FlashViewer';
-import { getAdminName } from './utils';
 
-// Sub Components
+// Sub-Components
 import { ChatView } from './ChatView';
 import { NotesView } from './NotesView';
 import { DirectoryView } from './DirectoryView';
 import { ShareModal } from './ShareModal';
+import { getAdminName, formatSmartTime, getUserColor } from './utils';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -25,7 +25,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const [isCreatingGroup, setIsCreatingGroup] = useState(false);
     const [isGroupSettingsOpen, setIsGroupSettingsOpen] = useState(false);
 
-    // Data
+    // Data Lists
     const [messages, setMessages] = useState([]);
     const [userList, setUserList] = useState([]);
     const [groupList, setGroupList] = useState([]);
@@ -48,7 +48,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const [renameInput, setRenameInput] = useState('');
     const [notifyType, setNotifyType] = useState('PUBLIC');
 
-    // Scroll
+    // Scroll Refs
     const [showScrollButton, setShowScrollButton] = useState(false);
     const messagesEndRef = useRef(null);
     const chatContainerRef = useRef(null);
@@ -68,8 +68,10 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 const pending = prev.filter(m => m.isOptimistic && !serverIds.has(m.id));
                 return [...resMsg.data, ...pending];
             });
+
             const resUsers = await axios.get(`${API_URL}/api/users/directory`, { headers: { Authorization: `Bearer ${token}` } });
             if (Array.isArray(resUsers.data)) setUserList(resUsers.data);
+
             const resConvos = await axios.get(`${API_URL}/api/conversations`, { headers: { Authorization: `Bearer ${token}` } });
             if (Array.isArray(resConvos.data)) {
                 const groups = resConvos.data.filter(c => c.type === 'GROUP');
@@ -87,21 +89,29 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         } catch (e) { console.error(e); }
     };
 
-    // --- SOCKETS ---
+    // Helper: Ensure User Directory Exists (Crucial for Unshare)
+    const ensureDirectory = async () => {
+        if (userList && userList.length > 0) return userList;
+        const token = localStorage.getItem('cabane_token');
+        try {
+            const res = await axios.get(`${API_URL}/api/users/directory`, { headers: { Authorization: `Bearer ${token}` } });
+            if (Array.isArray(res.data)) {
+                setUserList(res.data);
+                return res.data;
+            }
+        } catch (e) { console.error("Directory fetch failed", e); }
+        return [];
+    };
+
+    // --- SOCKET LISTENERS ---
     useEffect(() => {
         if (!socket || !user) return;
 
-        // Listeners for Messages, Notes, Group updates...
         const handleNew = (msg) => {
             setMessages(prev => {
                 if (prev.some(p => p.id === msg.id)) return prev;
-                // Filtering logic (same as before)
                 if (msg.recipient_id && String(msg.recipient_id) !== String(user.id)) { if (String(msg.sender_id) !== String(user.id)) return prev; }
                 if (msg.group_id && !allowedGroupIds.current.has(String(msg.group_id))) { if (String(msg.sender_id) !== String(user.id)) return prev; }
-                if (msg.tempId) {
-                    const idx = prev.findIndex(p => p.isOptimistic && p.id === msg.tempId);
-                    if (idx !== -1) { const newArr = [...prev]; newArr[idx] = { ...msg, is_read_by_me: 1, is_ack_by_me: 0 }; return newArr; }
-                }
                 return [...prev, { ...msg, is_read_by_me: 0, is_ack_by_me: 0 }];
             });
         };
@@ -114,9 +124,29 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             });
             setViewingNote(prev => (prev && prev.id === updatedNote.id) ? { ...prev, ...updatedNote } : prev);
         };
-        const handleNoteDelete = ({ id }) => {
+        const handleNoteDelete = ({ id, targetUserId }) => {
+            if (targetUserId && String(targetUserId) !== String(user.id)) return;
             setNotes(prev => prev.filter(n => n.id !== id));
             setViewingNote(prev => (prev && String(prev.id) === String(id)) ? null : prev);
+        };
+        const handleMembership = ({ targetUserId, groupId, action }) => {
+            if (String(targetUserId) === String(user.id)) {
+                if (action === 'ADD') allowedGroupIds.current.add(String(groupId));
+                else if (action === 'REMOVE') allowedGroupIds.current.delete(String(groupId));
+                fetchData();
+                if (action === 'REMOVE' && activeTab === 'GROUPS' && String(selectedTarget?.id) === String(groupId)) {
+                    setSelectedTarget(null);
+                    showAlert("Removed", "You have been removed from this group.");
+                }
+            }
+        };
+        const handleGroupDeleted = ({ groupId }) => {
+            allowedGroupIds.current.delete(String(groupId));
+            fetchData();
+            if (activeTab === 'GROUPS' && String(selectedTarget?.id) === String(groupId)) {
+                setSelectedTarget(null);
+                showAlert("Deleted", "This group has been deleted by the admin.");
+            }
         };
         const handleDeleteMsg = ({ id }) => setMessages(prev => prev.filter(m => m.id !== id));
         const handleUpdateMsg = ({ id, priority }) => setMessages(prev => prev.map(m => m.id === id ? { ...m, priority } : m));
@@ -125,6 +155,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         socket.on('NEW_MESSAGE', handleNew);
         socket.on('NOTE_UPDATE', handleNoteUpdate);
         socket.on('NOTE_DELETE', handleNoteDelete);
+        socket.on('GROUP_MEMBERSHIP_UPDATE', handleMembership);
+        socket.on('GROUP_DELETED', handleGroupDeleted);
         socket.on('DELETE_MESSAGE', handleDeleteMsg);
         socket.on('UPDATE_MESSAGE', handleUpdateMsg);
         socket.on('MESSAGES_READ', handleReadMsg);
@@ -133,11 +165,13 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             socket.off('NEW_MESSAGE', handleNew);
             socket.off('NOTE_UPDATE', handleNoteUpdate);
             socket.off('NOTE_DELETE', handleNoteDelete);
+            socket.off('GROUP_MEMBERSHIP_UPDATE', handleMembership);
+            socket.off('GROUP_DELETED', handleGroupDeleted);
             socket.off('DELETE_MESSAGE', handleDeleteMsg);
             socket.off('UPDATE_MESSAGE', handleUpdateMsg);
             socket.off('MESSAGES_READ', handleReadMsg);
         };
-    }, [socket, user]);
+    }, [socket, user, activeTab, selectedTarget]);
 
     // --- EFFECTS ---
     useEffect(() => {
@@ -160,7 +194,11 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         if (onUnreadChange) onUnreadChange(totalUnread, null);
     }, [messages, user, onUnreadChange]);
 
-    // --- LOGIC ---
+    useEffect(() => {
+        if (isGroupSettingsOpen) setNotifyType(user?.settings?.defaultGroupNotify || 'PUBLIC');
+    }, [isGroupSettingsOpen, user]);
+
+    // --- COMPUTED HELPERS ---
     const getTabUnreadCount = (tab) => {
         if (!user) return 0;
         return messages.filter(m => {
@@ -188,7 +226,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         });
     }, [messages, activeTab, selectedTarget, user]);
 
-    // --- SCROLL LOGIC ---
+    // --- SCROLL HANDLING ---
     useLayoutEffect(() => {
         if (!isOpen || !chatContainerRef.current || currentMessages.length === 0 || activeTab === 'NOTES') return;
         const container = chatContainerRef.current;
@@ -225,29 +263,11 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         if (unreadIds.length > 0) {
             const token = localStorage.getItem('cabane_token');
             try { await axios.post(`${API_URL}/api/messages/read`, { messageIds: unreadIds }, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { }
-            // Optimistic update handled by socket
         }
     };
     const handleMarkAllRead = () => handleMarkRead(currentMessages);
 
-    // --- ACTIONS ---
-    const handleSend = async (e) => {
-        e.preventDefault(); if (!input.trim()) return;
-        const token = localStorage.getItem('cabane_token');
-        const tempId = `temp-${Date.now()}`;
-        const payload = { content: input, priority: isUrgent ? 'URGENT' : 'NORMAL', tempId };
-        if (activeTab === 'USERS' && selectedTarget) payload.recipientId = selectedTarget.id;
-        if (activeTab === 'GROUPS' && selectedTarget) payload.groupId = selectedTarget.id;
-
-        const optimisticMsg = { id: tempId, sender_id: user.id, sender: user.username, recipient_id: payload.recipientId || null, group_id: payload.groupId || null, content: input, priority: payload.priority, timestamp: new Date().toISOString(), is_read_by_me: 1, is_ack_by_me: 0, isOptimistic: true };
-        setMessages(prev => [...prev, optimisticMsg]);
-        setInput(''); setIsUrgent(false);
-        isAtBottomRef.current = true;
-        try { await axios.post(`${API_URL}/api/messages`, payload, { headers: { Authorization: `Bearer ${token}` } }); }
-        catch (e) { showAlert("Error", "Send failed"); setMessages(prev => prev.filter(m => m.id !== tempId)); }
-    };
-
-    // Note Handlers
+    // --- NOTE HANDLERS ---
     const handleCreateNote = async (title) => {
         try {
             const token = localStorage.getItem('cabane_token');
@@ -279,38 +299,83 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
         catch (e) { showAlert("Error", "Copy failed."); }
     };
     const openShareModal = (note, isFlash) => { setShareTargetNote(note); setShareModalIsFlash(isFlash); setShareModalOpen(true); };
-    const handleUnshareNote = (noteId, username) => {
-        const targetUser = userList.find(u => u.username === username);
-        if (!targetUser) return;
+
+    // ✅ FIXED UNSHARE LOGIC (Auto-Fetch)
+    const handleUnshareNote = async (noteId, username) => {
+        console.log(`[Unshare] Request: Note ${noteId}, User ${username}`);
+
+        let currentDirectory = userList;
+        // Auto-fetch if empty
+        if (!currentDirectory || currentDirectory.length === 0) {
+            console.log("[Unshare] Fetching directory...");
+            currentDirectory = await ensureDirectory();
+        }
+
+        if (!currentDirectory || currentDirectory.length === 0) {
+            showAlert("System Error", "User directory unavailable.");
+            return;
+        }
+
+        const safeUsername = username.trim().toLowerCase();
+        const targetUser = currentDirectory.find(u => u.username.toLowerCase() === safeUsername);
+
+        if (!targetUser) {
+            showAlert("Error", `User "${username}" not found.`);
+            return;
+        }
+
         showConfirm({
-            title: "Revoke Access", message: `Remove ${username}?`, isDestructive: true, onConfirm: async () => {
-                try { await axios.post(`${API_URL}/api/notes/${noteId}/unshare`, { targetUserId: targetUser.id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); }
-                catch (e) { showAlert("Error", "Failed."); }
+            title: "Revoke Access",
+            message: `Remove ${targetUser.username} from this note?`,
+            isDestructive: true,
+            onConfirm: async () => {
+                // Optimistic Update
+                const updateSharedWith = (currentList) => {
+                    if (!currentList) return "";
+                    return currentList.split(', ').filter(u => u.toLowerCase() !== username.trim().toLowerCase()).join(', ');
+                };
+                setNotes(prev => prev.map(n => n.id === noteId ? { ...n, shared_with_names: updateSharedWith(n.shared_with_names) } : n));
+                setViewingNote(prev => (prev && prev.id === noteId) ? { ...prev, shared_with_names: updateSharedWith(prev.shared_with_names) } : prev);
+
+                try {
+                    await axios.post(`${API_URL}/api/notes/${noteId}/unshare`,
+                        { targetUserId: targetUser.id },
+                        { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }
+                    );
+                } catch (e) {
+                    showAlert("Error", "Failed to revoke access.");
+                    fetchNotes(); // Revert
+                }
             }
         });
     };
 
-    // Chat Message Handlers
-    const handleCancelUrgency = (id) => {
-        showConfirm({
-            title: "Cancel Flash", message: "Stop alarm for all?", isDestructive: true, onConfirm: async () => {
-                try { await axios.post(`${API_URL}/api/messages/cancel-urgency`, { messageId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); }
-                catch (e) { showAlert("Error", "Failed."); }
-            }
-        });
+    // Chat Actions
+    const handleSend = async (e) => {
+        e.preventDefault(); if (!input.trim()) return;
+        const token = localStorage.getItem('cabane_token');
+        const tempId = `temp-${Date.now()}`;
+        const payload = { content: input, priority: isUrgent ? 'URGENT' : 'NORMAL', tempId };
+        if (activeTab === 'USERS' && selectedTarget) payload.recipientId = selectedTarget.id;
+        if (activeTab === 'GROUPS' && selectedTarget) payload.groupId = selectedTarget.id;
+
+        const optimisticMsg = { id: tempId, sender_id: user.id, sender: user.username, recipient_id: payload.recipientId || null, group_id: payload.groupId || null, content: input, priority: payload.priority, timestamp: new Date().toISOString(), is_read_by_me: 1, is_ack_by_me: 0, isOptimistic: true };
+        setMessages(prev => [...prev, optimisticMsg]);
+        setInput(''); setIsUrgent(false);
+        isAtBottomRef.current = true;
+        try { await axios.post(`${API_URL}/api/messages`, payload, { headers: { Authorization: `Bearer ${token}` } }); }
+        catch (e) { showAlert("Error", "Send failed"); setMessages(prev => prev.filter(m => m.id !== tempId)); }
     };
-    const handleDeleteMessage = (id) => {
-        showConfirm({
-            title: "Delete Message", message: "Delete this message?", isDestructive: true, onConfirm: async () => {
-                try { await axios.post(`${API_URL}/api/messages/delete`, { messageId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); }
-                catch (e) { showAlert("Error", "Failed."); }
-            }
-        });
-    };
-    const handleDowngradeUrgency = async (id) => {
-        setMessages(prev => prev.map(m => m.id === id ? { ...m, is_ack_by_me: 1 } : m));
-        try { await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); } catch (e) { }
-    };
+    const handleCancelUrgency = (id) => { showConfirm({ title: "Cancel Flash", message: "Stop alarm for all?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/messages/cancel-urgency`, { messageId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); } catch (e) { showAlert("Error", "Failed."); } } }); };
+    const handleDeleteMessage = (id) => { showConfirm({ title: "Delete Message", message: "Delete this message?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/messages/delete`, { messageId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); } catch (e) { showAlert("Error", "Failed."); } } }); };
+    const handleDowngradeUrgency = async (id) => { setMessages(prev => prev.map(m => m.id === id ? { ...m, is_ack_by_me: 1 } : m)); try { await axios.post(`${API_URL}/api/messages/downgrade`, { messageId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); } catch (e) { } };
+
+    // Group Actions
+    const handleCreateGroup = async () => { if (!newGroupName) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups`, { name: newGroupName, memberIds: newGroupMembers }, { headers: { Authorization: `Bearer ${token}` } }); setNewGroupName(''); setNewGroupMembers([]); setIsCreatingGroup(false); fetchData(); } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); } };
+    const handleRenameGroup = async () => { if (!renameInput) return; try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/rename`, { newName: renameInput }, { headers: { Authorization: `Bearer ${token}` } }); setSelectedTarget(prev => ({ ...prev, name: renameInput })); fetchData(); showAlert("Success", "Group renamed."); } catch (e) { showAlert("Error", e.response?.data?.error || "Failed"); } };
+    const handleDeleteGroup = () => { if (!selectedTarget) return; showConfirm({ title: "Delete Group", message: "Delete this group?", isDestructive: true, onConfirm: async () => { try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/delete`, {}, { headers: { Authorization: `Bearer ${token}` } }); setSelectedTarget(null); fetchData(); } catch (e) { showAlert("Error", "Failed."); } } }); };
+    const handleTransferAdmin = (newAdminId) => { showConfirm({ title: "Transfer Ownership", message: "Transfer admin rights?", isDestructive: false, onConfirm: async () => { try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/transfer`, { newAdminId }, { headers: { Authorization: `Bearer ${token}` } }); fetchData(); setIsGroupSettingsOpen(false); showAlert("Success", "Transferred."); } catch (e) { showAlert("Error", "Failed."); } } }); };
+    const handleManageMember = async (targetId, action) => { try { const token = localStorage.getItem('cabane_token'); await axios.post(`${API_URL}/api/groups/${selectedTarget.id}/members`, { targetUserId: targetId, action, notificationType: notifyType }, { headers: { Authorization: `Bearer ${token}` } }); fetchData(); } catch (e) { showAlert("Error", "Failed."); } };
 
     // --- RENDER ---
     return (
@@ -329,12 +394,12 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                             );
                         })}
                     </div>
-                    <div className="flex gap-2"><button onClick={handleMarkAllRead} className="text-gray-500 hover:text-green-400"><CheckCheck size={18} /></button><button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button></div>
+                    <div className="flex gap-2"><button onClick={() => handleMarkAllRead()} className="text-gray-500 hover:text-green-400"><CheckCheck size={18} /></button><button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button></div>
                 </div>
 
                 {/* SUB HEADER & BODY */}
                 <div className="flex-grow flex flex-col overflow-hidden">
-                    {/* 1. NOTES VIEW */}
+                    {/* NOTES TAB */}
                     {activeTab === 'NOTES' && (
                         <NotesView
                             notes={notes}
@@ -343,14 +408,14 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                             onDeleteNote={handleDeleteNote}
                             onCopyNote={handleCopyNote}
                             onShareNote={openShareModal}
-                            onFlashNote={(n) => openShareModal(n, true)} // Reuses ShareModal logic
+                            onFlashNote={(n) => openShareModal(n, true)}
                         />
                     )}
 
-                    {/* 2. CHAT / DIRECTORY VIEW */}
+                    {/* CHAT TABS */}
                     {activeTab !== 'NOTES' && (
                         <>
-                            {/* SUB-HEADER (User/Group Header) */}
+                            {/* Sub-Header */}
                             {selectedTarget && !isCreatingGroup && (
                                 <div className="bg-gray-800 border-b border-gray-700 p-3 flex justify-between items-center shrink-0">
                                     <div className="flex items-center gap-2 cursor-pointer text-white" onClick={() => setSelectedTarget(null)}><ArrowLeft size={18} /><span className="font-bold text-sm truncate">{selectedTarget.username || selectedTarget.name}</span></div>
@@ -358,16 +423,39 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                                 </div>
                             )}
 
-                            {/* GROUP SETTINGS */}
+                            {/* Group Admin Panel */}
                             {isGroupSettingsOpen && activeTab === 'GROUPS' && selectedTarget && (
                                 <div className="bg-gray-850 p-4 space-y-4">
-                                    <h4 className="text-xs font-bold text-gray-500 uppercase">Admin Zone</h4>
-                                    {/* ... [Admin Logic Placeholder - Keep existing] ... */}
-                                    <button onClick={handleDeleteGroup} className="w-full py-2 bg-red-900/50 text-red-300 rounded text-xs">Delete Group</button>
+                                    <h4 className="text-xs font-bold text-gray-500 uppercase">Manage Members</h4>
+                                    <div className="flex gap-2 bg-gray-900 p-1 rounded text-xs">
+                                        {['QUIET', 'PUBLIC', 'PRIVATE'].map(type => (<button key={type} onClick={() => setNotifyType(type)} className={`flex-1 py-1 rounded ${notifyType === type ? 'bg-blue-900 text-blue-200' : 'text-gray-500 hover:text-white'}`}>{type}</button>))}
+                                    </div>
+                                    <div className="max-h-32 overflow-y-auto border border-gray-700 rounded p-2">
+                                        {selectedTarget.members?.split(', ').map(mName => {
+                                            const mUser = userList.find(u => u.username === mName);
+                                            return mUser ? (<div key={mName} className="flex justify-between items-center text-xs text-gray-300 py-1 border-b border-gray-700 last:border-0"><span>{mName}</span>{mName !== user?.username && <button onClick={() => handleManageMember(mUser.id, 'REMOVE')} className="text-red-500 hover:text-red-400"><UserMinus size={14} /></button>}</div>) : null;
+                                        })}
+                                    </div>
+                                    <div className="relative">
+                                        <select className="w-full bg-gray-900 border border-gray-600 rounded p-1.5 text-xs text-white" onChange={(e) => { if (e.target.value) handleManageMember(e.target.value, 'ADD'); e.target.value = ''; }}>
+                                            <option value="">+ Add Member...</option>
+                                            {userList.filter(u => !selectedTarget.members?.includes(u.username)).map(u => (<option key={u.id} value={u.id}>{u.username}</option>))}
+                                        </select>
+                                    </div>
+                                    <div className="pt-2 border-t border-gray-700 space-y-2">
+                                        <div className="flex gap-2 items-center bg-yellow-900/20 p-2 rounded border border-yellow-700/30">
+                                            <select className="bg-transparent text-xs text-yellow-200 w-full outline-none" onChange={(e) => { if (e.target.value) handleTransferAdmin(e.target.value); }}>
+                                                <option value="">Transfer Admin Rights...</option>
+                                                {selectedTarget.members?.split(', ').filter(m => m !== user?.username).map(mName => { const mUser = userList.find(u => u.username === mName); return mUser ? <option key={mUser.id} value={mUser.id}>{mUser.username}</option> : null; })}
+                                            </select>
+                                            <Crown size={14} className="text-yellow-500" />
+                                        </div>
+                                        <button onClick={handleDeleteGroup} className="w-full py-2 bg-red-900/50 hover:bg-red-900 text-red-300 rounded text-xs font-bold flex items-center justify-center gap-2 border border-red-700/50 transition-colors"><Trash size={14} /> DELETE GROUP</button>
+                                    </div>
                                 </div>
                             )}
 
-                            {/* CONTENT SWITCHOVER */}
+                            {/* View Content */}
                             {isCreatingGroup ? (
                                 <div className="p-4 space-y-4">
                                     <h3 className="font-bold text-white">New Group</h3>
@@ -396,6 +484,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                                         onZoom={(m) => setZoomedMessage(m)}
                                         onDelete={handleDeleteMessage}
                                         onCancelUrgency={handleCancelUrgency}
+                                        onDowngrade={handleDowngradeUrgency}
                                         scrollRef={messagesEndRef}
                                         containerRef={chatContainerRef}
                                         showScrollButton={showScrollButton}
@@ -410,9 +499,20 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             </div>
 
             {/* MODALS */}
-            {zoomedMessage && <FlashViewer messages={[zoomedMessage]} readOnly={true} onDismiss={() => handleDowngradeUrgency(zoomedMessage.id)} onClose={() => setZoomedMessage(null)} onShare={() => openShareModal({ id: zoomedMessage.noteId || zoomedMessage.id, title: zoomedMessage.title || "Flash Memo" }, true)} onUnshare={handleUnshareNote} userList={userList} />}
+            {zoomedMessage && <FlashViewer messages={[zoomedMessage]} readOnly={true} onDismiss={() => handleDowngradeUrgency(zoomedMessage.id)} onClose={() => setZoomedMessage(null)} onShare={() => openShareModal({ id: zoomedMessage.noteId || zoomedMessage.id, title: zoomedMessage.title || "Flash Memo" }, true)} onUnshare={handleUnshareNote} isOwner={false} />}
 
-            {viewingNote && <FlashViewer messages={[viewingNote]} readOnly={false} isOwner={viewingNote.is_owner === 1} initialEditMode={initialEditMode} onClose={() => setViewingNote(null)} onSave={handleUpdateNote} onShare={() => openShareModal(viewingNote, false)} onUnshare={handleUnshareNote} userList={userList} />}
+            {viewingNote && (
+                <FlashViewer
+                    messages={[viewingNote]}
+                    readOnly={false}
+                    isOwner={viewingNote.is_owner === 1}
+                    initialEditMode={initialEditMode}
+                    onClose={() => setViewingNote(null)}
+                    onSave={handleUpdateNote}
+                    onShare={() => openShareModal(viewingNote, false)}
+                    onUnshare={handleUnshareNote}
+                />
+            )}
 
             {shareModalOpen && shareTargetNote && <ShareModal note={shareTargetNote} users={userList.filter(u => u.id !== user?.id)} isFlash={shareModalIsFlash} showAlert={showAlert} onClose={() => setShareModalOpen(false)} />}
         </div>
