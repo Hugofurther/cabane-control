@@ -21,6 +21,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
     const [msg, setMsg] = useState(null);
 
+    // Lockscreen
+    const [lockMethod, setLockMethod] = useState('DISABLED');
+    const [lockTimeout, setLockTimeout] = useState(5);
+
     const [sessionVal, setSessionVal] = useState(60);
     const [sessionUnit, setSessionUnit] = useState('d');
 
@@ -37,6 +41,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
                     const match = user.settings.tokenExpiration.match(/^(\d+)([hdm])$/);
                     if (match) { setSessionVal(parseInt(match[1])); setSessionUnit(match[2]); }
                 }
+
+                setLockMethod(user.settings.lockMethod || 'DISABLED');
+                setLockTimeout(parseInt(user.settings.lockTimeout) || 5);
+
             }
             setProfile({ username: user.username || '', email: user.email || '' });
         }
@@ -54,7 +62,14 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 await axios.post(`${API_URL}/api/user/profile`, { newUsername: profile.username, newEmail: profile.email }, { headers: { Authorization: `Bearer ${token}` } });
             }
             const val = sessionVal > 0 ? sessionVal : 60;
-            const finalSettings = { ...localSettings, tokenExpiration: `${val}${sessionUnit}` };
+            const finalSettings = {
+                ...localSettings,
+                tokenExpiration: `${val}${sessionUnit}`,
+                // Add new keys:
+                lockMethod,
+                lockTimeout
+            };
+
             await updateSettings(finalSettings);
             onClose();
         } catch (e) { showAlert("Error", e.response?.data?.error || "Failed to save settings."); }
@@ -151,6 +166,41 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
                             <section className="space-y-3 pt-4 border-t border-gray-800">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Group Admin Defaults</h3>
+                                {/* --- INSERT AUTO LOCK CONFIG HERE --- */}
+                                <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 mb-4 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3">
+                                            <Lock size={18} className={lockMethod !== 'DISABLED' ? "text-blue-400" : "text-gray-500"} />
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-medium text-gray-200">Auto-Lock Screen</span>
+                                                <span className="text-[10px] text-gray-500">Lock interface after inactivity</span>
+                                            </div>
+                                        </div>
+                                        <select
+                                            value={lockMethod}
+                                            onChange={e => setLockMethod(e.target.value)}
+                                            className="bg-gray-900 border border-gray-600 rounded p-1.5 text-xs text-white outline-none"
+                                        >
+                                            <option value="DISABLED">Disabled</option>
+                                            <option value="SIMPLE">Click to Unlock</option>
+                                            <option value="PASSWORD">Require Password</option>
+                                        </select>
+                                    </div>
+
+                                    {lockMethod !== 'DISABLED' && (
+                                        <div className="flex items-center justify-between pl-8 animate-in slide-in-from-top-1">
+                                            <span className="text-xs text-gray-400 font-bold">Timeout (Minutes)</span>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="60"
+                                                value={lockTimeout}
+                                                onChange={e => setLockTimeout(e.target.value)}
+                                                className="w-20 bg-gray-900 border border-gray-600 rounded p-1.5 text-center text-white text-xs outline-none"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-2">
                                     <div className="flex items-center gap-3 mb-2"><Shield size={18} className="text-red-400" /><span className="text-sm font-medium text-gray-200">Member Notifications</span></div>
                                     <div className="grid grid-cols-3 gap-2">

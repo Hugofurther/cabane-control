@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, ChevronLeft, ChevronRight, Droplets, Wind, Thermometer, Calendar, ArrowUp } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Droplets, Wind, Thermometer, Calendar, ArrowUp, CloudRain, Snowflake } from 'lucide-react';
 
 const getCardinal = (deg) => {
     const val = Math.floor((deg / 45) + 0.5);
@@ -11,8 +11,6 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
     const [currentIndex, setCurrentIndex] = useState(initialIndex || 0);
     const [isPaused, setIsPaused] = useState(false);
     const rotationTimer = useRef(null);
-
-    // ✅ NOTE: Scroll Lock useEffect REMOVED.
 
     useEffect(() => {
         if (isOpen) {
@@ -50,6 +48,12 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
     const windDeg = current.wind.deg || 0;
     const windDir = getCardinal(windDeg);
 
+    // ✅ PRECIPITATION LOGIC (CURRENT)
+    // OpenWeatherMap returns rain/snow object with '1h' or '3h' keys
+    const rain3h = current.rain ? (current.rain['3h'] || current.rain['1h'] || 0) : 0;
+    const snow3h = current.snow ? (current.snow['3h'] || current.snow['1h'] || 0) : 0;
+    const hasPrecip = rain3h > 0 || snow3h > 0;
+
     return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in" onClick={onClose}>
             <div className="bg-gray-900 border border-gray-700 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden relative flex flex-col max-h-[85vh]" onClick={handleContentClick}>
@@ -73,7 +77,8 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
                         <div className="text-7xl font-bold text-white tracking-tighter">{Math.round(current.main.temp)}°</div>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2 text-xs font-bold text-gray-300">
+                    {/* ✅ DYNAMIC GRID: Adapts based on data availability */}
+                    <div className={`grid ${hasPrecip ? 'grid-cols-4' : 'grid-cols-3'} gap-2 text-xs font-bold text-gray-300`}>
                         <div className="bg-white/10 rounded p-2 flex flex-col items-center">
                             <Thermometer size={16} className="text-red-400 mb-1" />
                             <span>{Math.round(current.main.feels_like)}°</span>
@@ -94,6 +99,25 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
                             <span>{current.main.humidity}%</span>
                             <span className="text-gray-500">HUMIDITY</span>
                         </div>
+
+                        {/* ✅ NEW: PRECIPITATION BLOCK */}
+                        {hasPrecip && (
+                            <div className="bg-white/10 rounded p-2 flex flex-col items-center border border-blue-500/30 shadow-[inset_0_0_10px_rgba(59,130,246,0.2)]">
+                                {snow3h > 0 ? (
+                                    <>
+                                        <Snowflake size={16} className="text-white mb-1 animate-pulse" />
+                                        <span>{snow3h}mm</span>
+                                        <span className="text-gray-400">SNOW (3h)</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <CloudRain size={16} className="text-blue-400 mb-1 animate-pulse" />
+                                        <span>{rain3h}mm</span>
+                                        <span className="text-gray-400">RAIN (3h)</span>
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -103,13 +127,30 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
                         const maxTemp = Math.max(...items.map(i => i.main.temp));
                         const minTemp = Math.min(...items.map(i => i.main.temp));
                         const midItem = items[Math.floor(items.length / 2)];
+
+                        // ✅ CALCULATE DAILY VOLUMES
+                        const rainTotal = items.reduce((acc, i) => acc + (i.rain?.['3h'] || 0), 0);
+                        const snowTotal = items.reduce((acc, i) => acc + (i.snow?.['3h'] || 0), 0);
+
                         return (
                             <div key={day} className="flex items-center justify-between bg-gray-700/50 p-3 rounded-lg border border-gray-600">
                                 <div className="w-12 font-bold text-gray-200">{day}</div>
-                                <div className="flex items-center gap-2 flex-grow justify-center">
+
+                                <div className="flex items-center gap-2 flex-grow justify-start pl-4">
                                     <img className="w-8 h-8 filter grayscale brightness-200" src={`https://openweathermap.org/img/wn/${midItem.weather[0].icon}.png`} alt="icon" />
-                                    <span className="text-xs text-gray-400 font-bold uppercase w-20">{midItem.weather[0].main}</span>
+                                    <div className="flex flex-col">
+                                        <span className="text-xs text-gray-400 font-bold uppercase">{midItem.weather[0].main}</span>
+
+                                        {/* ✅ DISPLAY VOLUME IF EXISTS */}
+                                        {(rainTotal > 0 || snowTotal > 0) && (
+                                            <div className="flex items-center gap-2 text-[10px] font-mono mt-0.5">
+                                                {rainTotal > 0 && <span className="text-blue-300 flex items-center gap-0.5"><CloudRain size={8} />{rainTotal.toFixed(1)}mm</span>}
+                                                {snowTotal > 0 && <span className="text-white flex items-center gap-0.5"><Snowflake size={8} />{snowTotal.toFixed(1)}mm</span>}
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
+
                                 <div className="flex gap-3 text-sm font-mono font-bold">
                                     <span className="text-white">{Math.round(maxTemp)}°</span>
                                     <span className="text-gray-500">{Math.round(minTemp)}°</span>

@@ -415,16 +415,34 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
 
+√ The user should be able to re-share or Flash memo directly from theFlash Memo, like with the NoteViewer. So there should be a share icon in the header.
 
 ---
 
+√ On the Login page, in iOS, the input boxe for the password text input offers to "Use Strong Password" This would be fine in the "Create an Account" page, not the login. The login page should offer to use a saved password.
 
-- The user should be able to re-share or Flash memo directly from theFlash Memo, like with the NoteViewer. So there should be a share icon in the header.
+√ Add a screen lock with auto-lock after x minutes. The Buzzer should always be accessible, but when clicking anywhere else on the app, a centered modal prompts the user to unlock. A user setting should set unlock with or without credentials.
+
+√ In the forecast, can we add the "Snow volume for past 3 hours" and "Rain volume for past 3 hours"
 
 ---
 
-- When a Flash Memo is sent to a user who is not logged in, The minute the user logs in, the Flash Memo should appear on their screen.
+REQUESTED
 
+
+
+
+
+
+---
+
+NEXT
+
+- Why is there a "ST5 Never Connected in the Header?"
+
+- on the hardware ( Arduino ), we need to Add a new alarm feature. It is an alarm to tell if someone entered or opened a door while the alarm is armed.
+	- Triggering alarm: When input (feedback) of ST2 or ST3 5 (pin D6) are High ( not shorted to GND ) -> alarm is triggered
+	- When alarm is triggered: Output to ST0 relay A3 is High and activates the relay that triggers the 24 alarm.
 
 
 -------------------------------------------------------
@@ -433,26 +451,10 @@ Requested
 
 
 
-- Sharing a note or a Flash Memo should not use messages. Actually the Note feature should use the messages only when a user with "shared with" noted gets removed from a shared note or the note gets delete. Otherwise, ff there is a new note shared with a user and the user hasn't seen it, we'll use the badges on the messaging icon, then on the NOTES tab, then on the new note unseen ( un-opened ).
-
-- when a user gets removed from the "Shared with" list, or the note gets deleted, they should receive a brief message in their dm from the creator of the app stating they have been removed.
-
-- A user should be able to Re-Share a flash Memo direct from the Flash Memo.
 
 
 
 
-
-
----
-
-- In the NOTES tab, if a note creator edits a note, the users the note is shared with, should have a badge on it in the NOTES tab to indicate a change was made. We should use a different color than the "new unseen" badge. This badge is dismissed once the user sees it.
-
-
-
-
-
-- In the header of the Note View ( FlashViewer ), the "shared by" or "Re-Shared by" should be closer to the left border of the modal. ( less padding on the left.)
 
 -----
 
@@ -462,12 +464,21 @@ Requested
 Debug
 
 
-
-
 -------------------------------------------------------
 -------------------------------------------------------
 
 NOTES
+
+- Sharing a note or a Flash Memo should not use messages. Actually the Note feature should use the messages only when a user with "shared with" noted gets removed from a shared note or the note gets delete. Otherwise, ff there is a new note shared with a user and the user hasn't seen it, we'll use the badges on the messaging icon, then on the NOTES tab, then on the new note unseen ( un-opened ).
+
+- when a user gets removed from the "Shared with" list, or the note gets deleted, they should receive a brief message in their dm from the creator of the app stating they have been removed.
+
+- A user should be able to Re-Share a flash Memo direct from the Flash Memo.
+
+- When a Flash Memo is sent to a user who is not logged in, The minute the user logs in, the Flash Memo should appear on their screen.
+
+- In the NOTES tab, if a note creator edits a note, the users the note is shared with, should have a badge on it in the NOTES tab to indicate a change was made. We should use a different color than the "new unseen" badge. This badge is dismissed once the user sees it.
+
 
 - post MVP: Pin notes at the top
 
@@ -480,7 +491,7 @@ MESSAGIN
 -----------------------------------
 WEATHER
 
-- In the forecast, can we add the "Snow volume for past 3 hours" and "Rain volume for past 3 hours"
+
 
 -----------------------------------
 SERVER
@@ -518,9 +529,7 @@ NATIVE BROWSER ALERTS -> Should be Modal pop-up
 -----------------------------------
 LAYOUT
 
-- Add a screen lock with auto-lock after x minutes. The Buzzer should always be accessible, but when clicking anywhere else on the app, a centered modal prompts the user to unlock. A user setting should set unlock with or without credentials.
 
-- On the Login page, in iOS, the input boxe for the password text input offers to "Use Strong Password" This would be fine in the "Create an Account" page, not the login. The login page should offer to use a saved password.
 
 
 -----------------------------------
@@ -539,7 +548,7 @@ ARDUINO
 	- Reminder chirp is not working when the buzzer switch is OFF and there is no alert active.
 
 
-- Add Clement alarm. Input from bot ST2 or ST3 feedback 5 (D6) -> Output to ST0 relay A3
+
 
 - POST MVP: We need a system to be able to upload a new firmware via the server. The server downloads the new firmware, then once downloaded and verified, upgrades the arduino board firmware.
 
@@ -670,12 +679,14 @@ Veuillez activer l’interrupteur du buzzer.
 </server.js terminal>
 
 
+---
 
+In the next few messages, I will give you the code for the new files or updated files. Please update your knowledge with these updates and work with these updates from now on. No need to respond, I will let you know when I'm done sending you the code with the keyword "finished".
 
+---
 
 
 
 ---
 
 Please updated your knowledge. No need to reply. More files are coming.
-

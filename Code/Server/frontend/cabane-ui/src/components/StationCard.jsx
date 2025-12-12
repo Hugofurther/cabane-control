@@ -3,6 +3,7 @@ import { clsx } from 'clsx';
 import { RockerSwitch } from './controls/RockerSwitch';
 import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
+import { useAutoLock } from '../contexts/AutoLockContext'; // ✅ New Import
 
 const formatDuration = (ms) => {
     if (!ms) return "00:00";
@@ -15,6 +16,7 @@ const formatDuration = (ms) => {
 
 export const StationCard = ({ card, isRemote }) => {
     const { systemState, siteSettings, toggleSwitch } = useSocket();
+    const { isLocked } = useAutoLock(); // ✅ Get Lock State
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -48,10 +50,22 @@ export const StationCard = ({ card, isRemote }) => {
     const isThermostat = card.name.includes("THERMOSTAT");
     const showOfflineLabel = isAnyOffline && !isThermostat;
 
+    // ✅ DETECT BUZZER CARD
+    // Check if any control in this card is the Buzzer (Index 21 or special='BUZZER')
+    const isBuzzerCard = card.controls.some(c => c.idx === 21 || c.special === 'BUZZER');
+
+    // ✅ DYNAMIC STYLES
     let bgClass = "bg-cabane-panel border-gray-700 shadow-lg";
     let textClass = "text-gray-400 border-gray-700";
+    let zIndexClass = ""; // Default z-auto
 
-    if (isFullOffline) {
+    if (isLocked && isBuzzerCard) {
+        // 🔒 LOCKED STATE: Elevate Buzzer Card above the LockScreen overlay (which is usually z-50 or z-100)
+        bgClass = "bg-gray-900 border-red-500/50 shadow-[0_0_30px_rgba(220,38,38,0.3)]"; // Add a glow to show it's active
+        textClass = "text-gray-200 border-gray-600";
+        zIndexClass = "z-[101] relative";
+    }
+    else if (isFullOffline) {
         bgClass = "bg-gray-800 border-gray-800 opacity-60";
         textClass = "text-red-900 border-gray-800";
     }
@@ -63,7 +77,7 @@ export const StationCard = ({ card, isRemote }) => {
     const handleToggle = (idx, val) => toggleSwitch(idx, val);
 
     return (
-        <div className={clsx("border rounded-lg p-4 flex flex-col transition-colors duration-500 relative min-h-[220px]", bgClass, card.span)}>
+        <div className={clsx("border rounded-lg p-4 flex flex-col transition-all duration-500 min-h-[220px]", bgClass, card.span, zIndexClass)}>
 
             {showOfflineLabel && (
                 <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20">
@@ -89,23 +103,24 @@ export const StationCard = ({ card, isRemote }) => {
 
                     const virtualOn = !!systemState.virtualSwitches[ctrl.idx];
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
-                    const isLocked = !isRemote || isControlUnavailable;
 
-                    // Pass NULL label to suppress internal label rendering
+                    // ✅ Allow interaction if Remote OR if it's the Buzzer during Lock
+                    // The RockerSwitch component has internal logic, but we pass isLocked prop.
+                    // If system is locked, we normally disable everything.
+                    // BUT for the Buzzer Card, we want it enabled.
+                    const isLockedControl = (!isRemote || isControlUnavailable) && !(isLocked && isBuzzerCard);
+
                     const props = {
                         label: null,
                         idx: ctrl.idx,
                         feedback: ctrl.fb,
                         special: ctrl.special,
-                        isLocked: isLocked,
-                        isActive: isRemote && !isControlUnavailable,
+                        isLocked: isLockedControl,
+                        isActive: (isRemote && !isControlUnavailable) || (isLocked && isBuzzerCard),
                     };
 
                     return (
                         <div key={ctrl.idx} className="flex flex-col items-center gap-2 w-24">
-
-                            {/* 1. SWITCH AREA */}
-                            {/* ✅ FIXED: Use 'items-center' to vertically center buttons and switches */}
                             <div className="h-24 flex items-center justify-center">
                                 {ctrl.type === 'button' ? (
                                     <HaloButton {...props} onPress={() => handleToggle(ctrl.idx, true)} onRelease={() => handleToggle(ctrl.idx, false)} />
@@ -113,10 +128,8 @@ export const StationCard = ({ card, isRemote }) => {
                                     <RockerSwitch {...props} isOn={virtualOn} physicalOn={physicalOn} onChange={(val) => handleToggle(ctrl.idx, val)} />
                                 )}
                             </div>
-
-                            {/* 2. LABEL AREA */}
                             <div className="h-10 flex items-start justify-center">
-                                <span className={clsx("text-xs font-bold text-center leading-tight uppercase", isRemote ? "text-gray-800" : "text-gray-400")}>
+                                <span className={clsx("text-xs font-bold text-center leading-tight uppercase", (isRemote || (isLocked && isBuzzerCard)) ? "text-gray-800" : "text-gray-400")}>
                                     {ctrl.label}
                                 </span>
                             </div>

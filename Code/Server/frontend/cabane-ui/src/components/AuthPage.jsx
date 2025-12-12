@@ -1,204 +1,122 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useSocket } from '../contexts/SocketContext';
-import { Lock, User, Mail, ArrowRight, AlertTriangle, CheckCircle, Eye, EyeOff } from 'lucide-react';
-import axios from 'axios';
+import { Lock, Mail, User, ArrowRight, Loader2, AlertTriangle } from 'lucide-react';
 
 export const AuthPage = () => {
     const { login, register } = useSocket();
-
-    // Get API URL for direct axios calls (Forgot/Reset/Verify)
-    const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
-
-    // Modes: 'LOGIN', 'REGISTER', 'FORGOT', 'RESET'
-    const [mode, setMode] = useState('LOGIN');
-
+    const [isLogin, setIsLogin] = useState(true);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
-    const [successMsg, setSuccessMsg] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
 
-    // Form State
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [email, setEmail] = useState('');
-
-    // Check URL for tokens (Verification or Reset)
-    useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const token = params.get('token');
-
-        if (window.location.pathname === '/reset-password' && token) {
-            setMode('RESET');
-        } else if (window.location.pathname === '/verify-email' && token) {
-            verifyEmail(token);
-        }
-    }, []);
-
-    const verifyEmail = async (token) => {
-        try {
-            await axios.post(`${API_URL}/api/auth/verify`, { token });
-            setSuccessMsg("Email verified! Waiting for Admin approval.");
-            setMode('LOGIN');
-            // Clean URL
-            window.history.replaceState({}, document.title, "/");
-        } catch (e) {
-            setError(e.response?.data?.error || "Verification failed or link expired.");
-        }
-    };
+    const [formData, setFormData] = useState({ username: '', email: '', password: '' });
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        setSuccessMsg('');
         setLoading(true);
 
-        try {
-            if (mode === 'REGISTER') {
-                const res = await register(username, email, password);
-                if (res.success) {
-                    setSuccessMsg("Account created! Please check your email to verify.");
-                    setMode('LOGIN');
-                    setPassword('');
-                } else {
-                    setError(res.error);
-                }
-            }
-            else if (mode === 'LOGIN') {
-                const success = await login(username, password);
-                if (!success) setError("Invalid credentials or Account not approved.");
-            }
-            else if (mode === 'FORGOT') {
-                await axios.post(`${API_URL}/api/auth/forgot-password`, { email });
-                setSuccessMsg("If account exists, reset link sent.");
-                setMode('LOGIN');
-            }
-            else if (mode === 'RESET') {
-                const params = new URLSearchParams(window.location.search);
-                const token = params.get('token');
-                await axios.post(`${API_URL}/api/auth/reset-password`, { token, newPassword: password });
-                setSuccessMsg("Password updated. Please login.");
-                setMode('LOGIN');
-                window.history.pushState({}, document.title, "/");
-            }
-        } catch (e) {
-            setError(e.response?.data?.error || "Request failed.");
+        // Basic Validation
+        if (!formData.username || !formData.password) {
+            setError("Missing fields"); setLoading(false); return;
+        }
+        if (!isLogin && !formData.email) {
+            setError("Email required"); setLoading(false); return;
         }
 
+        let res;
+        if (isLogin) {
+            res = await login(formData.username, formData.password);
+            if (!res) setError("Invalid credentials or account pending.");
+        } else {
+            res = await register(formData.username, formData.email, formData.password);
+            if (!res.success) setError(res.error || "Registration failed.");
+            else {
+                alert("Registration successful! Please check your email.");
+                setIsLogin(true);
+            }
+        }
         setLoading(false);
     };
 
     return (
         <div className="min-h-screen bg-cabane-dark flex items-center justify-center p-4">
-            <div className="bg-cabane-panel border border-gray-700 w-full max-w-md p-8 rounded-xl shadow-2xl relative overflow-hidden">
+            <div className="w-full max-w-md bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl overflow-hidden">
 
-                <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-600 to-green-500"></div>
-
-                <div className="mb-8 text-center">
-                    <h1 className="text-3xl font-black tracking-widest text-gray-100 mb-2">CABANE CONTROL</h1>
-                    <p className="text-gray-500 text-sm font-mono uppercase">
-                        {mode === 'LOGIN' && "Secure Access Terminal"}
-                        {mode === 'REGISTER' && "New Operator Request"}
-                        {mode === 'FORGOT' && "Password Recovery"}
-                        {mode === 'RESET' && "Set New Password"}
-                    </p>
+                {/* Header */}
+                <div className="p-8 bg-gray-800 text-center border-b border-gray-700">
+                    <h1 className="text-3xl font-black text-white tracking-widest mb-2">CABANE</h1>
+                    <p className="text-blue-400 text-xs font-bold uppercase tracking-wide">Control System Access</p>
                 </div>
 
-                {error && <div className="mb-6 bg-red-900/30 border border-red-800 text-red-200 p-3 rounded flex items-center gap-3 text-sm"><AlertTriangle size={18} /> {error}</div>}
-                {successMsg && <div className="mb-6 bg-green-900/30 border border-green-800 text-green-200 p-3 rounded flex items-center gap-3 text-sm"><CheckCircle size={18} /> {successMsg}</div>}
+                {/* Form */}
+                <form onSubmit={handleSubmit} className="p-8 space-y-5">
+                    {error && (
+                        <div className="bg-red-900/30 border border-red-500/50 p-3 rounded flex items-center gap-3 text-red-200 text-sm">
+                            <AlertTriangle size={18} /> {error}
+                        </div>
+                    )}
 
-                <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-
-                    {/* USERNAME (Login/Register Only) */}
-                    {(mode === 'LOGIN' || mode === 'REGISTER') && (
-                        <div className="relative group">
-                            <User className="absolute left-3 top-3 text-gray-500 group-focus-within:text-blue-400" size={20} />
+                    <div className="space-y-4">
+                        <div className="relative">
+                            <User className="absolute left-3 top-3 text-gray-500" size={18} />
                             <input
                                 type="text"
-                                placeholder={mode === 'REGISTER' ? "Username" : "Username or Email"}
-                                value={username}
-                                onChange={e => setUsername(e.target.value)}
-                                className="w-full bg-gray-800 border border-gray-600 rounded p-3 pl-10 text-white focus:outline-none focus:border-blue-500 transition-colors"
-                                required
+                                placeholder="Username"
+                                value={formData.username}
+                                onChange={e => setFormData({ ...formData, username: e.target.value })}
+                                className="w-full bg-gray-950 border border-gray-700 rounded-lg py-2.5 pl-10 text-white outline-none focus:border-blue-500 transition-colors"
+                                autoComplete="username"
+                                autoCapitalize="none"
                             />
                         </div>
-                    )}
 
-                    {/* EMAIL (Register/Forgot Only) */}
-                    {(mode === 'REGISTER' || mode === 'FORGOT') && (
-                        <div className="relative group">
-                            <Mail className="absolute left-3 top-3 text-gray-500 group-focus-within:text-blue-400" size={20} />
-                            <input
-                                type="email"
-                                placeholder="Email Address"
-                                value={email}
-                                onChange={e => setEmail(e.target.value)}
-                                className="w-full bg-gray-800 border border-gray-600 rounded p-3 pl-10 text-white focus:outline-none focus:border-blue-500 transition-colors"
-                                required
-                            />
-                        </div>
-                    )}
-
-                    {/* PASSWORD (Login/Register/Reset Only) */}
-                    {(mode !== 'FORGOT') && (
-                        <div className="flex flex-col gap-1">
-                            <div className="relative group">
-                                <Lock className="absolute left-3 top-3 text-gray-500 group-focus-within:text-blue-400" size={20} />
+                        {!isLogin && (
+                            <div className="relative animate-in slide-in-from-top-2">
+                                <Mail className="absolute left-3 top-3 text-gray-500" size={18} />
                                 <input
-                                    type={showPassword ? "text" : "password"}
-                                    placeholder={mode === 'RESET' ? "New Password" : "Password"}
-                                    value={password}
-                                    onChange={e => setPassword(e.target.value)}
-                                    className="w-full bg-gray-800 border border-gray-600 rounded p-3 pl-10 pr-10 text-white focus:outline-none focus:border-blue-500 transition-colors"
-                                    required
+                                    type="email"
+                                    placeholder="Email Address"
+                                    value={formData.email}
+                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                    className="w-full bg-gray-950 border border-gray-700 rounded-lg py-2.5 pl-10 text-white outline-none focus:border-blue-500 transition-colors"
+                                    autoComplete="email"
                                 />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-3 top-3 text-gray-500 hover:text-white focus:outline-none"
-                                >
-                                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                                </button>
                             </div>
+                        )}
 
-                            {/* Validation Hint */}
-                            {(mode === 'REGISTER' || mode === 'RESET') && (
-                                <div className="text-[10px] text-gray-500 px-1">
-                                    Req: 8+ chars, 1 Uppercase, 1 Special Char.
-                                </div>
-                            )}
+                        <div className="relative">
+                            <Lock className="absolute left-3 top-3 text-gray-500" size={18} />
+                            <input
+                                type="password"
+                                placeholder="Password"
+                                value={formData.password}
+                                onChange={e => setFormData({ ...formData, password: e.target.value })}
+                                // 👇 This restores the dark mode styling
+                                className="w-full bg-gray-950 border border-gray-700 rounded-lg py-2.5 pl-10 text-white outline-none focus:border-blue-500 transition-colors"
+                                // 👇 This is the iOS fix
+                                autoComplete={isLogin ? "current-password" : "new-password"}
+                            />
                         </div>
-                    )}
+                    </div>
 
                     <button
+                        type="submit"
                         disabled={loading}
-                        className={`mt-4 py-3 rounded font-bold uppercase tracking-wide shadow-lg transition-all flex items-center justify-center gap-2
-              ${loading ? 'bg-gray-600 cursor-wait' : 'bg-blue-600 hover:bg-blue-500 hover:shadow-blue-500/30 text-white'}`}
+                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-lg shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2 transition-all active:scale-95"
                     >
-                        {loading ? 'Processing...' : (
-                            mode === 'LOGIN' ? 'Login' :
-                                mode === 'REGISTER' ? 'Create Account' :
-                                    mode === 'FORGOT' ? 'Send Link' : 'Update Password'
-                        )}
-                        {!loading && <ArrowRight size={18} />}
+                        {loading ? <Loader2 className="animate-spin" /> : (isLogin ? "LOGIN" : "CREATE ACCOUNT")}
                     </button>
-
                 </form>
 
-                {/* NAVIGATION LINKS */}
-                <div className="mt-6 flex justify-between text-sm">
-                    {mode === 'LOGIN' && (
-                        <>
-                            <button onClick={() => setMode('FORGOT')} className="text-gray-500 hover:text-white transition-colors">Forgot Password?</button>
-                            <button onClick={() => setMode('REGISTER')} className="text-blue-400 hover:text-blue-300 font-bold">Create Account</button>
-                        </>
-                    )}
-                    {mode !== 'LOGIN' && (
-                        <button onClick={() => { setMode('LOGIN'); setError(''); }} className="text-gray-500 hover:text-white transition-colors w-full text-center">
-                            Back to Login
-                        </button>
-                    )}
+                {/* Footer */}
+                <div className="p-4 bg-gray-950 border-t border-gray-800 text-center">
+                    <button
+                        onClick={() => { setIsLogin(!isLogin); setError(''); }}
+                        className="text-xs text-gray-500 hover:text-white font-bold uppercase transition-colors flex items-center justify-center gap-1 mx-auto"
+                    >
+                        {isLogin ? "New User? Register" : "Have an account? Login"} <ArrowRight size={12} />
+                    </button>
                 </div>
-
             </div>
         </div>
     );

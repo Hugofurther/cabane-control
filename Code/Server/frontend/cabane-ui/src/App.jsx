@@ -14,6 +14,8 @@ import { FlashViewer } from './components/FlashViewer';
 import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
+import { AutoLockProvider } from './contexts/AutoLockContext'; // ✅ New Import
+import { LockScreen } from './components/LockScreen';         // ✅ New Import
 
 console.log("🚀 CABANE UI VERSION: 3.8 - GLOBAL FLASH SHARE");
 
@@ -341,8 +343,11 @@ export default function App() {
   return (
     <ModalProvider>
       <SocketProvider>
-        <MainLayout />
-        <GlobalModal />
+        <AutoLockProvider> {/* ✅ Added Here (Inside Socket, so it can read User settings) */}
+          <MainLayout />
+          <GlobalModal />
+          <LockScreen /> {/* ✅ Added Here */}
+        </AutoLockProvider>
       </SocketProvider>
     </ModalProvider>
   );
