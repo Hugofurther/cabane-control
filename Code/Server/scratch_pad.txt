@@ -377,11 +377,9 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ the dropdown list for the Shared with should have a more suitable title than "Chain of Custody". The note remains owned by the creator. The "shared with" user only re-share, so "share History" might be a better title.
 
----
-
 √ In the Note View, when a dropdown list is expanded ("Shared by", "Shared with" and timestamp ) , clicking outside of that dropdown should dismiss the dropdown. This was requested before and not fixed.
 
-
+---
 
 √ In the Note View ( FlashViewer ), We should also have a button to Flash Memo or simply share it directly from the Note. If the creator, share. Any other user, re-share
 
