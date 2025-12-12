@@ -6,7 +6,7 @@ import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
 import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
-import { MessageDrawer } from './components/MessageDrawer';
+import { MessageDrawer } from './components/MessageDrawer/index'; // ✅ Ensure correct import path
 import { Clock } from './components/Clock';
 import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer';
@@ -14,7 +14,7 @@ import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 
-console.log("🚀 CABANE UI VERSION: 3.6 - WORKING ON NOTES");
+console.log("🚀 CABANE UI VERSION: 3.7 - LAYOUT UPDATE");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
@@ -140,7 +140,6 @@ function Dashboard() {
       }
     };
 
-
     const handleUpdateMessage = (data) => {
       if (data.priority === 'NORMAL') {
         setFlashMessages(prev => prev.filter(m => m.id !== data.id));
@@ -232,19 +231,7 @@ function Dashboard() {
         {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* Messages */}
-          <button
-            onClick={() => setShowMessageDrawer(true)}
-            className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-            title="Messages"
-          >
-            <Mail size={20} />
-            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
-          </button>
-
-          {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
-
-          {/* Controls */}
+          {/* 1. CONTROLS */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap">Take Control</button>
@@ -262,7 +249,19 @@ function Dashboard() {
             </div>
           )}
 
-          {/* User Settings (Mega Menu) */}
+          {/* 2. MESSAGES (Now on the Right of Controls) */}
+          <button
+            onClick={() => setShowMessageDrawer(true)}
+            className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="Messages"
+          >
+            <Mail size={20} />
+            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
+          </button>
+
+          {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
+
+          {/* 3. USER SETTINGS (Mega Menu) */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500">
             <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
               <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}

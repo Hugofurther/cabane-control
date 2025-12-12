@@ -413,7 +413,7 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 ---
 
-
+- I feel like the Message icon would be better on the right of the "Take Control" button on the main page. What do you think?
 
 - The user should be able to re-share or Flash memo directly from theFlash Memo, like with the NoteViewer.
 
@@ -430,7 +430,7 @@ Requested
 - the "Flash Memo" header still displays the current time with the label "Edited". It should be changed to display the timestamp the Flash Memo was sent ( Not the current time) with the label "Shared" instead of "Edited".
 
 
-- I feel like the Message icon would be better on the right of the "Take Control" button on the main page. What do you think?
+
 
 ---
 
