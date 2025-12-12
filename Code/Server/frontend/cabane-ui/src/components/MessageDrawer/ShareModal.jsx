@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { X, Share2, Zap, Check } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useModal } from '../../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-export const ShareModal = ({ note, users, isFlash, showAlert, onClose }) => {
+export const ShareModal = ({ note, users, isFlash, onClose }) => {
+    const { showAlert } = useModal();
     const [selectedUser, setSelectedUser] = useState('');
     const [flashEnabled, setFlashEnabled] = useState(isFlash);
     const [status, setStatus] = useState('IDLE');
@@ -59,8 +61,9 @@ export const ShareModal = ({ note, users, isFlash, showAlert, onClose }) => {
                             {flashEnabled && <Check size={14} className="text-black" />}
                         </div>
                         <div>
-                            <p className={clsx("text-sm font-bold", flashEnabled ? "text-yellow-400" : "text-gray-400")}>Urgent Flash Memo</p>
-                            <p className="text-[10px] text-gray-500">Triggers an alarm on user's screen.</p>
+                            {/* ✅ UPDATED TEXT */}
+                            <p className={clsx("text-sm font-bold", flashEnabled ? "text-yellow-400" : "text-gray-400")}>Flash Memo</p>
+                            <p className="text-[10px] text-gray-500">Display the note on user's screen.</p>
                         </div>
                     </div>
 

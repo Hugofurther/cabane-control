@@ -377,7 +377,11 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ the dropdown list for the Shared with should have a more suitable title than "Chain of Custody". The note remains owned by the creator. The "shared with" user only re-share, so "share History" might be a better title.
 
+---
+
 √ In the Note View, when a dropdown list is expanded ("Shared by", "Shared with" and timestamp ) , clicking outside of that dropdown should dismiss the dropdown. This was requested before and not fixed.
+
+
 
 √ In the Note View ( FlashViewer ), We should also have a button to Flash Memo or simply share it directly from the Note. If the creator, share. Any other user, re-share
 
@@ -395,12 +399,38 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ if a note is "Shared with 0" the "Shared by" should be hidden.
 
+√ A creator of a note who shared a note can revoke the sharing with selected users?
+
+√ I would change the title of the "Shared With" dropdown to something more like "Currently shared with"
+
+√ in the "Send Flash Memo modal, the label "Urgent Flash Memo" should just be "Flash Memo" and the explanation below should be more like "Display the note on user's screen".
+
+√ when creating a new note or editing an existing one, selecting the share / flash memo and sending the message as such should save the note first and send/share the updated version.
+
+√ A user setting should enable/disable flash memo sound notifications. Can you explain what how the sound notification for the flash memo functions?
+
+√ The "Send Flash Memo" "Select User" dropdown should have the option for selecting Global ( all users ) and Groups.
+
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
 
-- A creator of a note who shared a note can revoke the sharing with selected users?
+
+- the "Flash Memo" header still displays the current time with the label "Edited". It should be changed to display the timestamp the Flash Memo was sent ( Not the current time) with the label "Shared" instead of "Edited".
+
+- In UserSettings, the "Flash Memory Alarm" should say "Flash Memo Alert".
+
+- I feel like the Message icon would be better on the right of the "Take Control" button on the main page. What do you think?
+
+---
+
+
+- Sharing a note or a Flash Memo should not use messages. Actually the Note feature should use the messages only when a user with "shared with" noted gets removed from a shared note or the note gets delete. Otherwise, ff there is a new note shared with a user and the user hasn't seen it, we'll use the badges on the messaging icon, then on the NOTES tab, then on the new note unseen ( un-opened ).
+
+- when a user gets removed from the "Shared with" list, or the note gets deleted, they should receive a brief message in their dm from the creator of the app stating they have been removed.
+
+- A user should be able to Re-Share a flash Memo direct from the Flash Memo.
 
 
 
@@ -409,38 +439,9 @@ Requested
 
 ---
 
-- when a user gets removed from the "Shared with" list, or the note gets deleted, they should have a message sent in their dm from the creator of the app.
-
-- in the "Send Flash Memo modal, the label "Urgent Flash Memo" should just be "Flash Memo" and the explanation below should be more like "Display the note on user's screen".
-
-- Sharing a note or a Flash Memo should not use messages. Actually the Note feature should not use the messages. If there is a new note shared with a user and the user hasn't seen it, we'll use the badges on the messaging icon, then on the NOTES tab, then on the new note unseen ( un-opened.)
-
-- when creating a new note or editing an existing one, selecting the share / flash memo and sending the message as such should save the note first and send/share the updated version.
-
----
-
-- A user setting should enable/disable flash memo sound notifications. Can you explain what how the sound notification for the flash memo functions?
+- In the NOTES tab, if a note creator edits a note, the users the note is shared with, should have a badge on it in the NOTES tab to indicate a change was made. We should use a different color than the "new unseen" badge. This badge is dismissed once the user sees it.
 
 
-
-
-
-
-- the "Flash Memo" should have in its header, under the tile the "Shared by x" and the timestamp shared last. Not the current date. The note shared, when optioning it, currently has the current date in the header. It should be the timestamp of last shared by the "sharer". There should be an option to re-share as well as an option to re-Flash Memo shared by another user. If it is re-shared, there should be a mention of the original sharer ( Shared by ) as well as a ( re-shared by )
-
-- In a shared note, There should also be a mention of who the note is being shared with (e.g. Global, Specific user, Group).
-
-- In the Note viewer (FlashViewer) header, the line below the Title should lead with the "Shared by" or "Re-shared by"
-
-- The "Send Flash Memo" "Select User" dropdown should have the option for selecting Global and Groups.
-
-- A user sharing a note should be able to see who it is shared with and also when a user the note was shared with has deleted it ( is no longer shared )
-
-- In the note list, if a note creator edits a note, the users the note is shared with, if not edited with Flash Memo, should have a badge on it in the NOTES tab, which is dismissed once the user sees it.
-
-- If we have a badge on the Notes for unseen notes, we don't need to send a message when sharing the note.
-
-- I feel like the Message icon would be better on the right of the "Take Control" button on the main page.
 
 - The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
 
