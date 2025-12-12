@@ -13,47 +13,41 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const toggleDropdown = (name) => setActiveDropdown(prev => prev === name ? null : name);
 
     const textareaRef = useRef(null);
-    const currentMsg = messages && messages.length > 0 ? messages[currentIndex] : null;
+    const currentMsg = messages[currentIndex];
 
-    // --- PARSE CONTENT (Safely) ---
-    // We use Refs or Memoization to prevent render loops, but simple variable calculation is fine if safe.
+    // --- PARSE CONTENT ---
     let noteData = null;
     let displayContent = "";
+
+    // Define realNoteId
     let realNoteId = currentMsg?.id;
 
     if (currentMsg) {
         try {
-            // Check if it's a Flash JSON payload
-            const rawContent = currentMsg.content || "";
-            if (typeof rawContent === 'string' && rawContent.startsWith('{') && rawContent.includes('NOTE_FLASH')) {
-                noteData = JSON.parse(rawContent);
-                displayContent = noteData.content || "";
+            if (currentMsg.content && currentMsg.content.startsWith('{') && currentMsg.content.includes('NOTE_FLASH')) {
+                noteData = JSON.parse(currentMsg.content);
+                displayContent = noteData.content;
                 if (noteData.noteId) realNoteId = noteData.noteId;
             } else {
-                displayContent = rawContent;
+                displayContent = currentMsg.content;
             }
         } catch (e) {
-            console.error("Error parsing note content:", e);
-            displayContent = currentMsg.content || "";
+            displayContent = currentMsg.content;
         }
     }
 
-    // Sync Edit State
     useEffect(() => {
         if (currentMsg) {
-            setEditContent(displayContent);
+            setEditContent(displayContent || '');
             setEditTitle(currentMsg.title || noteData?.title || '');
             if (initialEditMode) setEditMode(true);
         }
     }, [currentMsg, initialEditMode, displayContent]);
 
-    // Auto-Focus Textarea
     useEffect(() => {
         if (editMode && textareaRef.current) {
             textareaRef.current.focus();
-            // Move cursor to end
-            const len = textareaRef.current.value.length;
-            textareaRef.current.setSelectionRange(len, len);
+            textareaRef.current.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
         }
     }, [editMode]);
 
@@ -65,25 +59,12 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const isNote = !!currentMsg.title && !isFlashMemo;
     const isSystemAlarm = isUrgent && !isFlashMemo;
 
-    // --- METADATA LOGIC (Safely) ---
-
-    // 1. History
-    let history = [];
-    try {
-        if (noteData?.shareHistory) {
-            history = noteData.shareHistory;
-        } else if (currentMsg.share_history) {
-            history = JSON.parse(currentMsg.share_history);
-        }
-    } catch (e) {
-        console.warn("Failed to parse share history", e);
-        history = [];
-    }
-
+    // --- METADATA LOGIC ---
+    const history = noteData?.shareHistory || (currentMsg.share_history ? JSON.parse(currentMsg.share_history) : []);
     const lastShare = history.length > 0 ? history[history.length - 1] : null;
     const creatorName = currentMsg.creator_name || noteData?.creatorName || 'Unknown';
 
-    // 2. Shared By Label
+    // Shared By Label
     let sharedByLabel = `Shared by ${creatorName}`;
     if (lastShare) {
         const actionPrefix = (lastShare.action === 'RE-SHARED' || lastShare.action === 'RE-FLASHED' || lastShare.user !== creatorName)
@@ -91,32 +72,23 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
         sharedByLabel = `${actionPrefix} by ${lastShare.user}`;
     }
 
-    // 3. Shared With List
+    // Shared With List
     const rawSharedWith = noteData?.sharedWith || currentMsg.shared_with_names || "";
-    const sharedWithList = typeof rawSharedWith === 'string'
-        ? rawSharedWith.split(', ').filter(s => s.trim() !== '')
-        : [];
+    const sharedWithList = rawSharedWith ? rawSharedWith.split(', ').filter(s => s.trim() !== '') : [];
 
-    // 4. Dates
+    // Dates
     const dateOpts = { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
 
-    // Timestamp Logic
     let displayDate = currentMsg.updated_at || Date.now();
     let dateLabel = "Edited";
 
     if (isFlashMemo) {
         dateLabel = "Shared";
-        // Use message timestamp for Flash Memos
         if (currentMsg.timestamp) displayDate = currentMsg.timestamp;
     }
 
-    let updatedDate = "Unknown";
-    let createdDate = "Unknown";
-
-    try {
-        updatedDate = new Date(displayDate).toLocaleString([], dateOpts);
-        createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleString([], dateOpts);
-    } catch (e) { /* Ignore date errors */ }
+    const formattedDisplayDate = new Date(displayDate).toLocaleString([], dateOpts);
+    const createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleString([], dateOpts);
 
     const handleSave = async () => {
         if (onSave) {
@@ -129,7 +101,6 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const handleShareClick = async (e) => {
         e.stopPropagation();
         let notePayload = null;
-
         if (editMode) {
             if (onSave) {
                 await onSave(realNoteId, editTitle, editContent);
@@ -139,7 +110,6 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
         } else {
             notePayload = { ...currentMsg, id: realNoteId, title: editTitle || currentMsg.title };
         }
-
         if (onShare) onShare(notePayload);
     };
 
@@ -164,22 +134,19 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
         headerBg = "bg-gray-800 border-gray-700";
     }
 
-    // Dynamic Z-Index for Header: Lift above overlay if dropdown is open
-    const headerZIndex = activeDropdown ? "z-[50]" : "z-[20]";
-
     return (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
             <div className={clsx("w-full max-w-2xl bg-gray-900 border-2 rounded-2xl overflow-hidden flex flex-col relative max-h-[90vh]", borderColor, shadowColor)} onClick={e => e.stopPropagation()}>
 
                 {pulseClass && <div className={`absolute inset-0 ${pulseClass} pointer-events-none`} />}
 
-                {/* ✅ CLICK OUTSIDE OVERLAY (Z-30) */}
+                {/* OVERLAY for Dropdown Dismissal */}
                 {activeDropdown && (
                     <div className="fixed inset-0 z-[30] cursor-default" onClick={() => setActiveDropdown(null)} />
                 )}
 
-                {/* HEADER (Z-20 usually, Z-50 if dropdown active) */}
-                <div className={clsx("p-6 flex justify-between items-start border-b relative transition-none", headerBg, headerZIndex)}>
+                {/* HEADER */}
+                <div className={clsx("p-6 flex justify-between items-start z-20 border-b relative transition-none", headerBg)}>
                     <div className="flex items-start gap-3 w-full">
                         <div className="mt-1">
                             {isSystemAlarm && <AlertTriangle className="text-white animate-bounce" size={32} />}
@@ -207,7 +174,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                             {/* METADATA ROW */}
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 pl-0">
 
-                                {/* 1. SHARED BY (History) */}
+                                {/* 1. SHARED BY */}
                                 <HeaderDropdown
                                     icon={<Share2 size={12} />}
                                     label={sharedByLabel}
@@ -248,7 +215,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                                             e.stopPropagation();
                                                             onUnshare(realNoteId, u.trim());
                                                         }}
-                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer relative z-50"
+                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer relative z-[60]"
                                                         title="Revoke Access"
                                                     >
                                                         <X size={14} />
@@ -260,10 +227,10 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                 )}
 
                                 {/* 3. DATES */}
-                                {(updatedDate) && (
+                                {(formattedDisplayDate) && (
                                     <HeaderDropdown
                                         icon={<Calendar size={12} />}
-                                        label={`${dateLabel}: ${updatedDate}`}
+                                        label={`${dateLabel}: ${formattedDisplayDate}`}
                                         isActive={activeDropdown === 'DATES'}
                                         onToggle={() => toggleDropdown('DATES')}
                                         color="text-gray-400"
@@ -280,11 +247,12 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
                     {/* ACTIONS */}
                     <div className="flex gap-2 shrink-0 ml-4">
-                        {onShare && (
+                        {onShare && (isNote || isFlashMemo) && (
                             <button onClick={handleShareClick} className="p-2 bg-black/20 hover:bg-blue-600/50 text-blue-400 hover:text-white rounded transition-colors" title="Share / Re-Share">
                                 <Share2 size={20} />
                             </button>
                         )}
+
                         {isNote && isOwner && !editMode && (
                             <button onClick={() => setEditMode(true)} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors" title="Edit"><Edit3 size={20} /></button>
                         )}
@@ -295,7 +263,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                     </div>
                 </div>
 
-                {/* CONTENT (Z-0) */}
+                {/* CONTENT */}
                 <div className="p-8 overflow-y-auto flex-grow z-0 bg-gray-900/95 min-h-[250px]">
                     {editMode ? (
                         <textarea

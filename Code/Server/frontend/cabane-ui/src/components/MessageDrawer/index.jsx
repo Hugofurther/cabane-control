@@ -108,17 +108,18 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
     const getNoteFromFlash = (msg) => {
         if (!msg) return null;
         try {
-            // Check if it's a JSON string
-            if (msg.content && msg.content.startsWith('{')) {
+            if (msg.content && typeof msg.content === 'string' && msg.content.startsWith('{')) {
                 const data = JSON.parse(msg.content);
                 if (data && data.type === 'NOTE_FLASH' && data.noteId) {
                     return { id: data.noteId, title: data.title || "Flash Memo" };
                 }
             }
         } catch (e) { }
-        // Fallback
-        return { id: msg.id, title: "Message" };
+        return null;
     };
+
+    // ✅ MEMOIZE FLASH DATA
+    const flashNoteData = useMemo(() => getNoteFromFlash(zoomedMessage), [zoomedMessage]);
 
     // --- SOCKET LISTENERS ---
     useEffect(() => {
@@ -312,7 +313,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             setInitialEditMode(true);
         } catch (e) { showAlert("Error", "Failed to create note."); }
     };
-
     const handleUpdateNote = async (id, title, content) => {
         try {
             const token = localStorage.getItem('cabane_token');
@@ -321,7 +321,6 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             setViewingNote(null);
         } catch (e) { showAlert("Error", "Failed to save note."); }
     };
-
     const handleDeleteNote = (id) => {
         showConfirm({
             title: "Delete Note?", message: "Permanently delete this note?", isDestructive: true, onConfirm: async () => {
@@ -330,14 +329,13 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
             }
         });
     };
-
     const handleCopyNote = async (id) => {
         try { await axios.post(`${API_URL}/api/notes/${id}/copy`, {}, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchNotes(); showAlert("Success", "Copied to your notes."); }
         catch (e) { showAlert("Error", "Copy failed."); }
     };
-
     const openShareModal = (note, isFlash) => { setShareTargetNote(note); setShareModalIsFlash(isFlash); setShareModalOpen(true); };
 
+    // ✅ FIXED UNSHARE LOGIC (Auto-Fetch)
     const handleUnshareNote = async (noteId, username) => {
         let currentDirectory = userList;
         if (!currentDirectory || currentDirectory.length === 0) currentDirectory = await ensureDirectory();
@@ -408,7 +406,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     <div className="flex gap-2"><button onClick={() => handleMarkAllRead()} className="text-gray-500 hover:text-green-400"><CheckCheck size={18} /></button><button onClick={onClose} className="text-gray-400 hover:text-white"><X size={24} /></button></div>
                 </div>
 
-                {/* BODY */}
+                {/* SUB HEADER & BODY */}
                 <div className="flex-grow flex flex-col overflow-hidden">
                     {/* NOTES TAB */}
                     {activeTab === 'NOTES' && (
@@ -475,10 +473,33 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                                 </div>
                             ) : (
                                 (!selectedTarget && activeTab !== 'GLOBAL') ? (
-                                    <DirectoryView activeTab={activeTab} list={activeTab === 'USERS' ? userList : groupList} userList={userList} searchQuery={searchQuery} setSearchQuery={setSearchQuery} onSelect={setSelectedTarget} onCreateGroupClick={() => setIsCreatingGroup(true)} />
+                                    <DirectoryView
+                                        activeTab={activeTab}
+                                        list={activeTab === 'USERS' ? userList : groupList}
+                                        userList={userList}
+                                        searchQuery={searchQuery}
+                                        setSearchQuery={setSearchQuery}
+                                        onSelect={setSelectedTarget}
+                                        onCreateGroupClick={() => setIsCreatingGroup(true)}
+                                    />
                                 ) : (
                                     <ChatView
-                                        messages={currentMessages} user={user} input={input} setInput={setInput} isUrgent={isUrgent} setIsUrgent={setIsUrgent} onSend={handleSend} onZoom={(m) => setZoomedMessage(m)} onDelete={handleDeleteMessage} onCancelUrgency={handleCancelUrgency} onDowngrade={handleDowngradeUrgency} scrollRef={messagesEndRef} containerRef={chatContainerRef} showScrollButton={showScrollButton} onScrollToBottom={scrollToBottom} onScroll={handleScroll}
+                                        messages={currentMessages}
+                                        user={user}
+                                        input={input}
+                                        setInput={setInput}
+                                        isUrgent={isUrgent}
+                                        setIsUrgent={setIsUrgent}
+                                        onSend={handleSend}
+                                        onZoom={(m) => setZoomedMessage(m)}
+                                        onDelete={handleDeleteMessage}
+                                        onCancelUrgency={handleCancelUrgency}
+                                        onDowngrade={handleDowngradeUrgency}
+                                        scrollRef={messagesEndRef}
+                                        containerRef={chatContainerRef}
+                                        showScrollButton={showScrollButton}
+                                        onScrollToBottom={scrollToBottom}
+                                        onScroll={handleScroll}
                                     />
                                 )
                             )}
@@ -494,8 +515,8 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                     readOnly={true}
                     onDismiss={() => handleDowngradeUrgency(zoomedMessage.id)}
                     onClose={() => setZoomedMessage(null)}
-                    // ✅ FIXED: Parse JSON to get real Note ID for re-sharing
-                    onShare={() => openShareModal(getNoteFromFlash(zoomedMessage), true)}
+                    // ✅ FIXED: Calculate note data properly before showing button
+                    onShare={flashNoteData ? () => openShareModal(flashNoteData, true) : undefined}
                     onUnshare={handleUnshareNote}
                     userList={userList}
                 />
@@ -514,16 +535,7 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 />
             )}
 
-            {shareModalOpen && shareTargetNote && (
-                <ShareModal
-                    note={shareTargetNote}
-                    users={userList.filter(u => u.id !== user?.id)}
-                    groups={groupList} // ✅ Groups passed
-                    isFlash={shareModalIsFlash}
-                    showAlert={showAlert}
-                    onClose={() => setShareModalOpen(false)}
-                />
-            )}
+            {shareModalOpen && shareTargetNote && <ShareModal note={shareTargetNote} users={userList.filter(u => u.id !== user?.id)} groups={groupList} isFlash={shareModalIsFlash} showAlert={showAlert} onClose={() => setShareModalOpen(false)} />}
         </div>
     );
 };

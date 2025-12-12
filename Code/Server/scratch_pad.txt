@@ -411,13 +411,19 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ In The Flash Memo's header, the "Edited" part can be replaced by "Shared" and a timestamp representing the time the Flash Memo was sent, instead of the current time.
 
+√ I feel like the Message icon would be better on the right of the "Take Control" button on the main page. What do you think?
+
+√ The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
+
+
 ---
 
-- I feel like the Message icon would be better on the right of the "Take Control" button on the main page. What do you think?
 
-- The user should be able to re-share or Flash memo directly from theFlash Memo, like with the NoteViewer.
+- The user should be able to re-share or Flash memo directly from theFlash Memo, like with the NoteViewer. So there should be a share icon in the header.
 
+---
 
+- When a Flash Memo is sent to a user who is not logged in, The minute the user logs in, the Flash Memo should appear on their screen.
 
 
 
@@ -425,14 +431,6 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 -------------------------------------------------------
 Requested
 
-
-
-- the "Flash Memo" header still displays the current time with the label "Edited". It should be changed to display the timestamp the Flash Memo was sent ( Not the current time) with the label "Shared" instead of "Edited".
-
-
-
-
----
 
 
 - Sharing a note or a Flash Memo should not use messages. Actually the Note feature should use the messages only when a user with "shared with" noted gets removed from a shared note or the note gets delete. Otherwise, ff there is a new note shared with a user and the user hasn't seen it, we'll use the badges on the messaging icon, then on the NOTES tab, then on the new note unseen ( un-opened ).
@@ -452,7 +450,7 @@ Requested
 
 
 
-- The "Share Note" modal's green arrow should appear only after confirmation the not has been shared, just before dismissing the modal. Not triggered by clicking on the button, but by confirmation the note has been shared..
+
 
 - In the header of the Note View ( FlashViewer ), the "shared by" or "Re-Shared by" should be closer to the left border of the modal. ( less padding on the left.)
 
@@ -471,7 +469,7 @@ Debug
 
 NOTES
 
-
+- post MVP: Pin notes at the top
 
 -----------------------------------
 MESSAGIN
@@ -489,7 +487,9 @@ SERVER
 
 - I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
 
+- The admin should be able to update the Server and the React app from the app. Download the update first, then when verified, update the React app and / or the Server. Then reboot automatically.
 
+- The server should be able to update itself
 
 -----------------------------------
 UX
@@ -518,6 +518,9 @@ NATIVE BROWSER ALERTS -> Should be Modal pop-up
 -----------------------------------
 LAYOUT
 
+- Add a screen lock with auto-lock after x minutes. The Buzzer should always be accessible, but when clicking anywhere else on the app, a centered modal prompts the user to unlock. A user setting should set unlock with or without credentials.
+
+- On the Login page, in iOS, the input boxe for the password text input offers to "Use Strong Password" This would be fine in the "Create an Account" page, not the login. The login page should offer to use a saved password.
 
 
 -----------------------------------
@@ -537,6 +540,8 @@ ARDUINO
 
 
 - Add Clement alarm. Input from bot ST2 or ST3 feedback 5 (D6) -> Output to ST0 relay A3
+
+- POST MVP: We need a system to be able to upload a new firmware via the server. The server downloads the new firmware, then once downloaded and verified, upgrades the arduino board firmware.
 
 
 IOS

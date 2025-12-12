@@ -6,7 +6,8 @@ import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
 import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
-import { MessageDrawer } from './components/MessageDrawer/index'; // ✅ Ensure correct import path
+import { MessageDrawer } from './components/MessageDrawer/index';
+import { ShareModal } from './components/MessageDrawer/ShareModal'; // ✅ Import ShareModal
 import { Clock } from './components/Clock';
 import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer';
@@ -14,7 +15,7 @@ import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 
-console.log("🚀 CABANE UI VERSION: 3.7 - LAYOUT UPDATE");
+console.log("🚀 CABANE UI VERSION: 3.8 - GLOBAL FLASH SHARE");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
@@ -24,20 +25,44 @@ function Dashboard() {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user
   } = useSocket();
 
-  const canInteract = systemState.controller === 'USER' &&
-    systemState.currentUser === user?.username;
+  const canInteract = systemState.controller === 'USER' && systemState.currentUser === user?.username;
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
-
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
+
+  // Share State (For Global FlashViewer)
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareTargetNote, setShareTargetNote] = useState(null);
+  const [userList, setUserList] = useState([]);
+  const [groupList, setGroupList] = useState([]);
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotes, setHasNotes] = useState(false);
 
   const audioCtx = useRef(null);
+
+  // --- 1. FETCH DIRECTORY (Needed for Sharing) ---
+  useEffect(() => {
+    if (user) {
+      const token = localStorage.getItem('cabane_token');
+      // Fetch Users
+      axios.get(`${API_URL}/api/users/directory`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => { if (Array.isArray(res.data)) setUserList(res.data); })
+        .catch(e => console.error("User fetch error:", e));
+
+      // Fetch Groups
+      axios.get(`${API_URL}/api/conversations`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => {
+          if (Array.isArray(res.data)) {
+            setGroupList(res.data.filter(c => c.type === 'GROUP'));
+          }
+        })
+        .catch(e => console.error("Group fetch error:", e));
+    }
+  }, [user]);
 
   // --- HELPER: Find Alarm Source ---
   const getAlarmSources = () => {
@@ -52,8 +77,6 @@ function Dashboard() {
             if (st !== undefined && bit !== undefined) {
               const isSwitchOn = (controller === 'CABANE') ? !!physicalSwitches[ctrl.idx] : !!virtualSwitches[ctrl.idx];
               const isFeedbackOn = ((stationFeedback[st] >> bit) & 1) === 0;
-
-              // Only trigger if commanded ON but feedback OFF
               if (isSwitchOn && !isFeedbackOn) {
                 sources.push(`${card.name} - ${ctrl.label.replace('\n', ' ')}`);
               }
@@ -126,29 +149,22 @@ function Dashboard() {
   // Poll for Flash Messages
   useEffect(() => {
     if (!socket) return;
-
     const handleNewMessage = (msg) => {
       if (msg.recipient_id && String(msg.recipient_id) !== String(user?.id)) return;
-
       if (msg.priority === 'URGENT' && String(msg.sender_id) !== String(user?.id)) {
-        // ✅ CHECK SETTING: Default to true if undefined
         const soundOn = user?.settings?.flashSoundEnabled !== false;
-
         checkFlashMessages().then((count) => {
           if (count > 0 && soundOn) playTone('CHIRP');
         });
       }
     };
-
     const handleUpdateMessage = (data) => {
       if (data.priority === 'NORMAL') {
         setFlashMessages(prev => prev.filter(m => m.id !== data.id));
       }
     };
-
     socket.on('NEW_MESSAGE', handleNewMessage);
     socket.on('UPDATE_MESSAGE', handleUpdateMessage);
-
     return () => {
       socket.off('NEW_MESSAGE', handleNewMessage);
       socket.off('UPDATE_MESSAGE', handleUpdateMessage);
@@ -188,11 +204,29 @@ function Dashboard() {
 
       {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
 
+      {/* ✅ GLOBAL FLASH VIEWER WITH SHARE */}
       {flashMessages.length > 0 && (
         <FlashViewer
           messages={flashMessages}
           onDismiss={handleDismissFlash}
           onClose={() => setFlashMessages([])}
+          // Pass Share Handler
+          onShare={(noteData) => {
+            // noteData is already parsed by FlashViewer
+            setShareTargetNote(noteData);
+            setShareModalOpen(true);
+          }}
+        />
+      )}
+
+      {/* ✅ GLOBAL SHARE MODAL */}
+      {shareModalOpen && shareTargetNote && (
+        <ShareModal
+          note={shareTargetNote}
+          users={userList.filter(u => u.id !== user?.id)}
+          groups={groupList}
+          isFlash={true} // Default to flash for re-flashes
+          onClose={() => setShareModalOpen(false)}
         />
       )}
 
@@ -231,7 +265,7 @@ function Dashboard() {
         {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* 1. CONTROLS */}
+          {/* Controls */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap">Take Control</button>
@@ -241,15 +275,13 @@ function Dashboard() {
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2">
               <button onClick={releaseToServer} className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Hold</button>
-
-              {/* Hide release button if physical master is offline to prevent accidents */}
               {systemState.mainControllerOnline && (
                 <button onClick={releaseToCabane} className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Release</button>
               )}
             </div>
           )}
 
-          {/* 2. MESSAGES (Now on the Right of Controls) */}
+          {/* Messages */}
           <button
             onClick={() => setShowMessageDrawer(true)}
             className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
@@ -261,7 +293,7 @@ function Dashboard() {
 
           {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
 
-          {/* 3. USER SETTINGS (Mega Menu) */}
+          {/* User Settings */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500">
             <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
               <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import axios from 'axios';
-import { X, Share2, Zap, Check, Search, Users, Globe, User } from 'lucide-react';
+import { X, Share2, Zap, Check, Search, Users, Globe, User, Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useModal } from '../../contexts/ModalContext';
 
@@ -12,24 +12,25 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
     // State
     const [selectedMap, setSelectedMap] = useState(new Map()); // Key: "TYPE:ID" -> Object
     const [flashEnabled, setFlashEnabled] = useState(isFlash);
-    const [status, setStatus] = useState('IDLE');
+    const [status, setStatus] = useState('IDLE'); // IDLE, SENDING, SUCCESS
     const [filter, setFilter] = useState('');
 
-    // Toggle Selection
+    // Toggle Selection Logic
     const toggleSelection = (type, id, name) => {
         const key = `${type}:${id}`;
         setSelectedMap(prev => {
             const next = new Map(prev);
+
+            // Exclusive Logic: If picking Global, clear others? 
+            // Or if picking specific, clear Global?
+            if (type === 'GLOBAL' && id === 'ALL') {
+                // If selecting Global, maybe we don't clear others, just let them stack?
+                // Actually, Global implies everyone, so let's keep it simple and just toggle it.
+            }
+
             if (next.has(key)) {
                 next.delete(key);
             } else {
-                // Logic: If Global is selected, clear others? Optional.
-                // For now, let's allow mix and match, but usually Global stands alone.
-                if (type === 'GLOBAL') {
-                    next.clear(); // Clear others if Global selected for clarity
-                } else if (next.has('GLOBAL:ALL')) {
-                    next.delete('GLOBAL:ALL'); // Clear Global if specific selected
-                }
                 next.set(key, { type, id, name });
             }
             return next;
@@ -39,6 +40,7 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
     // Filtered Lists
     const filteredUsers = useMemo(() => users.filter(u => u.username.toLowerCase().includes(filter.toLowerCase())), [users, filter]);
     const filteredGroups = useMemo(() => (groups || []).filter(g => g.name.toLowerCase().includes(filter.toLowerCase())), [groups, filter]);
+    const showGlobal = "global".includes(filter.toLowerCase()) || "everyone".includes(filter.toLowerCase()) || filter === '';
 
     const handleShare = async () => {
         if (selectedMap.size === 0) return;
@@ -70,19 +72,20 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
         }
     };
 
-    // Helper to render an item
+    // Helper to render a list item
     const RenderItem = ({ type, id, name, icon: Icon, subtext }) => {
         const key = `${type}:${id}`;
         const isSelected = selectedMap.has(key);
 
         return (
             <div
-                onClick={() => toggleSelection(type, id, name)}
+                onClick={() => status === 'IDLE' && toggleSelection(type, id, name)}
                 className={clsx(
                     "flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-all mb-2",
                     isSelected
                         ? "bg-blue-900/30 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)]"
-                        : "bg-gray-800/50 border-gray-700 hover:bg-gray-800 hover:border-gray-600"
+                        : "bg-gray-800/50 border-gray-700 hover:bg-gray-800 hover:border-gray-600",
+                    status !== 'IDLE' && "opacity-50 cursor-not-allowed"
                 )}
             >
                 <div className="flex items-center gap-3">
@@ -112,16 +115,16 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
                     <button onClick={onClose}><X size={24} className="text-gray-500 hover:text-white" /></button>
                 </div>
 
-                {/* SEARCH & FLASH TOGGLE */}
+                {/* CONTROLS */}
                 <div className="p-4 space-y-3 bg-gray-900 border-b border-gray-800 shrink-0">
                     {/* Flash Toggle */}
-                    <div onClick={() => setFlashEnabled(!flashEnabled)} className="flex items-center gap-3 p-3 bg-gray-800 rounded border border-gray-700 cursor-pointer hover:border-gray-500 transition-colors">
+                    <div onClick={() => status === 'IDLE' && setFlashEnabled(!flashEnabled)} className="flex items-center gap-3 p-3 bg-gray-800 rounded border border-gray-700 cursor-pointer hover:border-gray-500 transition-colors">
                         <div className={clsx("w-5 h-5 rounded border flex items-center justify-center transition-colors", flashEnabled ? "bg-yellow-500 border-yellow-500" : "border-gray-500 bg-transparent")}>
                             {flashEnabled && <Check size={14} className="text-black" />}
                         </div>
                         <div>
                             <p className={clsx("text-sm font-bold", flashEnabled ? "text-yellow-400" : "text-gray-300")}>Flash Memo</p>
-                            <p className="text-[10px] text-gray-500">Display note on user's screen immediately.</p>
+                            <p className="text-[10px] text-gray-500">Display the note on user's screen.</p>
                         </div>
                     </div>
 
@@ -138,18 +141,18 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
                     </div>
                 </div>
 
-                {/* SCROLLABLE LIST */}
+                {/* LIST */}
                 <div className="flex-grow overflow-y-auto p-4">
 
-                    {/* Global Option (Only show if no filter) */}
-                    {!filter && (
+                    {/* 1. Global */}
+                    {showGlobal && (
                         <div className="mb-4">
                             <p className="text-[10px] font-bold text-gray-500 uppercase mb-2 ml-1">System Wide</p>
                             <RenderItem type="GLOBAL" id="ALL" name="Global (Everyone)" icon={Globe} subtext="Send to all active users" />
                         </div>
                     )}
 
-                    {/* Groups */}
+                    {/* 2. Groups */}
                     {filteredGroups.length > 0 && (
                         <div className="mb-4">
                             <p className="text-[10px] font-bold text-gray-500 uppercase mb-2 ml-1">Groups</p>
@@ -159,7 +162,7 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
                         </div>
                     )}
 
-                    {/* Users */}
+                    {/* 3. Users */}
                     <div className="mb-2">
                         <p className="text-[10px] font-bold text-gray-500 uppercase mb-2 ml-1">Users</p>
                         {filteredUsers.length > 0 ? (
@@ -172,7 +175,7 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
                     </div>
                 </div>
 
-                {/* FOOTER ACTION */}
+                {/* FOOTER */}
                 <div className="p-4 bg-gray-850 border-t border-gray-800 shrink-0">
                     <button
                         onClick={handleShare}
@@ -180,12 +183,12 @@ export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
                         className={clsx(
                             "w-full py-3.5 rounded-lg font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all",
                             status === 'SUCCESS'
-                                ? "bg-green-600 text-white"
+                                ? "bg-green-600 text-white scale-105"
                                 : (selectedMap.size === 0 ? "bg-gray-700 text-gray-500 cursor-not-allowed" : (flashEnabled ? "bg-yellow-600 hover:bg-yellow-500 text-black" : "bg-blue-600 hover:bg-blue-500 text-white"))
                         )}
                     >
-                        {status === 'SUCCESS' && <Check size={24} strokeWidth={3} />}
-                        {status === 'SENDING' && <span className="animate-pulse">Sending...</span>}
+                        {status === 'SUCCESS' && <><Check size={24} strokeWidth={3} /> SENT</>}
+                        {status === 'SENDING' && <><Loader2 size={20} className="animate-spin" /> SENDING...</>}
                         {status === 'IDLE' && (
                             <>
                                 {flashEnabled ? "SEND FLASH MEMO" : "SHARE NOTE"}
