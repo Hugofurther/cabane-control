@@ -514,7 +514,17 @@ export const MessageDrawer = ({ isOpen, onClose, onUnreadChange }) => {
                 />
             )}
 
-            {shareModalOpen && shareTargetNote && <ShareModal note={shareTargetNote} users={userList.filter(u => u.id !== user?.id)} isFlash={shareModalIsFlash} showAlert={showAlert} onClose={() => setShareModalOpen(false)} />}
+            {/* SHARE MODAL (INTERNAL) */}
+            {shareModalOpen && shareTargetNote && (
+                <ShareModal
+                    note={shareTargetNote}
+                    users={userList.filter(u => u.id !== user?.id)}
+                    groups={groupList} // ✅ PASS GROUPS
+                    isFlash={shareModalIsFlash}
+                    showAlert={showAlert}
+                    onClose={() => setShareModalOpen(false)}
+                />
+            )}
         </div>
     );
 };

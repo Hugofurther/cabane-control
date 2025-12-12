@@ -131,11 +131,15 @@ function Dashboard() {
       if (msg.recipient_id && String(msg.recipient_id) !== String(user?.id)) return;
 
       if (msg.priority === 'URGENT' && String(msg.sender_id) !== String(user?.id)) {
+        // ✅ CHECK SETTING: Default to true if undefined
+        const soundOn = user?.settings?.flashSoundEnabled !== false;
+
         checkFlashMessages().then((count) => {
-          if (count > 0) playTone('CHIRP');
+          if (count > 0 && soundOn) playTone('CHIRP');
         });
       }
     };
+
 
     const handleUpdateMessage = (data) => {
       if (data.priority === 'NORMAL') {

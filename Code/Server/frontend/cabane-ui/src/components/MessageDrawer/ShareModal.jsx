@@ -6,27 +6,30 @@ import { useModal } from '../../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-export const ShareModal = ({ note, users, isFlash, onClose }) => {
+export const ShareModal = ({ note, users, groups, isFlash, onClose }) => {
     const { showAlert } = useModal();
-    const [selectedUser, setSelectedUser] = useState('');
+    // Store as stringified JSON to handle Type+ID in one value
+    const [selectedTarget, setSelectedTarget] = useState('');
     const [flashEnabled, setFlashEnabled] = useState(isFlash);
     const [status, setStatus] = useState('IDLE');
 
     const handleShare = async () => {
-        if (!selectedUser) return;
+        if (!selectedTarget) return;
+        const { type, id } = JSON.parse(selectedTarget); // Parse Type/ID
+
         const token = localStorage.getItem('cabane_token');
         const endpoint = flashEnabled ? 'flash' : 'share';
 
         try {
             await axios.post(`${API_URL}/api/notes/${note.id}/${endpoint}`,
-                { targetUserId: selectedUser },
+                { targetId: id, targetType: type, targetUserId: id }, // Send both formats for compatibility
                 { headers: { Authorization: `Bearer ${token}` } }
             );
             setStatus('SUCCESS');
             setTimeout(onClose, 1500);
         } catch (e) {
-            if (showAlert) showAlert("Error", "Failed to share note.");
-            else alert("Failed to share.");
+            if (showAlert) showAlert("Error", "Failed to share.");
+            else alert("Failed.");
         }
     };
 
@@ -43,16 +46,34 @@ export const ShareModal = ({ note, users, isFlash, onClose }) => {
 
                 <div className="p-6 space-y-4">
                     <div>
-                        <label className="text-xs font-bold text-gray-500 block mb-2">SELECT USER</label>
+                        <label className="text-xs font-bold text-gray-500 block mb-2">SELECT RECIPIENT</label>
                         <select
                             className="w-full bg-gray-800 border border-gray-600 rounded p-2 text-white outline-none text-sm"
-                            value={selectedUser}
-                            onChange={e => setSelectedUser(e.target.value)}
+                            value={selectedTarget}
+                            onChange={e => setSelectedTarget(e.target.value)}
                         >
-                            <option value="">-- Choose User --</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>{u.username}</option>
-                            ))}
+                            <option value="">-- Choose Recipient --</option>
+
+                            {/* 1. GLOBAL (Now available for Standard Share too) */}
+                            <optgroup label="System Wide">
+                                <option value={JSON.stringify({ type: 'GLOBAL', id: 'ALL' })}>🌍 Global (Everyone)</option>
+                            </optgroup>
+
+                            {/* 2. GROUPS */}
+                            {groups && groups.length > 0 && (
+                                <optgroup label="Groups">
+                                    {groups.map(g => (
+                                        <option key={g.id} value={JSON.stringify({ type: 'GROUP', id: g.id })}>{g.name}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+
+                            {/* 3. INDIVIDUAL USERS */}
+                            <optgroup label="Users">
+                                {users.map(u => (
+                                    <option key={u.id} value={JSON.stringify({ type: 'USER', id: u.id })}>{u.username}</option>
+                                ))}
+                            </optgroup>
                         </select>
                     </div>
 
@@ -61,7 +82,6 @@ export const ShareModal = ({ note, users, isFlash, onClose }) => {
                             {flashEnabled && <Check size={14} className="text-black" />}
                         </div>
                         <div>
-                            {/* ✅ UPDATED TEXT */}
                             <p className={clsx("text-sm font-bold", flashEnabled ? "text-yellow-400" : "text-gray-400")}>Flash Memo</p>
                             <p className="text-[10px] text-gray-500">Display the note on user's screen.</p>
                         </div>
@@ -69,7 +89,7 @@ export const ShareModal = ({ note, users, isFlash, onClose }) => {
 
                     <button
                         onClick={handleShare}
-                        disabled={!selectedUser || status === 'SUCCESS'}
+                        disabled={!selectedTarget || status === 'SUCCESS'}
                         className={clsx(
                             "w-full py-3 rounded-lg font-black uppercase tracking-widest shadow-lg flex items-center justify-center gap-2 transition-all",
                             status === 'SUCCESS'

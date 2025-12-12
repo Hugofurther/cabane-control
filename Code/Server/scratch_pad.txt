@@ -379,8 +379,6 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ In the Note View, when a dropdown list is expanded ("Shared by", "Shared with" and timestamp ) , clicking outside of that dropdown should dismiss the dropdown. This was requested before and not fixed.
 
----
-
 √ In the Note View ( FlashViewer ), We should also have a button to Flash Memo or simply share it directly from the Note. If the creator, share. Any other user, re-share
 
 √ the "Flash Memo" ( in the FlashViewer ) should be showing exactly as the note when opening it from the NOTES tab, but with the "Acknowledge" button and its outline yellow.
@@ -407,13 +405,23 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ A user setting should enable/disable flash memo sound notifications. Can you explain what how the sound notification for the flash memo functions?
 
-√ The "Send Flash Memo" "Select User" dropdown should have the option for selecting Global ( all users ) and Groups.
+√ The "Share Note" or "Send Flash Memo" "Select User" dropdown should have the option for selecting Global ( all users ) and Groups.
+
+---
+
+
+
+
+- This list to select who to share the note or send flash memo to should have its items selectable, so the sender can select multiple users a once.
+
 
 -------------------------------------------------------
 -------------------------------------------------------
 Requested
 
+- In The Flash Memo's header, the "Edited" part can be replaced by "Shared" and a timestamp representing the time the Flash Memo was sent, instead of the current time.
 
+- The user should be able to re-share or Flash memo directly from theFlash Memo, like with the NoteViewer.
 
 - the "Flash Memo" header still displays the current time with the label "Edited". It should be changed to display the timestamp the Flash Memo was sent ( Not the current time) with the label "Shared" instead of "Edited".
 
@@ -471,7 +479,7 @@ MESSAGIN
 -----------------------------------
 WEATHER
 
-- In the forecast, can we add the "Rain volume for past 3 hours" and "Rain volume for past 3 hours"
+- In the forecast, can we add the "Snow volume for past 3 hours" and "Rain volume for past 3 hours"
 
 -----------------------------------
 SERVER

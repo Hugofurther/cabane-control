@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock, User, Cloud, ScrollText } from 'lucide-react';
+import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock, User, Cloud, ScrollText, Zap } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
@@ -44,11 +44,9 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     if (!isOpen || !user) return null;
 
-    // ✅ NOTE: Scroll Lock useEffect REMOVED.
-
-    // ... (Keep Toggle Logic, Save Logic, Password Change Logic)
     const toggleSetting = (key) => setLocalSettings(prev => ({ ...prev, [key]: !prev[key] }));
     const setSetting = (key, value) => setLocalSettings(prev => ({ ...prev, [key]: value }));
+
     const handleSaveAll = async () => {
         const token = localStorage.getItem('cabane_token');
         try {
@@ -61,6 +59,7 @@ export const UserSettings = ({ isOpen, onClose }) => {
             onClose();
         } catch (e) { showAlert("Error", e.response?.data?.error || "Failed to save settings."); }
     };
+
     const handlePasswordChange = async (e) => {
         e.preventDefault();
         if (passwordData.new !== passwordData.confirm) { setMsg({ type: 'error', text: "Passwords do not match." }); return; }
@@ -112,24 +111,38 @@ export const UserSettings = ({ isOpen, onClose }) => {
                         <div className="p-6 space-y-8">
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Interface</h3>
+
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Cloud size={18} className="text-cyan-400" /><span className="text-sm font-medium text-gray-200">Show Weather Widget</span></div>
                                     <Toggle checked={localSettings.showWeather ?? true} onChange={() => toggleSetting('showWeather')} />
                                 </div>
+
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-                                    <div className="flex items-center gap-3">{localSettings.soundEnabled ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-gray-500" />}<span className="text-sm font-medium text-gray-200">Sound Effects</span></div>
+                                    <div className="flex items-center gap-3">{localSettings.soundEnabled ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-gray-500" />}<span className="text-sm font-medium text-gray-200">Master Sound</span></div>
                                     <Toggle checked={localSettings.soundEnabled ?? true} onChange={() => toggleSetting('soundEnabled')} />
                                 </div>
+
+                                {/* ✅ NEW: Flash Memo Sound Toggle */}
+                                <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                                    <div className="flex items-center gap-3">
+                                        <Zap size={18} className={localSettings.flashSoundEnabled !== false ? "text-yellow-400" : "text-gray-500"} />
+                                        <span className="text-sm font-medium text-gray-200">Flash Memo Alert</span>
+                                    </div>
+                                    <Toggle checked={localSettings.flashSoundEnabled !== false} onChange={() => toggleSetting('flashSoundEnabled')} />
+                                </div>
+
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Smartphone size={18} className={localSettings.vibrationEnabled ? "text-purple-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">Haptic Feedback</span></div>
                                     <Toggle checked={localSettings.vibrationEnabled ?? true} onChange={() => toggleSetting('vibrationEnabled')} />
                                 </div>
+
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Clock size={18} className="text-blue-400" /><span className="text-sm font-medium text-gray-200">Clock Format</span></div>
                                     <div className="flex bg-gray-900 rounded p-1">
                                         {['12h', '24h'].map(fmt => (<button key={fmt} onClick={() => setSetting('clockFormat', fmt)} className={clsx("px-3 py-1 rounded text-xs font-bold transition-colors", (localSettings.clockFormat || '24h') === fmt ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>{fmt.toUpperCase()}</button>))}
                                     </div>
                                 </div>
+
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Layout size={18} className="text-yellow-400" /><span className="text-sm font-medium text-gray-200">Show Cabane Status</span></div>
                                     <Toggle checked={localSettings.showMainStatus ?? true} onChange={() => toggleSetting('showMainStatus')} />
@@ -150,6 +163,7 @@ export const UserSettings = ({ isOpen, onClose }) => {
                         </div>
                     )}
 
+                    {/* ... (Rest of Tabs: PROFILE, ADMIN, LOGS remain unchanged) ... */}
                     {activeTab === 'PROFILE' && (
                         <div className="p-6 space-y-8">
                             <section className="space-y-3">
