@@ -13,41 +13,47 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const toggleDropdown = (name) => setActiveDropdown(prev => prev === name ? null : name);
 
     const textareaRef = useRef(null);
-    const currentMsg = messages[currentIndex];
+    const currentMsg = messages && messages.length > 0 ? messages[currentIndex] : null;
 
-    // --- PARSE CONTENT ---
+    // --- PARSE CONTENT (Safely) ---
+    // We use Refs or Memoization to prevent render loops, but simple variable calculation is fine if safe.
     let noteData = null;
     let displayContent = "";
-
-    // Define realNoteId
     let realNoteId = currentMsg?.id;
 
     if (currentMsg) {
         try {
-            if (currentMsg.content && currentMsg.content.startsWith('{') && currentMsg.content.includes('NOTE_FLASH')) {
-                noteData = JSON.parse(currentMsg.content);
-                displayContent = noteData.content;
+            // Check if it's a Flash JSON payload
+            const rawContent = currentMsg.content || "";
+            if (typeof rawContent === 'string' && rawContent.startsWith('{') && rawContent.includes('NOTE_FLASH')) {
+                noteData = JSON.parse(rawContent);
+                displayContent = noteData.content || "";
                 if (noteData.noteId) realNoteId = noteData.noteId;
             } else {
-                displayContent = currentMsg.content;
+                displayContent = rawContent;
             }
         } catch (e) {
-            displayContent = currentMsg.content;
+            console.error("Error parsing note content:", e);
+            displayContent = currentMsg.content || "";
         }
     }
 
+    // Sync Edit State
     useEffect(() => {
         if (currentMsg) {
-            setEditContent(displayContent || '');
+            setEditContent(displayContent);
             setEditTitle(currentMsg.title || noteData?.title || '');
             if (initialEditMode) setEditMode(true);
         }
     }, [currentMsg, initialEditMode, displayContent]);
 
+    // Auto-Focus Textarea
     useEffect(() => {
         if (editMode && textareaRef.current) {
             textareaRef.current.focus();
-            textareaRef.current.setSelectionRange(textareaRef.current.value.length, textareaRef.current.value.length);
+            // Move cursor to end
+            const len = textareaRef.current.value.length;
+            textareaRef.current.setSelectionRange(len, len);
         }
     }, [editMode]);
 
@@ -59,10 +65,21 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const isNote = !!currentMsg.title && !isFlashMemo;
     const isSystemAlarm = isUrgent && !isFlashMemo;
 
-    // --- METADATA LOGIC ---
+    // --- METADATA LOGIC (Safely) ---
 
     // 1. History
-    const history = noteData?.shareHistory || (currentMsg.share_history ? JSON.parse(currentMsg.share_history) : []);
+    let history = [];
+    try {
+        if (noteData?.shareHistory) {
+            history = noteData.shareHistory;
+        } else if (currentMsg.share_history) {
+            history = JSON.parse(currentMsg.share_history);
+        }
+    } catch (e) {
+        console.warn("Failed to parse share history", e);
+        history = [];
+    }
+
     const lastShare = history.length > 0 ? history[history.length - 1] : null;
     const creatorName = currentMsg.creator_name || noteData?.creatorName || 'Unknown';
 
@@ -76,16 +93,34 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
     // 3. Shared With List
     const rawSharedWith = noteData?.sharedWith || currentMsg.shared_with_names || "";
-    const sharedWithList = rawSharedWith ? rawSharedWith.split(', ').filter(s => s.trim() !== '') : [];
+    const sharedWithList = typeof rawSharedWith === 'string'
+        ? rawSharedWith.split(', ').filter(s => s.trim() !== '')
+        : [];
 
     // 4. Dates
     const dateOpts = { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    const updatedDate = new Date(currentMsg.updated_at || Date.now()).toLocaleString([], dateOpts);
-    const createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleString([], dateOpts);
 
-    const handleSave = () => {
+    // Timestamp Logic
+    let displayDate = currentMsg.updated_at || Date.now();
+    let dateLabel = "Edited";
+
+    if (isFlashMemo) {
+        dateLabel = "Shared";
+        // Use message timestamp for Flash Memos
+        if (currentMsg.timestamp) displayDate = currentMsg.timestamp;
+    }
+
+    let updatedDate = "Unknown";
+    let createdDate = "Unknown";
+
+    try {
+        updatedDate = new Date(displayDate).toLocaleString([], dateOpts);
+        createdDate = new Date(currentMsg.created_at || Date.now()).toLocaleString([], dateOpts);
+    } catch (e) { /* Ignore date errors */ }
+
+    const handleSave = async () => {
         if (onSave) {
-            onSave(realNoteId, editTitle, editContent);
+            await onSave(realNoteId, editTitle, editContent);
             setEditMode(false);
             onClose();
         }
@@ -94,6 +129,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const handleShareClick = async (e) => {
         e.stopPropagation();
         let notePayload = null;
+
         if (editMode) {
             if (onSave) {
                 await onSave(realNoteId, editTitle, editContent);
@@ -103,6 +139,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
         } else {
             notePayload = { ...currentMsg, id: realNoteId, title: editTitle || currentMsg.title };
         }
+
         if (onShare) onShare(notePayload);
     };
 
@@ -127,14 +164,22 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
         headerBg = "bg-gray-800 border-gray-700";
     }
 
+    // Dynamic Z-Index for Header: Lift above overlay if dropdown is open
+    const headerZIndex = activeDropdown ? "z-[50]" : "z-[20]";
+
     return (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
             <div className={clsx("w-full max-w-2xl bg-gray-900 border-2 rounded-2xl overflow-hidden flex flex-col relative max-h-[90vh]", borderColor, shadowColor)} onClick={e => e.stopPropagation()}>
 
                 {pulseClass && <div className={`absolute inset-0 ${pulseClass} pointer-events-none`} />}
 
-                {/* ✅ HEADER: Fixed to Z-20 so Overlay (Z-40) can cover it */}
-                <div className={clsx("p-6 flex justify-between items-start z-[20] border-b relative transition-none", headerBg)}>
+                {/* ✅ CLICK OUTSIDE OVERLAY (Z-30) */}
+                {activeDropdown && (
+                    <div className="fixed inset-0 z-[30] cursor-default" onClick={() => setActiveDropdown(null)} />
+                )}
+
+                {/* HEADER (Z-20 usually, Z-50 if dropdown active) */}
+                <div className={clsx("p-6 flex justify-between items-start border-b relative transition-none", headerBg, headerZIndex)}>
                     <div className="flex items-start gap-3 w-full">
                         <div className="mt-1">
                             {isSystemAlarm && <AlertTriangle className="text-white animate-bounce" size={32} />}
@@ -195,7 +240,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                         {sharedWithList.map((u, i) => (
                                             <div key={i} className="flex justify-between items-center py-1.5 px-2 group hover:bg-gray-800 rounded transition-colors">
                                                 <span className="text-gray-300">{u}</span>
-                                                {/* REMOVE BUTTON - High Z to stay on top of menu */}
+                                                {/* REMOVE BUTTON */}
                                                 {isOwner && onUnshare && (
                                                     <button
                                                         onClick={(e) => {
@@ -203,7 +248,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                                             e.stopPropagation();
                                                             onUnshare(realNoteId, u.trim());
                                                         }}
-                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer relative z-[60]"
+                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer relative z-50"
                                                         title="Revoke Access"
                                                     >
                                                         <X size={14} />
@@ -218,7 +263,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                 {(updatedDate) && (
                                     <HeaderDropdown
                                         icon={<Calendar size={12} />}
-                                        label={`Edited: ${updatedDate}`}
+                                        label={`${dateLabel}: ${updatedDate}`}
                                         isActive={activeDropdown === 'DATES'}
                                         onToggle={() => toggleDropdown('DATES')}
                                         color="text-gray-400"
@@ -280,13 +325,9 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     );
 };
 
-// ✅ REUSABLE DROPDOWN
-// Logic:
-// 1. When Active: wrapper is z-[50] to rise above the z-[40] overlay.
-// 2. Header stays at z-[20].
-// 3. Overlay covers screen at z-[40].
+// Reusable Dropdown
 const HeaderDropdown = ({ icon, label, children, isActive, onToggle, color = "text-gray-400" }) => (
-    <div className={clsx("relative", isActive ? "z-[50]" : "z-auto")}>
+    <div className={clsx("relative", isActive ? "z-[40]" : "z-auto")}>
         <button
             onClick={(e) => { e.stopPropagation(); onToggle(); }}
             className={`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`}
@@ -295,18 +336,9 @@ const HeaderDropdown = ({ icon, label, children, isActive, onToggle, color = "te
         </button>
 
         {isActive && (
-            <>
-                {/* 1. INVISIBLE OVERLAY (Z-40) - Detects clicks outside. Covers Header (Z-20) */}
-                <div
-                    className="fixed inset-0 z-[40] cursor-default"
-                    onClick={(e) => { e.stopPropagation(); onToggle(); }}
-                />
-
-                {/* 2. MENU (Z-50) - Sits on top */}
-                <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100 z-[50]" onClick={e => e.stopPropagation()}>
-                    {children}
-                </div>
-            </>
+            <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100 z-[50]" onClick={e => e.stopPropagation()}>
+                {children}
+            </div>
         )}
     </div>
 );
