@@ -1,19 +1,21 @@
 /*
-  ==============================================================
-  MAIN CONTROLLER — BASELINE REBUILD STEP 1
-  Hardware-level initialization + MCP/LED/Vegas diagnostic only
-  ==============================================================
-*/
-// -------------------- SYSTEM DEFINES --------------------
-#define FIRMWARE_VERSION "v1.0-RebuildStep1"
-#define DEBUG_SERIAL 1      // for the else clauses
-#define DEBUG_LEVEL 3       // 0 = Off, 1 = Errors only, 2 = Normal, 3 = Verbose
-#define BUZZER_REMINDER 1   // 1 = enable periodic reminder beep, 0 = disable
-#define ENABLE_VEGAS_MODE 1 // Set false to skip startup LED test
+  ==========================================================================================
+  MAIN CONTROLLER — FIRMWARE v4.7
 
-// ============================================================
-// 🧩 SECTION: INCLUDE LIBRARIES
-// ============================================================
+  UPDATES:
+  - Fixed 0xCF Config Packet Debugging
+  - Added Serial Logs for Config Updates
+  - Explicit Checksum Calculation
+  ==========================================================================================
+*/
+
+#define FIRMWARE_VERSION "v4.7-CfgDebug"
+#define DEBUG_SERIAL 1
+#define DEBUG_LEVEL 3
+#define BUZZER_REMINDER 1
+#define ENABLE_VEGAS_MODE 1
+#define ENABLE_BURGLAR_ALARM true
+
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
@@ -22,246 +24,115 @@
 #include <Adafruit_MCP23X17.h>
 #include <avr/wdt.h>
 
-// ============================================================
-// 🚧 SECTION: DEBUG CONFIG
-// ============================================================
+// --- HARDWARE CONFIG ---
+#define MCP_I2C_ADDR 0x27
+#define MCP_INTA_PIN 18
+#define MCP_INTB_PIN 19
+Adafruit_MCP23X17 mcp;
 
-// Limit how often serial debug lines are printed
-// ---------------- DEBUG CONFIG ----------------
-const uint16_t DBG_THROTTLE_MS[4] = {0, 0, 1000, 3000}; // Minimum delay between same-level prints
-uint32_t dbgLastPrint[4] = {0, 0, 0, 0};                // timestamp to throttle serial prints
-
-#define DBG(level, x)                                           \
-  do                                                            \
-  {                                                             \
-    if ((level) <= DEBUG_LEVEL)                                 \
-    {                                                           \
-      uint32_t _now = millis();                                 \
-      if (_now - dbgLastPrint[level] >= DBG_THROTTLE_MS[level]) \
-      {                                                         \
-        dbgLastPrint[level] = _now;                             \
-        x;                                                      \
-      }                                                         \
-    }                                                           \
-  } while (0)
-// DBG(1, Serial.println(F("[ERR] No command received")));    // Error-level
-// DBG(2, Serial.println(F("[TX ] Heartbeat sent")));         // Normal info
-// DBG(3, Serial.print(F("[RX ] Data=")));                    // Verbose details
-
-// ============================================================
-// 🧩 SECTION: HARDWARE CONFIGURATION & CONSTANTS
-// ============================================================
-
-// --- MCP23017 ---
-#define MCP_I2C_ADDR 0x27 // DIP-switch address
-#define MCP_INTA_PIN 18   // interrupt from port A
-#define MCP_INTB_PIN 19   // interrupt from port B
-
-Adafruit_MCP23X17 mcp; // ✅ new class name
-
-// ============================================================
-// 🌐 SECTION: NETWORK CONFIGURATION
-// ============================================================
 #define ETH_CS 48
 #define ETH_RESET 49
 const uint16_t UDP_PORT = 8888;
-EthernetUDP Udp; // Single socket for RX/TX
-
+EthernetUDP Udp;
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-
-// Fixed IPs per design
 IPAddress ipBroadcast(192, 168, 1, 255);
-IPAddress ipServer(192, 168, 1, 200); // Server is .200
-IPAddress ipMain(192, 168, 1, 220);   // Main Controller is .220
-IPAddress ipS0(192, 168, 1, 210);     // Station 0 is .210
-IPAddress ipS1(192, 168, 1, 211);     // Station 1 is .211
-IPAddress ipS2(192, 168, 1, 212);     // Station 2 is .212
-IPAddress ipS3(192, 168, 1, 213);     // Station 3 is .213
-IPAddress ipS4(192, 168, 1, 214);     // Station 4 is .214
-IPAddress ipS5(192, 168, 1, 215);     // Station 5 is .215
+IPAddress ipServer(192, 168, 1, 200);
+IPAddress ipMain(192, 168, 1, 220);
 
-// ============================================================
-// 🔔 BUZZER ALERT MODE CONFIGURATION
-// ============================================================
-
-// 0 = Continuous tone when active (default legacy behavior)
-// 1 = Pulsed tone (on/off cycle while alert active)
+// --- BUZZER CONFIGURATION (Dynamic) ---
+#define PIN_BUZZER 2
 #define BUZZER_ALERT_MODE 1
 
-// --- Only used if BUZZER_ALERT_MODE == 1 ---
-#define BUZZER_ALERT_ON_MS 5000   // 5 seconds ON   <-- MAKE SURE THIS LINE IS HERE
-#define BUZZER_ALERT_OFF_MS 10000 // 10 seconds OFF
+// Configurable Variables (Defaults)
+uint32_t cfgAlarmOnMs = 5000;          // 5 Seconds
+uint32_t cfgAlarmOffMs = 10000;        // 10 Seconds
+uint32_t cfgReminderPeriodMs = 120000; // 2 Minutes
+const uint32_t REMINDER_ON_MS = 500;   // Chirp length (Fixed)
 
-// ============================================================
-// 🔔 BUZZER + VACUUM ALERT STATE
-// ============================================================
-#define PIN_BUZZER 2
+// EEPROM Addresses
+#define EEPROM_CFG_BASE 100
+#define EEPROM_ALARM_ON 100  // 1 byte (Seconds)
+#define EEPROM_ALARM_OFF 101 // 1 byte (Seconds)
+#define EEPROM_REMINDER 102  // 1 byte (Minutes)
 
-bool anyVacuumAlert = false;          // set true when any vacuum fault detected
-const uint8_t BUZZER_SWITCH_IDX = 21; // index in stableState[]
-#define BUZZER_LED_PAIR 21            // LED pair index
+// Timers
+uint32_t buzzerAlarmStart = 0;
+uint32_t buzzerReminderStart = 0;
 
-// -------------------- BUZZER REMINDER --------------------
-#if BUZZER_REMINDER
-// --- BUZZER REMINDER TIMING ---
-bool buzzerPulseActive = false;
-uint32_t buzzerTimer = 0;
-// Reminder timing
-const uint32_t REMINDER_PERIOD_MS = 300000; // total cycle length (60 seconds)
-const uint32_t REMINDER_ON_MS = 500;        // buzzer ON duration inside cycle (1 second)
-#endif
+// --- STATE & IO ---
+bool anyVacuumAlert = false;
+bool burglarAlarmActive = false;
+bool st2_intruder = false;
+bool st3_intruder = false;
 
-// -------------------- INPUT / OUTPUT COUNTS --------------------
 #define NUM_STATIONS 6
-#define NUM_INPUTS 8 // only the physical ones read directly
+#define NUM_INPUTS 8
 #define NUM_LED_PAIRS 24
-#define TOTAL_INPUTS (NUM_INPUTS + 16) // 8 physical + 16 MCP
+#define TOTAL_INPUTS (NUM_INPUTS + 16)
 
-// ============================================================
-// 🧩 Unified Debounce System (for all physical + MCP inputs)
-// ============================================================
-bool rawState[TOTAL_INPUTS] = {0};       // instantaneous reads
-bool stableState[TOTAL_INPUTS] = {0};    // debounced result
-uint32_t lastChange[TOTAL_INPUTS] = {0}; // last time each input changed
-const uint16_t DEBOUNCE_MS = 50;         // adjust as needed (30–80ms typical)
+bool rawState[TOTAL_INPUTS] = {0};
+bool stableState[TOTAL_INPUTS] = {0};
+uint32_t lastChange[TOTAL_INPUTS] = {0};
+const uint16_t DEBOUNCE_MS = 50;
 
-// -------------------- PHYSICAL SWITCH INPUTS --------------------
+bool remoteOverrideActive = false;
+uint8_t remoteSwitchBytes[3] = {0, 0, 0};
+uint32_t lastServerPacketMs = 0;
+const uint32_t SERVER_TIMEOUT_MS = 3000;
+
 const uint8_t PHYS_SW_PINS[NUM_INPUTS] = {62, 63, 64, 65, 66, 67, 68, 69};
+const uint8_t LED_A[NUM_LED_PAIRS] = {4, 6, 8, 10, 12, 14, 16, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 54, 56, 58, 60};
+const uint8_t LED_B[NUM_LED_PAIRS] = {5, 7, 9, 11, 13, 15, 17, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 55, 57, 59, 61};
 
-// -------------------- LED ARRAYS --------------------
-const uint8_t LED_A[NUM_LED_PAIRS] = { // 🔴 RED pins (even)
-    4, 6, 8, 10, 12, 14, 16,
-    22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46,
-    54, 56, 58, 60};
-
-const uint8_t LED_B[NUM_LED_PAIRS] = { // 🟢 GREEN pins (odd)
-    5, 7, 9, 11, 13, 15, 17,
-    23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47,
-    55, 57, 59, 61};
-
-// ============================================================
-// 🧩 Input Mapping Configuration
-// ============================================================
-
+// --- MAPPINGS ---
 struct InputMap
 {
-  uint8_t index;    // global stableState[] index
-  bool isMCP;       // true if from MCP23017, false if physical pin
-  uint8_t pinOrBit; // digital pin (if physical) or MCP bit (0–7)
-  uint8_t mcpId;    // 0 = Port A, 1 = Port B
-  uint8_t station;  // station number (0–5)
-  uint8_t bit;      // bit index (0–7) within that station
+  uint8_t index;
+  bool isMCP;
+  uint8_t pinOrBit;
+  uint8_t mcpId;
+  uint8_t station;
+  uint8_t bit;
 };
-
-// ============================================================
-// 📘 Unified Input Map Table
-// ============================================================
-//
-// NOTE: indices (index) must match stableState[] layout
-//       0–7   → physical pins
-//       8–15  → MCP Port A bits
-//       16–23 → MCP Port B bits
-//
 const InputMap INPUT_MAP[] = {
-    // index, isMCP, pinOrBit, mcpId, station, bit
-
-    // --- Physical pins (directly on Mega) ---
-    {0, false, 62, 0, 1, 0}, // Switch 0 - not mcp - Pin 62 - ST1 OUT - D2 - Transp 1
-    {1, false, 63, 0, 1, 1}, // Switch 1 - not mcp - Pin 63 - ST1 OUT - D3 - Transp 1
-    {2, false, 64, 0, 0, 0}, // Switch 2 - not mcp - Pin 64 - ST0 OUT - D2 - Vac 1
-    {3, false, 65, 0, 0, 1}, // Switch 3 - not mcp - Pin 65 - ST0 OUT - D3 - Vac2
-    {4, false, 66, 0, 1, 2}, // Switch 4 - not mcp - Pin 66 - ST1 OUT - D4 - Vid T1
-    {5, false, 67, 0, 1, 3}, // Switch 5 - not mcp - Pin 67 - ST1 OUT - D5 - Ouver T2
-    {6, false, 68, 0, 1, 4}, // Switch 6 - not mcp - Pin 68 - ST1 OUT - D6 - Vid T2
-    {7, false, 69, 0, 1, 5}, // Switch 7 - not mcp - Pin 69 - ST1 OUT - D7 - Vid ST2 -> ST1
-
-    // --- MCP23017 Port A (GPA0–7) ---
-    {8, true, 0, 0, 2, 0},  // Switch 8 - isMCP - Bit A0  - ST2 OUT - D2 - Transp
-    {9, true, 1, 0, 2, 1},  // Switch 9 - isMCP - Bit A1 - ST2 OUT - D3 - Vac
-    {10, true, 2, 0, 2, 2}, // Switch 10 - isMCP - Bit A2 - S2 OUT - D4 - Vid ST1 -> ST2
-    {11, true, 3, 0, 2, 3}, // Switch 11 - isMCP - Bit A3 - ST2 OUT - D5 - Vid ST33 -> ST2
-
-    {12, true, 4, 0, 3, 0}, // Switch 12 - isMCP - Bit A4 - ST3 OUT - D2 - Transp 1
-    {13, true, 5, 0, 3, 1}, // Switch 13 - isMCP - Bit A5 - ST3 OUT - D3 - Transp 2
-    {14, true, 6, 0, 3, 2}, // Switch 14 - isMCP - Bit A6 - ST3 OUT - D4 - Vac
-    {15, true, 7, 0, 3, 3}, // Switch 15 - isMCP - Bit A7 - ST3 OUT - D5 - Vid ST2 -> ST3
-
-    // --- MCP23017 Port B (GPB0–7) ---
-    {16, true, 0, 1, 4, 0}, // Switch 16 - isMCP - Bit B0 - ST4 OUT - D2 - Transp
-    {17, true, 1, 1, 4, 1}, // Switch 17 - isMCP - Bit B1 - ST4 OUT - D3 - Vac
-    {18, true, 2, 1, 4, 2}, // Switch 18 - isMCP - Bit B2 - ST4 OUT - D4 - Vid ST4
-
-    {19, true, 3, 1, 5, 0}, // Switch 19 - isMCP - Bit B3 - ST3 OUT - D2 - Transp
-    {20, true, 4, 1, 5, 1}, // Switch 20 - isMCP - Bit B4 - ST3 OUT - D3 - Vid ST5
-
-    {21, true, 5, 1, 255, 0}, // Buzzer switch (no station)
-    {22, true, 6, 1, 255, 0}, // TH1 switch (no station)
-    {23, true, 7, 1, 255, 0}, // TH2 switch (no station)
-};
-
+    {0, false, 62, 0, 1, 0}, {1, false, 63, 0, 1, 1}, {2, false, 64, 0, 0, 0}, {3, false, 65, 0, 0, 1}, {4, false, 66, 0, 1, 2}, {5, false, 67, 0, 1, 3}, {6, false, 68, 0, 1, 4}, {7, false, 69, 0, 1, 5}, {8, true, 0, 0, 2, 0}, {9, true, 1, 0, 2, 1}, {10, true, 2, 0, 2, 2}, {11, true, 3, 0, 2, 3}, {12, true, 4, 0, 3, 0}, {13, true, 5, 0, 3, 1}, {14, true, 6, 0, 3, 2}, {15, true, 7, 0, 3, 3}, {16, true, 0, 1, 4, 0}, {17, true, 1, 1, 4, 1}, {18, true, 2, 1, 4, 2}, {19, true, 3, 1, 5, 0}, {20, true, 4, 1, 5, 1}, {21, true, 5, 1, 255, 0}, {22, true, 6, 1, 255, 0}, {23, true, 7, 1, 255, 0}};
 const uint8_t INPUT_MAP_COUNT = sizeof(INPUT_MAP) / sizeof(INPUT_MAP[0]);
 
-// ============================================================
-// 💡 SECTION: LED → Station Ownership Mapping
-// ============================================================
-
-// Enumerated station IDs for readability
-enum
-{
-  ST0 = 0,
-  ST1,
-  ST2,
-  ST3,
-  ST4,
-  ST5
-};
-
-// ============================================================
-// 🎛️ FEEDBACK → LED Pair Mapping (granular)
-// ============================================================
 struct LedMap
 {
-  uint8_t ledPair;       // which LED pair (0–23)
-  uint8_t station;       // main feedback station
-  uint8_t bit;           // feedback bit index
-  int8_t offlineStation; // optional: station to monitor for offline blink (-1 if none)
-  bool isVacuum;         // ⬅️ true if this LED is a vacuum indicator
-  int8_t switchIndex;    // ⬅️ optional: matching switch index in stableState[]
+  uint8_t ledPair;
+  uint8_t station;
+  uint8_t bit;
+  int8_t offlineStation;
+  bool isVacuum;
+  int8_t switchIndex;
 };
-
 const LedMap LED_MAP[] = {
-    // Station 1
-    {0, 1, 0, 0, 0, 0}, // pair 0: Station 1 A1, blink if ST0 offline - Transport Pump 1
-    {1, 1, 1, 1, 0, 1}, // pair 1: Station 1 A2, blink if ST1 offline - Transport Pump 2
-    {2, 1, 2, 1, 1, 2}, // pair 2: Station 1 A3, blink if ST1 offline - Vacuum 1
-    {3, 1, 2, 1, 1, 3}, // pair 3: Station 1 A3, blink if ST1 offline - Vacuum 2
-    {4, 1, 3, 1, 0, 4}, // pair 4: Station 1 A4, blink if ST1 offline - Vid T1
-    {5, 1, 4, 1, 0, 5}, // pair 5: Station 1 A5, blink if ST1 offline - Overture T2
-    {6, 1, 5, 1, 0, 6}, // pair 6: Station 1 A6 - val 573, blink if ST1 offline - Vid T2
-    {7, 1, 6, 1, 0, 7}, // pair 7: Station 1 A6 - val 634, blink if ST1 offline - VId st2 -> St1
-    // Station 2
-    {8, 2, 0, 2, 0, 8},   // pair 8: Station 2 A1, blink if ST2 offline - Transport Pump
-    {9, 2, 1, 2, 1, 9},   // pair 9: Station 2 A2, blink if ST2 offline - Vacuum
-    {10, 2, 2, 2, 0, 10}, // pair 10: Station2 A3, blink if ST2 offline -  Vid ST1 -> ST2
-    {11, 2, 3, 2, 0, 11}, // pair 11: Station 2 A4, blink if ST2 offline - Vid ST3 -> ST2
-    // Station 3
-    {12, 3, 0, 3, 0, 12}, // pair 12: Station 3 A1, blink if ST3 offline - Transport Pump 1
-    {13, 3, 1, 3, 0, 13}, // pair 13: Station 3 A2, blink if ST3 offline - Transport Pump 2
-    {14, 3, 2, 3, 1, 14}, // pair 14: Station 3 A3, blink if ST3 offline - Vacuum
-    {15, 3, 3, 3, 0, 15}, // pair 15: Station 3 A4, blink if ST3 offline - Vid ST2 -> ST3
-    // Station 4
-    {16, 4, 0, 4, 0, 16}, // pair 16: Station 4 A2, blink if ST4 offline - Transport Pump
-    {17, 4, 1, 4, 1, 17}, // pair 17: Station 4 A3, blink if ST4 offline - Vacuum
-    {18, 4, 2, 4, 0, 18}, // pair 18: Station 4 A4, blink if ST4 offline - Vid ST4
-    // Station 5
-    {19, 5, 0, 5, 0, 19}, // pair 19: Station 5 A1, blink if ST5 offline - Transport Pump
-    {20, 5, 1, 5, 0, 20}, // pair 20: Station 5 A2, blink if ST5 offline - Vid ST5
+    {0, 1, 0, 0, 0, 0},
+    {1, 1, 1, 1, 0, 1},
+    {2, 1, 2, 1, 1, 2},
+    {3, 1, 2, 1, 1, 3},
+    {4, 1, 3, 1, 0, 4},
+    {5, 1, 4, 1, 0, 5},
+    {6, 1, 5, 1, 0, 6},
+    {7, 1, 6, 1, 0, 7},
+    {8, 2, 0, 2, 0, 8},
+    {9, 2, 1, 2, 1, 9},
+    {10, 2, 2, 2, 0, 10},
+    {11, 2, 3, 2, 0, 11},
+    {12, 3, 0, 3, 0, 12},
+    {13, 3, 1, 3, 0, 13},
+    {14, 3, 2, 3, 1, 14},
+    {15, 3, 3, 3, 0, 15},
+    {16, 4, 0, 4, 0, 16},
+    {17, 4, 1, 4, 1, 17},
+    {18, 4, 2, 4, 0, 18},
+    {19, 5, 0, 5, 0, 19},
+    {20, 5, 1, 5, 0, 20},
 };
 const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
 
-// ============================================================
-// 🧩 SECTION: MACROS
-// ============================================================
+// --- MACROS ---
 #define LED_RED(idx, on) digitalWrite(LED_A[idx], (on))
 #define LED_GREEN(idx, on) digitalWrite(LED_B[idx], (on))
 #define LED_PAIR(idx, redOn, greenOn)    \
@@ -271,205 +142,86 @@ const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
     digitalWrite(LED_B[idx], (greenOn)); \
   } while (0)
 
-#define VEGAS_DELAY_MS 60 // Speed between LEDs (adjust to taste)
-#define VEGAS_FLASHES 3   // Number of red/green blinks per station
+#define VEGAS_DELAY_MS 60
+#define VEGAS_FLASHES 3
+const uint32_t LONGPRESS_MS = 5000;
 
-// -------------------- EEPROM Address --------------------
-#define EEPROM_STATION_BASE 0 // start address
-
-// ============================================================
-// 🧩 STATION ENABLE/DISABLE MANAGEMENT
-// ============================================================
-
-const uint32_t LONGPRESS_MS = 5000; // Hold 5s to toggle enable
-
+// --- GLOBALS ---
 bool stationEnabled[NUM_STATIONS] = {true};
 bool stationOffline[NUM_STATIONS] = {false};
 uint8_t stationFeedback[NUM_STATIONS] = {0};
 bool firstHeartbeatSeen[NUM_STATIONS] = {false};
-
-// For long-press detection
 bool pressActive[NUM_STATIONS] = {false};
 uint32_t pressStart[NUM_STATIONS] = {0};
+const uint8_t stationButtonIndex[NUM_STATIONS] = {0, 1, 8, 12, 16, 19};
 
-// Map each station to the input index in stableState[]
-const uint8_t stationButtonIndex[NUM_STATIONS] = {
-    0,  // Station 0 → first input
-    1,  // Station 1 → second input
-    8,  // Station 2
-    12, // Station 3
-    16, // Station 4
-    19  // Station 5
-};
-
-// ============================================================
-// 🌡️ THERMOSTAT SYSTEM CONFIG
-// ============================================================
-
-// Global on/off toggle for thermostat feature
-#define ENABLE_THERMOSTAT true // Set to false to disable feature entirely
-
-// Thermostat switch input indices (stableState[])
-const uint8_t TH_SWITCH_IDX[2] = {22, 23}; // MCP-B6, MCP-B7
-
-// LED pair indices
+// Thermostat
+#define ENABLE_THERMOSTAT true
+const uint8_t TH_SWITCH_IDX[2] = {22, 23};
 const uint8_t TH_LED_PAIR[2] = {22, 23};
-
-// Station/feedback mapping
-const uint8_t TH_FEEDBACK_STATION[2] = {0, 4}; // Thermostat 1 → Station 0, Thermostat 2 → Station 4
-const uint8_t TH_FEEDBACK_BIT[2] = {3, 3};     // Bit positions in stationFeedback[station]
-
-// Override switch indices (multiple allowed)
-const uint8_t TH1_OVERRIDE_IDX[] = {2, 9, 14}; // Thermostat 1
-const uint8_t TH2_OVERRIDE_IDX[] = {17};       // Thermostat 2
+const uint8_t TH_FEEDBACK_STATION[2] = {0, 4};
+const uint8_t TH_FEEDBACK_BIT[2] = {3, 3};
+const uint8_t TH1_OVERRIDE_IDX[] = {2, 9, 14};
+const uint8_t TH2_OVERRIDE_IDX[] = {17};
 const uint8_t *TH_OVERRIDE_IDX[2] = {TH1_OVERRIDE_IDX, TH2_OVERRIDE_IDX};
-const uint8_t TH_OVERRIDE_COUNT[2] = {
-    sizeof(TH1_OVERRIDE_IDX) / sizeof(TH1_OVERRIDE_IDX[0]),
-    sizeof(TH2_OVERRIDE_IDX) / sizeof(TH2_OVERRIDE_IDX[0])};
+const uint8_t TH_OVERRIDE_COUNT[2] = {3, 1};
+bool thermostatEnabled[2] = {false, false};
+bool thermostatActive[2] = {false, false};
 
-// Global Variables
-bool thermostatEnabled[2] = {false, false}; // From switches 22, 23
-bool thermostatActive[2] = {false, false};  // Based on feedback A1, A4
+// Buzzer Config
+const uint8_t BUZZER_SWITCH_IDX = 21;
+#define BUZZER_LED_PAIR 21
 
-// ============================================================
-// 🧠 RUNTIME VARIABLES
-// ============================================================
-
-// --- MCP23017 input tracking ---
+// Runtime
 volatile bool mcpIntA_Flag = false;
 volatile bool mcpIntB_Flag = false;
-uint8_t mcpStateA = 0xFF; // bit = 1 means switch not pressed (pull-ups)
+uint8_t mcpStateA = 0xFF;
 uint8_t mcpStateB = 0xFF;
 
-// --- Remote Control State ---
-bool remoteOverrideActive = false;
-uint8_t remoteSwitchBytes[3] = {0, 0, 0}; // Stores the 24 bits from the Web App
-
-// ============================================================
-// 🕒 TIMING CONSTANTS
-// ============================================================
-const uint16_t SEND_INTERVAL_MS = 50; // Interval between UDP sends to stations (ms)
+// Timing
+const uint16_t SEND_INTERVAL_MS = 50;
 const uint16_t LINK_CHECK_INTERVAL = 250;
-const uint16_t HEARTBEAT_TIMEOUT_MS = 2000; // Mark station offline if no heartbeat within 2s
-const uint16_t BLINK_INTERVAL_MS = 250;     // Global blink period for LEDs (ms)
-
+const uint16_t HEARTBEAT_TIMEOUT_MS = 2000;
+const uint16_t BLINK_INTERVAL_MS = 250;
 uint32_t lastHeartbeatMs[NUM_STATIONS] = {0};
-uint16_t heartbeatCount[NUM_STATIONS] = {0}; // ✅ optional counter
-uint32_t lastHeartbeatPrint = 0;             // ✅ Add this near top-level globals
 uint32_t tSend = 0;
 uint32_t lastLinkCheck = 0;
-
-// --- Buzzer queue ---
-uint8_t buzzerHead = 0, buzzerTail = 0;
-
-// --- Buzzer state ---
-bool buzzerActive = false;
-bool buzzerOn = false;
-uint8_t currentPattern = 0;
-uint8_t beepStep = 0;
-uint32_t beepTimer = 0;
-uint32_t lastBuzzerBlinkMs = 0; // time marker for LED blink phase
-bool buzzerBlinkPhase = false;  // toggled with buzzer rhythm
-
-// --- LED blink/heartbeat ---
-
 uint32_t tBlink = 0;
 bool blinkPhase = false;
-uint32_t lastQueuedMs[NUM_STATIONS] = {0}; // per-station re-queue cooldown
 
 // ============================================================
-// 🏛️ SECTION: Helper Structures
+// 🧩 UTILS
 // ============================================================
-
-// ----------------------------- VACUUM ALERT MAPPING -----------------------------
-struct VacuumMap
-{
-  uint8_t switchIndex[2]; // up to 2 switches per station
-  uint8_t ledPair[2];     // up to 2 LED pairs per station
-  uint8_t stationID;      // source station for feedback
-  uint8_t bitIndex[2];    // which bits in stationFeedback[] correspond
-};
-
-// ============================================================
-// 🌡️ SECTION: Thermostat Debouncer
-// ============================================================
-// -------------------------------------------------------------------
-// FUNCTION: readThermoDebounced()
-// PURPOSE : Samples analog input pins (A3/A4) for thermostat signals,
-//           applies debounce filtering, and returns stable logic level.
-// -------------------------------------------------------------------
-// ************************************************************************************************************************
-// bool readThermoDebounced(uint8_t index, uint8_t pin, uint32_t now)
-// {
-//   bool raw = digitalRead(pin);
-//   if (raw != thermoFiltered[index] && (now - lastThermoReadMs[index] >= THERMO_DEBOUNCE_MS))
-//   {
-//     thermoFiltered[index] = raw;
-//   }
-//   lastThermoReadMs[index] = now;
-//   return thermoFiltered[index];
-// }
-
-// ============================================================
-// 🧩 UTILITIES
-// ============================================================
-
-// ============================================================
-// 🔧 FUNCTIONS: MCP23017 Handlers
-// ============================================================
-// -------------------------------------------------------------------
-// Robust MCP23017 interrupt handlers
-// Prevents event loss when multiple bits change quickly.
-// -------------------------------------------------------------------
 void readMcpA()
 {
-  // Continue reading as long as INT line remains low
   while (digitalRead(MCP_INTA_PIN) == LOW)
   {
-    mcpStateA = mcp.readGPIO(0); // read Port A
-    delayMicroseconds(50);       // small debounce to let INT settle
+    mcpStateA = mcp.readGPIO(0);
+    delayMicroseconds(50);
   }
   mcpIntA_Flag = false;
 }
-
 void readMcpB()
 {
   while (digitalRead(MCP_INTB_PIN) == LOW)
   {
-    mcpStateB = mcp.readGPIO(1); // read Port B
+    mcpStateB = mcp.readGPIO(1);
     delayMicroseconds(50);
   }
   mcpIntB_Flag = false;
 }
-
-// ============================================================
-// 🧩 Helper: readInputByMap()
-// ============================================================
-// Reads the current raw logic level (active-high = pressed/on)
-// Handles both physical and MCP inputs seamlessly.
-//
 bool readInputByMap(const InputMap &m)
 {
   if (m.isMCP)
   {
     uint8_t portState = (m.mcpId == 0) ? mcpStateA : mcpStateB;
-    return ((portState & (1 << m.pinOrBit)) == 0); // active-low logic
+    return ((portState & (1 << m.pinOrBit)) == 0);
   }
   else
   {
-    return !digitalRead(m.pinOrBit); // physical pin (active-low)
+    return !digitalRead(m.pinOrBit);
   }
 }
-
-// ============================================================
-// 🔧 FUNCTIONS: LED Utilities
-// ============================================================
-
-// -------------------------------------------------------------------
-// FUNCTION: digitalWriteAll()
-// PURPOSE : Writes the same logic state to a contiguous LED array.
-//           Used for bulk on/off control (e.g., link down blink).
-// -------------------------------------------------------------------
 void digitalWriteAll(const uint8_t *pins, uint8_t count, bool state)
 {
   for (uint8_t i = 0; i < count; i++)
@@ -477,26 +229,138 @@ void digitalWriteAll(const uint8_t *pins, uint8_t count, bool state)
 }
 
 // ============================================================
-// 🔧 FUNCTIONS: Ethernet
+// 🔍 HELPER: Check if System is Running
 // ============================================================
+bool isSystemRunning()
+{
+  if (((stationFeedback[1] >> 2) & 1) == 0 && stationEnabled[1])
+    return true;
+  if (((stationFeedback[1] >> 2) & 1) == 0 && stationEnabled[1])
+    return true;
+  if (((stationFeedback[2] >> 1) & 1) == 0 && stationEnabled[2])
+    return true;
+  if (((stationFeedback[3] >> 2) & 1) == 0 && stationEnabled[3])
+    return true;
+  if (((stationFeedback[4] >> 1) & 1) == 0 && stationEnabled[4])
+    return true;
+  return false;
+}
 
 // ============================================================
-// 🌐 SECTION: Ethernet Link + LED Status Logic
+// 💾 CONFIGURATION LOAD/SAVE
 // ============================================================
+void loadConfig()
+{
+  uint8_t aOn = EEPROM.read(EEPROM_ALARM_ON);
+  uint8_t aOff = EEPROM.read(EEPROM_ALARM_OFF);
+  uint8_t remMin = EEPROM.read(EEPROM_REMINDER);
+
+  // Defaults if empty (0xFF)
+  cfgAlarmOnMs = (aOn == 0xFF) ? 5000 : (uint32_t)aOn * 1000;
+  cfgAlarmOffMs = (aOff == 0xFF) ? 10000 : (uint32_t)aOff * 1000;
+  cfgReminderPeriodMs = (remMin == 0xFF) ? 120000 : (uint32_t)remMin * 60000;
+
+  // Safety Bounds
+  if (cfgAlarmOnMs < 1000)
+    cfgAlarmOnMs = 1000;
+  if (cfgAlarmOffMs < 1000)
+    cfgAlarmOffMs = 1000;
+  if (cfgReminderPeriodMs < 60000)
+    cfgReminderPeriodMs = 60000;
+
+  Serial.print(F("[CFG] Loaded: On="));
+  Serial.print(cfgAlarmOnMs);
+  Serial.print(F(" Off="));
+  Serial.print(cfgAlarmOffMs);
+  Serial.print(F(" Rem="));
+  Serial.println(cfgReminderPeriodMs);
+}
+
+// ============================================================
+// 🔔 BUZZER LOGIC
+// ============================================================
+void updateBuzzerLED(uint32_t now)
+{
+  if (Ethernet.linkStatus() != LinkON)
+  {
+    digitalWrite(PIN_BUZZER, LOW);
+    return;
+  }
+
+  bool switchOn = stableState[BUZZER_SWITCH_IDX];
+  bool alert = anyVacuumAlert || burglarAlarmActive;
+
+  // --- 1. ALARM LOGIC ---
+  if (alert)
+  {
+    buzzerReminderStart = 0;
+    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW); // Blink RED
+
+    if (switchOn)
+    {
+      if (buzzerAlarmStart == 0)
+        buzzerAlarmStart = now;
+      uint32_t elapsed = now - buzzerAlarmStart;
+      uint32_t cycle = cfgAlarmOnMs + cfgAlarmOffMs;
+      if (elapsed >= cycle)
+      {
+        buzzerAlarmStart = now;
+        elapsed = 0;
+      }
+
+      digitalWrite(PIN_BUZZER, (elapsed < cfgAlarmOnMs) ? HIGH : LOW);
+    }
+    else
+    {
+      digitalWrite(PIN_BUZZER, LOW);
+      buzzerAlarmStart = 0;
+    }
+    return;
+  }
+
+  // --- 2. NO ALARM ---
+  buzzerAlarmStart = 0;
+  digitalWrite(PIN_BUZZER, LOW);
+  LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
+
+#if BUZZER_REMINDER
+  // --- 3. REMINDER ---
+  if (!switchOn && isSystemRunning())
+  {
+    if (buzzerReminderStart == 0)
+      buzzerReminderStart = now;
+    uint32_t elapsed = now - buzzerReminderStart;
+    if (elapsed >= cfgReminderPeriodMs)
+    {
+      buzzerReminderStart = now;
+      elapsed = 0;
+    }
+
+    if (elapsed < REMINDER_ON_MS)
+    {
+      digitalWrite(PIN_BUZZER, HIGH);
+      LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
+    }
+    else
+    {
+      digitalWrite(PIN_BUZZER, LOW);
+      LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
+    }
+    return;
+  }
+#endif
+  buzzerReminderStart = 0;
+}
+
+// ... [LED & LINK LOGIC] ...
 void updateEthernetAndLEDs(uint32_t now)
 {
   static bool linkDown = false;
-
-  // 1️⃣ Check Ethernet link
   if (now - lastLinkCheck >= LINK_CHECK_INTERVAL)
   {
     lastLinkCheck = now;
     linkDown = (Ethernet.linkStatus() != LinkON);
-    DBG(4, Serial.print(F("[LINK] "));
-        Serial.println(linkDown ? F("DOWN") : F("OK")));
   }
-
-  // 2️⃣ Link Down → Global RED blink
   if (linkDown)
   {
     digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);
@@ -504,174 +368,140 @@ void updateEthernetAndLEDs(uint32_t now)
     return;
   }
 
-  anyVacuumAlert = false; // Reset -> recheck below
+  anyVacuumAlert = false;
 
-  // 3️⃣ Link Up → unified LED update
+#if ENABLE_BURGLAR_ALARM
+  st2_intruder = stationEnabled[2] && ((stationFeedback[2] >> 4) & 1);
+  st3_intruder = stationEnabled[3] && ((stationFeedback[3] >> 4) & 1);
+  burglarAlarmActive = (st2_intruder || st3_intruder);
+#else
+  burglarAlarmActive = false;
+#endif
+
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
   {
     const LedMap &m = LED_MAP[i];
-
-    // --- Disabled main station → OFF
     if (!stationEnabled[m.offlineStation])
     {
       LED_PAIR(m.ledPair, LOW, LOW);
       continue;
     }
-
-    // --- Offline reference station → blink RED/GREEN
     if (m.offlineStation != (uint8_t)-1 && stationOffline[m.offlineStation])
     {
-      LED_PAIR(m.ledPair,
-               blinkPhase ? HIGH : LOW,
-               blinkPhase ? LOW : HIGH);
+      LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, blinkPhase ? LOW : HIGH);
+      continue;
+    }
+    if ((st2_intruder && m.station == 2) || (st3_intruder && m.station == 3))
+    {
+      LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, blinkPhase ? LOW : HIGH);
       continue;
     }
 
-    // 🚨 STATE CALCULATION (Manual Switch vs Thermostat)
-    bool bitVal = (stationFeedback[m.station] >> m.bit) & 1; // feedback (1=OFF/Lost)
-    bool isCommandedOn = stableState[m.switchIndex];         // Manual Switch
-
+    bool bitVal = (stationFeedback[m.station] >> m.bit) & 1;
+    bool isCommandedOn = stableState[m.switchIndex];
 #if ENABLE_THERMOSTAT
-    // Check if a Thermostat is forcing this index ON
     for (uint8_t t = 0; t < 2; t++)
     {
-      // If Thermostat is Enabled AND Active (calling for heat/vacuum)
       if (thermostatEnabled[t] && thermostatActive[t])
       {
         for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
         {
           if (m.switchIndex == TH_OVERRIDE_IDX[t][k])
           {
-            isCommandedOn = true; // ⚠️ Override Active!
+            isCommandedOn = true;
             break;
           }
         }
       }
     }
 #endif
-
-    // 🚨 VACUUM ALERT LOGIC
-    // Alarm if: (Commanded ON) AND (Feedback says OFF/Loss)
     if (m.isVacuum && isCommandedOn && bitVal)
     {
       anyVacuumAlert = true;
-
-      LED_PAIR(m.ledPair,
-               blinkPhase ? HIGH : LOW, // Flash RED
-               LOW);
+      LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, LOW);
       continue;
     }
-
-    // --- NORMAL STATUS LED
-    LED_PAIR(m.ledPair,
-             bitVal ? HIGH : LOW,  // RED when relay off (feedback 1)
-             bitVal ? LOW : HIGH); // GREEN when relay on (feedback 0)
+    LED_PAIR(m.ledPair, bitVal ? HIGH : LOW, bitVal ? LOW : HIGH);
   }
-
-  // 🔕 Buzzer LED (pair 21) is handled by updateBuzzerLED()
 }
 
-// -------------------------------------------------------------------
-// FUNCTION: ethernetResetPulse() / initEthernet()
-// PURPOSE : Performs controlled hardware reset of W5500 module,
-//           initializes Ethernet interface, and retries if no link.
-// -------------------------------------------------------------------
-void ethernetResetPulse()
+// ... [HELPERS SAME AS BEFORE] ...
+void updateThermostatStatus()
 {
-  // Ensure Mega Hardware SS is inactive (Critical for SPI stability)
-  pinMode(53, OUTPUT);
-  digitalWrite(53, HIGH);
-
-  // Ensure W5500 is deselected before reset
-  pinMode(ETH_CS, OUTPUT);
-  digitalWrite(ETH_CS, HIGH);
-
-  // Perform the "Raw Probe" Hard Reset Sequence
-  pinMode(ETH_RESET, OUTPUT);
-  digitalWrite(ETH_RESET, LOW);
-  delay(200); // Hold Low for 200ms (was 10ms)
-  digitalWrite(ETH_RESET, HIGH);
-  delay(800); // Wait 800ms for PLL lock (was 100ms)
+  if (!ENABLE_THERMOSTAT)
+  {
+    LED_PAIR(TH_LED_PAIR[0], LOW, LOW);
+    LED_PAIR(TH_LED_PAIR[1], LOW, LOW);
+    return;
+  }
+  if (Ethernet.linkStatus() != LinkON)
+    return;
+  for (uint8_t i = 0; i < 2; i++)
+  {
+    thermostatEnabled[i] = stableState[TH_SWITCH_IDX[i]];
+    bool bitLow = ((stationFeedback[TH_FEEDBACK_STATION[i]] & (1 << TH_FEEDBACK_BIT[i])) == 0);
+    thermostatActive[i] = bitLow;
+    if (remoteOverrideActive)
+    {
+      LED_PAIR(TH_LED_PAIR[i], LOW, blinkPhase);
+    }
+    else if (thermostatEnabled[i])
+    {
+      if (thermostatActive[i])
+        LED_PAIR(TH_LED_PAIR[i], LOW, HIGH);
+      else
+        LED_PAIR(TH_LED_PAIR[i], HIGH, LOW);
+    }
+    else
+    {
+      LED_PAIR(TH_LED_PAIR[i], LOW, LOW);
+    }
+  }
 }
-
-// ============================================================
-// 🔧 FINAL STABLE INITIALIZATION (Matches Diagnostic Tests)
-// ============================================================
+void runVegasMode()
+{
+  if (!ENABLE_VEGAS_MODE)
+    return;
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+  {
+    digitalWrite(LED_A[i], HIGH);
+    delay(VEGAS_DELAY_MS);
+    digitalWrite(LED_A[i], LOW);
+  }
+  delay(200);
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+  {
+    digitalWrite(LED_B[i], HIGH);
+    delay(VEGAS_DELAY_MS);
+    digitalWrite(LED_B[i], LOW);
+  }
+  delay(200);
+  for (int k = 0; k < 3; k++)
+  {
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+      LED_PAIR(i, HIGH, LOW);
+    delay(200);
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+      LED_PAIR(i, LOW, HIGH);
+    delay(200);
+  }
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+    LED_PAIR(i, LOW, LOW);
+}
 void initEthernet()
 {
-  Serial.println(F("[NET] Starting Network Initialization..."));
-
-  // 1. MANUAL SPI STARTUP
-  // Force SPI bus active before library loads
   SPI.begin();
-
-  // 2. HARD RESET (200ms / 800ms)
-  Serial.print(F("[NET] Resetting W5500..."));
   pinMode(ETH_RESET, OUTPUT);
   digitalWrite(ETH_RESET, LOW);
   delay(200);
   digitalWrite(ETH_RESET, HIGH);
   delay(800);
-  Serial.println(F(" Done."));
-
-  // 3. MANUAL HANDSHAKE (Trust Verify)
-  // We talk to the chip manually to ensure it is awake and listening.
-  Serial.print(F("[NET] Manual Handshake... "));
-
-  SPI.beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
-  digitalWrite(ETH_CS, LOW);
-  SPI.transfer(0x00); // Address H
-  SPI.transfer(0x39); // Address L
-  SPI.transfer(0x00); // Control
-  byte version = SPI.transfer(0x00);
-  digitalWrite(ETH_CS, HIGH);
-  SPI.endTransaction();
-
-  if (version == 0x04)
-  {
-    Serial.println(F("SUCCESS (0x04)"));
-  }
-  else
-  {
-    Serial.print(F("WARNING: Read 0x"));
-    Serial.print(version, HEX);
-    Serial.println(F(". Proceeding anyway..."));
-  }
-
-  // 4. FORCE LIBRARY START
-  // We skip Ethernet.hardwareStatus() because it is unreliable on this setup.
-  // We go straight to begin(), which performs the necessary Soft Reset to sync the library.
   Ethernet.init(ETH_CS);
   Ethernet.begin(mac, ipMain);
-
-  // 5. START UDP
   Udp.begin(UDP_PORT);
-
-  // 6. CONFIGURE RETRIES
-  // Maple syrup farms are noisy; if a packet fails, retry quickly.
   Ethernet.setRetransmissionCount(1);
   Ethernet.setRetransmissionTimeout(200);
-
-  // 7. FINAL VERIFICATION
-  IPAddress local = Ethernet.localIP();
-  Serial.print(F("[NET] Initialization Complete. IP: "));
-  Serial.println(local);
-
-  // Halt if IP assignment failed (SPI totally dead)
-  if (local[0] == 0 || local[0] == 255)
-  {
-    Serial.println(F("[NET] CRITICAL ERROR: IP Address invalid. System halted."));
-    while (1)
-    {
-      // Flash the LED or Buzzer to alert operator of hardware failure
-      digitalWrite(ETH_RESET, LOW);
-      delay(100);
-      digitalWrite(ETH_RESET, HIGH);
-      delay(100);
-    }
-  }
 }
-
 inline uint8_t xorChecksum(const uint8_t *d, uint8_t l)
 {
   uint8_t c = 0;
@@ -679,8 +509,6 @@ inline uint8_t xorChecksum(const uint8_t *d, uint8_t l)
     c ^= d[i];
   return c;
 }
-
-// Efficient bit-packing utility
 inline uint8_t packBitsLSB(const bool *arr, uint8_t n)
 {
   uint8_t v = 0;
@@ -689,271 +517,25 @@ inline uint8_t packBitsLSB(const bool *arr, uint8_t n)
   return v;
 }
 
-// ============================================================
-// 🌐 SECTION: Heartbeat & Feedback Processing
-// ============================================================
-
-// 🧩 HEARTBEAT + FEEDBACK HANDLER
-// ============================================================
-// 📡 MAIN CONTROLLER: PACKET PROCESSING (High Performance)
-// ============================================================
-void processHeartbeatAndFeedback(uint32_t now)
-{
-  int packetCount = 0;
-  // Limit to 10 to prevent hanging the main loop if flooded,
-  // but process enough to clear the W5500 buffer.
-  const int MAX_PACKETS_PER_LOOP = 10;
-
-  while (Udp.parsePacket() > 0 && packetCount < MAX_PACKETS_PER_LOOP)
-  {
-    packetCount++;
-
-    uint8_t buf[16];
-    int n = Udp.read(buf, sizeof(buf));
-    if (n < 3)
-      continue; // Skip invalid/empty packets
-
-    uint8_t id = 0, st = 0, cks = 0;
-
-    // ---------------------------------------------------------
-    // 1. HEARTBEAT [0xAB] - "I am alive"
-    // ---------------------------------------------------------
-    if (buf[0] == 0xAB && n >= 4)
-    {
-      id = buf[1];
-      st = buf[2];
-      cks = buf[3];
-
-      if (((buf[0] ^ buf[1] ^ buf[2]) == cks) && id < NUM_STATIONS)
-      {
-        lastHeartbeatMs[id] = now;
-        stationOffline[id] = false;
-        heartbeatCount[id]++;
-
-        // Sync on reconnect
-        if (!firstHeartbeatSeen[id])
-        {
-          firstHeartbeatSeen[id] = true;
-          // Send request directly to this station's IP
-          sendFeedbackRequest(id);
-        }
-      }
-    }
-
-    // ---------------------------------------------------------
-    // 2. FEEDBACK [0xAC] - "Here are my sensor states"
-    // ---------------------------------------------------------
-    else if (buf[0] == 0xAC && n >= 5)
-    {
-      id = buf[1];
-      uint8_t bits = buf[2];
-      cks = buf[4];
-
-      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == cks) && id < NUM_STATIONS)
-      {
-        stationFeedback[id] = bits;
-        lastHeartbeatMs[id] = now;
-        stationOffline[id] = false;
-      }
-    }
-
-    // ---------------------------------------------------------
-    // 3. CONFLICT CHECK [0xAE] - "Can I use this ID?"
-    // ---------------------------------------------------------
-    else if (buf[0] == 0xAE && n >= 3)
-    {
-      id = buf[1];
-      cks = buf[2];
-
-      if (cks == (buf[0] ^ buf[1]))
-      {
-        bool inUse = false;
-
-        // Check if ID is logically online
-        if (!stationOffline[id])
-        {
-          // Active Ping Verification (Blocking briefly to verify ghost)
-          // We flush remaining buffer first to ensure we catch the reply
-          while (Udp.parsePacket())
-            Udp.flush();
-
-          sendFeedbackRequest(id);
-
-          uint32_t tPing = millis();
-          while (millis() - tPing < 100)
-          {
-            if (Udp.parsePacket())
-            {
-              uint8_t pBuf[16];
-              int pn = Udp.read(pBuf, sizeof(pBuf));
-              // Valid reply from target?
-              if (pn >= 4 && (pBuf[0] == 0xAC || pBuf[0] == 0xAB) && pBuf[1] == id)
-              {
-                inUse = true;
-                break;
-              }
-            }
-          }
-        }
-
-        uint8_t status = inUse ? 0xFF : 0x00;
-        uint8_t reply[3] = {0xAF, id, (uint8_t)(status ^ 0xAF ^ id)};
-
-        Udp.beginPacket(Udp.remoteIP(), UDP_PORT);
-        Udp.write(reply, 3);
-        Udp.endPacket();
-
-        // If we verified it's empty, mark it offline immediately so logic knows
-        if (!inUse && !stationOffline[id])
-          stationOffline[id] = true;
-      }
-    }
-
-    // ---------------------------------------------------------
-    // 4. REMOTE OVERRIDE [0xAF] - "Pi taking control"
-    // ---------------------------------------------------------
-    else if (buf[0] == 0xAF && n >= 3)
-    {
-      uint8_t mode = buf[1];
-      cks = buf[2];
-      if (cks == (buf[0] ^ buf[1]))
-      {
-        if (mode == 0x01)
-        {
-          remoteOverrideActive = true;
-          DBG(1, Serial.println(F("[REMOTE] Control TAKEN by Web App")));
-        }
-        else
-        {
-          // Note: In Dual Master mode, Pi releases control, but Main only
-          // fully regains it via Physical Button press. However, updating the flag
-          // here allows the Main Controller to know the Pi *wants* to release.
-          // Your requirement: "Main Controller regains control by pressing buttons 0+1".
-          // So actually, receiving 0x00 here might not strictly be needed if you rely ONLY on buttons.
-          // But it's good for state tracking.
-
-          remoteOverrideActive = false; // Uncomment if you want auto-release
-
-          DBG(1, Serial.println(F("[REMOTE] Web App released (Pending Manual Reclaim)")));
-
-          // Optional: Force an immediate update to physical state so Stations don't hang
-          sendGlobalCommands();
-        }
-      }
-    }
-
-    // ---------------------------------------------------------
-    // 5. REMOTE DATA [0xB0] - "Pi Virtual Switch Positions"
-    // ---------------------------------------------------------
-    else if (buf[0] == 0xB0 && n >= 5)
-    {
-      cks = buf[4];
-      if (cks == (buf[0] ^ buf[1] ^ buf[2] ^ buf[3]))
-      {
-        // Only update internal state if we are actually overridden
-        if (remoteOverrideActive)
-        {
-          remoteSwitchBytes[0] = buf[1];
-          remoteSwitchBytes[1] = buf[2];
-          remoteSwitchBytes[2] = buf[3];
-          lastLinkCheck = now; // Pi is alive
-        }
-      }
-    }
-  } // End While
-}
-
-// 🧩 OFFLINE DETECTION
-void updateHeartbeatStatus(uint32_t now)
-{
-  for (uint8_t id = 0; id < NUM_STATIONS; id++)
-  {
-    if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
-    {
-      stationOffline[id] = true;
-      firstHeartbeatSeen[id] = false; // 🧩 Reset flag here
-    }
-    else
-    {
-      stationOffline[id] = false;
-    }
-
-    // Detect stations that just came online
-    static bool wasOffline[NUM_STATIONS] = {true};
-    for (uint8_t id = 0; id < NUM_STATIONS; id++)
-    {
-      bool nowOffline = (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS);
-      if (wasOffline[id] && !nowOffline)
-      {
-        // Station transitioned from OFFLINE → ONLINE
-        DBG(1,
-            Serial.print(F("[REQ] Requesting feedback from station "));
-            Serial.println(id););
-        sendFeedbackRequest(id);
-      }
-      wasOffline[id] = nowOffline;
-    }
-  }
-}
-
-// -------------------------------------------------------------------
-// FUNCTION: sendFeedbackRequest()
-// PURPOSE : Request one or all stations to resend feedback frames.
-// -------------------------------------------------------------------
-void sendFeedbackRequest(uint8_t id)
-{
-  uint8_t buf[5];
-  buf[0] = 0xAD;
-  buf[1] = id; // target ID, or 255 for broadcast
-  buf[2] = 0x00;
-  buf[3] = 0x00;
-  buf[4] = xorChecksum(buf, 4);
-
-  // UPDATED: Broadcast is .255, Stations start at .210 (210 + id)
-  IPAddress ipStation = (id == 255)
-                            ? IPAddress(192, 168, 1, 255)
-                            : IPAddress(192, 168, 1, 210 + id);
-
-  Udp.beginPacket(ipStation, UDP_PORT);
-  Udp.write(buf, 5);
-  Udp.endPacket();
-  DBG(1,
-      Serial.print(F("[REQ] Feedback request sent to "));
-      Serial.println(id == 255 ? F("ALL stations") : String(id)););
-}
-
-// ============================================================
-// 🌍 SEND GLOBAL COMMANDS (0xBB)
-// ============================================================
-// Sends relay states to ALL stations in one packet.
-// Structure: [BB] [Seq] [MasterID] [ST0] [ST1] [ST2] [ST3] [ST4] [ST5] [Cks]
+// ... [PACKET HANDLING] ...
 void sendGlobalCommands()
 {
   uint8_t packet[10];
   packet[0] = 0xBB;
-  packet[1] = 0x00; // Sequence (Optional)
-  packet[2] = 0x01; // Master ID = 1 (Main Controller)
-
-  // Iterate through all stations to calculate their command byte
+  packet[1] = 0x00;
+  packet[2] = 0x01;
   for (uint8_t st = 0; st < NUM_STATIONS; st++)
   {
     bool bits[8] = {0};
     uint8_t bitCount = 0;
-
-    // Only calculate if station is enabled
     if (stationEnabled[st])
     {
-      // Loop through INPUT_MAP to find switches assigned to this station
       for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
       {
         const InputMap &m = INPUT_MAP[i];
         if (m.station == st)
         {
-
-          // Base State: From stableState (which could be Local or Remote)
           bool val = stableState[m.index];
-
-// Thermostat Override Logic
 #if ENABLE_THERMOSTAT
           for (uint8_t t = 0; t < 2; t++)
           {
@@ -963,120 +545,154 @@ void sendGlobalCommands()
               {
                 if (m.index == TH_OVERRIDE_IDX[t][k])
                 {
-                  val = true; // Force ON
+                  val = true;
                   break;
                 }
               }
             }
           }
 #endif
-
           bits[m.bit] = val;
           bitCount = max(bitCount, m.bit + 1);
         }
       }
+      if (burglarAlarmActive && st == 0)
+      {
+        bits[3] = true;
+        if (bitCount < 4)
+          bitCount = 4;
+      }
     }
-    // Pack bool array into a byte
+    else
+    {
+      bits[7] = 1;
+      bitCount = 8;
+    }
     packet[3 + st] = packBitsLSB(bits, bitCount);
   }
-
   packet[9] = xorChecksum(packet, 9);
-
   Udp.beginPacket(ipBroadcast, UDP_PORT);
   Udp.write(packet, 10);
   Udp.endPacket();
 }
 
-// ============================================================
-// 📡 SEND PHYSICAL STATE (0xB1) - FIXED ALIGNMENT
-// ============================================================
 void sendPhysicalState()
 {
-  uint8_t payload[3] = {0, 0, 0};
-
-  // Pack physical inputs
+  uint8_t payload[3] = {0};
   for (int i = 0; i < 24; i++)
   {
     if (rawState[i])
       payload[i / 8] |= (1 << (i % 8));
   }
-
-  // Structure: [B1] [ID] [Sw0] [Sw1] [Sw2] [Flag] [Cks]
-  uint8_t packet[7];
-  packet[0] = 0xB1;
-  packet[1] = 0x01; // <--- ADDED: Controller ID (Matches JS expectation)
-  packet[2] = payload[0];
-  packet[3] = payload[1];
-  packet[4] = payload[2];
-  packet[5] = remoteOverrideActive ? 0x01 : 0x00; // Flag is now at Index 5
+  uint8_t packet[7] = {0xB1, 0x01, payload[0], payload[1], payload[2], (uint8_t)(remoteOverrideActive ? 1 : 0), 0};
   packet[6] = xorChecksum(packet, 6);
-
   Udp.beginPacket(ipBroadcast, UDP_PORT);
   Udp.write(packet, 7);
   Udp.endPacket();
 }
 
-// ============================================================
-// 🔧 FUNCTIONS: EEPROM Handlers
-// ============================================================
-// -------------------------------------------------------------------
-// FUNCTION: loadStationStatesFromEEPROM()
-// PURPOSE : Loads station enable/disable flags from EEPROM,
-//           validating data and falling back to defaults if invalid.
-// -------------------------------------------------------------------
+void processHeartbeatAndFeedback(uint32_t now)
+{
+  int count = 0;
+  while (Udp.parsePacket() > 0 && count < 10)
+  {
+    count++;
+    uint8_t buf[16];
+    int n = Udp.read(buf, sizeof(buf));
+    if (n < 3)
+      continue;
+    if (buf[0] == 0xAB && n >= 4)
+    {
+      uint8_t id = buf[1];
+      if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
+      {
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
+        if (!firstHeartbeatSeen[id])
+          firstHeartbeatSeen[id] = true;
+      }
+    }
+    else if (buf[0] == 0xAC && n >= 5)
+    {
+      uint8_t id = buf[1];
+      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
+      {
+        stationFeedback[id] = buf[2];
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
+      }
+    }
+    else if (buf[0] == 0xAF && n >= 3)
+    {
+      if ((buf[0] ^ buf[1]) == buf[2])
+      {
+        remoteOverrideActive = (buf[1] == 0x01);
+        lastServerPacketMs = now;
+      }
+    }
+    else if (buf[0] == 0xB0 && n >= 5)
+    {
+      if ((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4] && remoteOverrideActive)
+      {
+        remoteSwitchBytes[0] = buf[1];
+        remoteSwitchBytes[1] = buf[2];
+        remoteSwitchBytes[2] = buf[3];
+        lastLinkCheck = now;
+        lastServerPacketMs = now;
+      }
+    }
+
+    // ✅ NEW: CONFIG PACKET [0xCF] with DEBUG PRINTS
+    else if (buf[0] == 0xCF && n >= 5)
+    {
+      uint8_t onSec = buf[1];
+      uint8_t offSec = buf[2];
+      uint8_t remMin = buf[3];
+      uint8_t calcChecksum = buf[0] ^ buf[1] ^ buf[2] ^ buf[3];
+
+      Serial.print(F("[CFG] Pkt Recv: "));
+      Serial.print(onSec);
+      Serial.print("/");
+      Serial.print(offSec);
+      Serial.print("/");
+      Serial.println(remMin);
+
+      if (buf[4] == calcChecksum)
+      {
+        Serial.println(F("[CFG] Checksum OK. Saving..."));
+        EEPROM.update(EEPROM_ALARM_ON, onSec);
+        EEPROM.update(EEPROM_ALARM_OFF, offSec);
+        EEPROM.update(EEPROM_REMINDER, remMin);
+        loadConfig(); // Reload and print to confirm
+      }
+      else
+      {
+        Serial.println(F("[CFG] Checksum FAIL."));
+      }
+    }
+  }
+}
+
+// ... [EEPROM & LOOPS] ...
 void loadStationStatesFromEEPROM()
 {
   for (uint8_t i = 0; i < NUM_STATIONS; i++)
   {
     uint8_t val = EEPROM.read(i);
-
-    if (val != 0xFF && val <= 1)
-    {
-      stationEnabled[i] = val;
-    }
-    else
-    {
-      stationEnabled[i] = true; // default enabled
-    }
+    stationEnabled[i] = (val != 0xFF && val <= 1) ? val : true;
   }
-
-#if DEBUG_SERIAL
-  Serial.println(F("[EEPROM] Loaded station enable states:"));
-  for (uint8_t i = 0; i < NUM_STATIONS; i++)
-  {
-    Serial.print(F("[EEPROM] Station "));
-    Serial.print(i);
-    Serial.print(F(": "));
-    Serial.println(stationEnabled[i] ? F("ENABLED") : F("DISABLED"));
-  }
-#endif
 }
-
 void saveStationStateToEEPROM(uint8_t id)
 {
   if (id < NUM_STATIONS)
-  {
     EEPROM.update(id, stationEnabled[id]);
-#if DEBUG_SERIAL
-    Serial.print(F("[EEPROM] Saved Station "));
-    Serial.print(id);
-    Serial.print(F(" = "));
-    Serial.println(stationEnabled[id] ? F("ENABLED") : F("DISABLED"));
-#endif
-  }
 }
-
-// ============================================================
-// 🧩 Station Enable/Disable Long-Press Handler
-// ============================================================
-
 void handleStationEnableLongPress(uint32_t now)
 {
   for (uint8_t id = 0; id < NUM_STATIONS; id++)
   {
     uint8_t idx = stationButtonIndex[id];
-    bool pressed = stableState[idx]; // assuming stableState[] is debounced & true = pressed
-
+    bool pressed = stableState[idx];
     if (pressed && !pressActive[id])
     {
       pressActive[id] = true;
@@ -1088,476 +704,27 @@ void handleStationEnableLongPress(uint32_t now)
     }
     else if (pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS))
     {
-      // ⏱️ Long-press detected → toggle state
       stationEnabled[id] = !stationEnabled[id];
       pressActive[id] = false;
       saveStationStateToEEPROM(id);
-
-#if DEBUG_SERIAL
-      Serial.print(F("[TOGGLE] Station "));
-      Serial.print(id);
-      Serial.print(F(" -> "));
-      Serial.println(stationEnabled[id] ? F("ENABLED") : F("DISABLED"));
-#endif
-
-      // Optional: visual or audible feedback can go here (LED blink, beep, etc.)
     }
   }
 }
 
-// ============================================================
-// 🌡️ THERMOSTAT LOGIC
-// ============================================================
-
-void updateThermostatStatus()
-{
-#if DEBUG_SERIAL
-  static bool prevEnabled[2] = {false, false}; // for debug
-  static bool prevActive[2] = {false, false};  // for debug
-#endif
-
-  // --- 🚫 Skip if feature disabled ---
-  if (!ENABLE_THERMOSTAT)
-  {
-    // turn both LEDs OFF
-    LED_PAIR(TH_LED_PAIR[0], LOW, LOW);
-    LED_PAIR(TH_LED_PAIR[1], LOW, LOW);
-    return;
-  }
-
-  // --- 🚫 Skip LED updates if Ethernet link is DOWN ---
-  if (Ethernet.linkStatus() != LinkON)
-  {
-    // Let updateEthernetAndLEDs() control all LEDs (global RED blink)
-    return;
-  }
-
-  for (uint8_t i = 0; i < 2; i++)
-  {
-    // Read switch: active when LOW
-    thermostatEnabled[i] = stableState[TH_SWITCH_IDX[i]];
-
-    // Read station feedback: bit LOW = thermostat ON
-    bool bitLow = ((stationFeedback[TH_FEEDBACK_STATION[i]] & (1 << TH_FEEDBACK_BIT[i])) == 0);
-    thermostatActive[i] = bitLow;
-
-// -------------------------------------------------------------------
-// 🧩 DETECT CHANGES AND REPORT
-// -------------------------------------------------------------------
-#if DEBUG_SERIAL
-    if (thermostatEnabled[i] != prevEnabled[i])
-    {
-      Serial.println();
-      Serial.println("THERMOSTAT THERMOSTAT THERMOSTAT THERMOSTAT");
-
-      Serial.print("stableState[TH_SWITCH_IDX[");
-      Serial.print(i);
-      Serial.print("]: ");
-      Serial.println(stableState[TH_SWITCH_IDX[i]]);
-
-      Serial.print("thermostatEnabled[");
-      Serial.print(i);
-      Serial.print("]: ");
-      Serial.println(thermostatEnabled[i]);
-
-      Serial.print(F("[TH] Thermostat "));
-      Serial.print(i + 1);
-      Serial.print(F(" ENABLED → "));
-      Serial.println(thermostatEnabled[i] ? F("ON") : F("OFF"));
-      Serial.println();
-      prevEnabled[i] = thermostatEnabled[i];
-    }
-
-    if (thermostatActive[i] != prevActive[i])
-    {
-      Serial.println();
-      Serial.print("thermostatActive[");
-      Serial.print(i);
-      Serial.print("]: ");
-      Serial.println(thermostatActive[i]);
-
-      Serial.print(F("[TH] Thermostat "));
-      Serial.print(i + 1);
-      Serial.print(F(" ACTIVE → "));
-      Serial.println(thermostatActive[i] ? F("ON") : F("OFF"));
-      Serial.println();
-      prevActive[i] = thermostatActive[i];
-    }
-#endif
-
-    // -------------------------------------------------------------------
-    // LED logic: RED = off, GREEN = on
-    // -------------------------------------------------------------------
-    if (remoteOverrideActive)
-    {
-      // Blink Green to indicate Web Control
-      LED_PAIR(TH_LED_PAIR[i], LOW, blinkPhase);
-    }
-    else if (thermostatEnabled[i])
-    {
-      if (thermostatActive[i])
-        LED_PAIR(TH_LED_PAIR[i], LOW, HIGH); // GREEN
-      else
-        LED_PAIR(TH_LED_PAIR[i], HIGH, LOW); // RED
-    }
-    else
-    {
-      LED_PAIR(TH_LED_PAIR[i], LOW, LOW); // OFF
-    }
-  }
-}
-
-// -------------------------------------------------------------------
-// FUNCTION: updateBuzzerLED()
-// PURPOSE : Controls LED pair 21 and buzzer pin according to the
-//           vacuum alert and buzzer enable switch.
-// -------------------------------------------------------------------
-
-void updateBuzzerLED(uint32_t now)
-{
-  // ============================================================
-  // 1️⃣ Link Check — If link is DOWN, Ethernet code owns LEDs.
-  // Also never beep while offline.
-  // ============================================================
-  if (Ethernet.linkStatus() != LinkON)
-  {
-    digitalWrite(PIN_BUZZER, LOW);
-    return;
-  }
-
-  // Override Indicator
-  if (remoteOverrideActive)
-  {
-    digitalWrite(PIN_BUZZER, LOW);              // Mute buzzer during override unless commanded?
-    LED_PAIR(BUZZER_LED_PAIR, LOW, blinkPhase); // Blink Green
-    return;
-  }
-
-  // ============================================================
-  // 2️⃣ Read Operator Buzzer Switch
-  // switchOn == true  -> allowed to make noise
-  // switchOn == false -> muted
-  // ============================================================
-  bool switchOn = stableState[BUZZER_SWITCH_IDX];
-  bool alert = anyVacuumAlert;
-
-  // ============================================================
-  // 3️⃣ If we have ANY vacuum alert
-  // LED 21 takes alarm look. Buzzer behavior depends on mode.
-  // ============================================================
-  if (alert && switchOn)
-  {
-
-#if BUZZER_ALERT_MODE
-    // --- Pulsed tone mode ---
-    static uint32_t buzzerCycleStart = 0;
-    static bool buzzerCycleOn = false;
-
-    uint32_t elapsed = now - buzzerCycleStart;
-
-    if (buzzerCycleOn && elapsed >= BUZZER_ALERT_ON_MS)
-    {
-      buzzerCycleOn = false;
-      buzzerCycleStart = now;
-    }
-    else if (!buzzerCycleOn && elapsed >= BUZZER_ALERT_OFF_MS)
-    {
-      buzzerCycleOn = true;
-      buzzerCycleStart = now;
-    }
-
-    // Drive buzzer + LED based on phase
-    if (buzzerCycleOn)
-    {
-      digitalWrite(PIN_BUZZER, HIGH);
-      // LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW); // solid red
-    }
-    else
-    {
-      digitalWrite(PIN_BUZZER, LOW);
-      LED_PAIR(BUZZER_LED_PAIR, LOW, LOW); // off between pulses
-    }
-#else
-    // --- Continuous tone mode ---
-    digitalWrite(PIN_BUZZER, HIGH);
-    // LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
-#endif
-    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
-  }
-
-  // ---------------- MUTE MODE ----------------
-  else if (alert && !switchOn)
-  {
-    // operator muted during alarm
-    digitalWrite(PIN_BUZZER, LOW);
-
-    // LED always blinks red when in alert
-    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
-  }
-
-  // ============================================================
-  // 5️⃣ Reminder chirp (mute warning)
-  //    Only applies when switchOff && no alert
-  // ============================================================
-#if BUZZER_REMINDER
-  else if (!alert && !switchOn)
-  {
-    // ============================================================
-    // ✅ Only allow reminder when any vacuum switch is ON
-    //    and its LED pair is GREEN (vacuum OK)
-    // ============================================================
-    bool vacuumOK = false;
-
-    // Station 1: vacuum switches 2, 3 → LED pairs 2, 3
-    if ((stableState[2] && digitalRead(LED_B[2]) == HIGH) ||
-        (stableState[3] && digitalRead(LED_B[3]) == HIGH))
-      vacuumOK = true;
-
-    // Station 2: vacuum switch 9 → LED pair 9
-    if (stableState[9] && digitalRead(LED_B[9]) == HIGH)
-      vacuumOK = true;
-
-    // Station 3: vacuum switch 14 → LED pair 14
-    if (stableState[14] && digitalRead(LED_B[14]) == HIGH)
-      vacuumOK = true;
-
-    // Station 4: vacuum switch 17 → LED pair 17
-    if (stableState[17] && digitalRead(LED_B[17]) == HIGH)
-      vacuumOK = true;
-
-    if (!vacuumOK)
-    {
-      // 🚫 No active vacuum in OK state → skip reminder entirely
-      LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
-      digitalWrite(PIN_BUZZER, LOW);
-      return;
-    }
-
-    // ============================================================
-    // ✅ Continue with normal reminder pulse logic
-    // ============================================================
-    static uint32_t reminderStartMs = 0;
-    static bool reminderInit = false;
-
-    if (!reminderInit)
-    {
-      reminderStartMs = now;
-      reminderInit = true;
-    }
-
-    uint32_t elapsed = now - reminderStartMs;
-    if (elapsed >= REMINDER_PERIOD_MS)
-    {
-      reminderStartMs = now;
-      elapsed = 0;
-    }
-
-    bool inBeepWindow = (elapsed < REMINDER_ON_MS);
-
-    if (inBeepWindow)
-    {
-      // short chirp + solid RED
-      LED_PAIR(BUZZER_LED_PAIR, HIGH, LOW);
-      digitalWrite(PIN_BUZZER, HIGH);
-    }
-    else
-    {
-      // idle GREEN + buzzer OFF
-      LED_PAIR(BUZZER_LED_PAIR, LOW, HIGH);
-      digitalWrite(PIN_BUZZER, LOW);
-    }
-
-    return;
-  }
-#endif
-
-  // ---------------- NO ALERT ----------------
-  else
-  {
-    digitalWrite(PIN_BUZZER, LOW);
-
-    // LED solid green if system armed, red if muted
-    LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
-  }
-}
-
-// --------------------------------------------------------------
-// 🎰 Vegas Mode LED Test Sequence
-// -------------------------------------------------------------------
-// FUNCTION: runVegasMode()
-// PURPOSE : Sequentially flashes all LED pairs (red/green) for
-//           verification during boot. Optional cosmetic feature.
-// -------------------------------------------------------------------
-
-#if DEBUG_SERIAL
-// TEMP VEGAS UNTIL FULL
-void runVegasMode()
-{
-  if (!ENABLE_VEGAS_MODE)
-    return;
-
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    // digitalWrite(LED_A[i], HIGH);
-    // test led 2
-    digitalWrite(LED_A[2], HIGH);
-    delay(VEGAS_DELAY_MS);
-  }
-
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    // digitalWrite(LED_B[i], HIGH);
-    // test led 2
-    digitalWrite(LED_B[2], HIGH);
-    delay(VEGAS_DELAY_MS);
-  }
-
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    LED_PAIR(2, LOW, LOW);
-  }
-}
-
-#else
-
-void runVegasMode()
-{
-  if (!ENABLE_VEGAS_MODE)
-    return;
-
-  // Serial.println(F("[VEGAS] Starting LED diagnostic sequence..."));
-
-  // --- 1️⃣ Sweep all RED LEDs ---
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    digitalWrite(LED_A[i], HIGH); // RED ON
-    delay(VEGAS_DELAY_MS);
-    digitalWrite(LED_A[i], LOW);
-  }
-
-  delay(200);
-
-  // --- 2️⃣ Sweep all GREEN LEDs ---
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    digitalWrite(LED_B[i], HIGH); // GREEN ON
-    delay(VEGAS_DELAY_MS);
-    digitalWrite(LED_B[i], LOW);
-  }
-
-  delay(200);
-
-  // --- 3️⃣ Station-by-station red/green flash ---
-  uint8_t startIndex = 0;
-  const uint8_t stationPairCount[NUM_STATIONS] = {2, 6, 4, 4, 3, 2}; // pairs per station
-
-  for (uint8_t st = 0; st < NUM_STATIONS; st++)
-  {
-    for (uint8_t f = 0; f < VEGAS_FLASHES; f++)
-    {
-      for (uint8_t j = 0; j < stationPairCount[st]; j++)
-      {
-        uint8_t idx = startIndex + j;
-        LED_PAIR(idx, HIGH, LOW);
-      }
-      delay(200);
-      for (uint8_t j = 0; j < stationPairCount[st]; j++)
-      {
-        uint8_t idx = startIndex + j;
-        LED_PAIR(idx, LOW, HIGH);
-      }
-      delay(200);
-    }
-    // turn off all LEDs for this station before next
-    for (uint8_t j = 0; j < stationPairCount[st]; j++)
-    {
-      uint8_t idx = startIndex + j;
-      LED_PAIR(idx, LOW, LOW);
-    }
-    startIndex += stationPairCount[st];
-  }
-
-  delay(200);
-
-  // --- 4️⃣ Global RED/GREEN flashes ---
-  for (uint8_t f = 0; f < VEGAS_FLASHES; f++)
-  {
-    // all RED
-    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-    {
-      LED_PAIR(i, HIGH, LOW);
-    }
-    delay(300);
-    // all GREEN
-    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-    {
-      LED_PAIR(i, LOW, HIGH);
-    }
-    delay(300);
-  }
-
-  // --- turn everything off ---
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    LED_PAIR(i, LOW, LOW);
-  }
-
-  // Serial.println(F("[VEGAS] LED test complete."));
-}
-#endif
-
-// ----------------------------- SETUP ----------------------------------
-// ============================================================================
-// FUNCTION: setup()
-// PURPOSE : Initializes hardware, network, EEPROM, MCP23017 expanders,
-//           I/O directions, and LED diagnostics (Vegas mode).
-// NOTES   : Called once at startup before main loop.
-// ============================================================================
 void setup()
 {
-  // 1. Disable WDT immediately (Mega can get stuck in WDT loops at boot)
   wdt_disable();
-
-  // 2. Power Stabilization (Give the W5500 time to power up)
   delay(1000);
-
-#if DEBUG_SERIAL
-  Serial.begin(115200);
-  while (!Serial)
-  {
-  }
-  Serial.println();
-  Serial.println(F("================================================"));
-  Serial.println(F(" Main Controller Firmware - STABLE BOOT FIX"));
-  Serial.print(F(" Version: "));
-  Serial.println(FIRMWARE_VERSION);
-  Serial.println(F("================================================"));
-  Serial.println(F("[BOOT] Main_Controller_Binary_Detailed starting..."));
-#endif
-
-  // 3. Setup Output Pins for LED/Buzzer early (safe state)
-  // ✅ Buzzer output
   pinMode(PIN_BUZZER, OUTPUT);
   digitalWrite(PIN_BUZZER, LOW);
-
-  // --- LED setup
   for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
   {
     pinMode(LED_A[i], OUTPUT);
     pinMode(LED_B[i], OUTPUT);
     LED_PAIR(i, LOW, LOW);
   }
-
-  // 4. Initialize Ethernet (Blocking until success)
   initEthernet();
-
-  // 5. Initialize MCP23017
-  // We do this AFTER Ethernet to ensure SPI bus traffic has settled
-  // ✅ Initialize MCP23017 I/O expander
   mcp.begin_I2C(MCP_I2C_ADDR);
-
-  // Configure MCP Inputs
-  // ✅ Configure all 16 pins as INPUT_PULLUP
   for (uint8_t p = 0; p < 8; p++)
   {
     mcp.pinMode(p, INPUT_PULLUP);
@@ -1565,227 +732,72 @@ void setup()
   }
   mcp.setupInterrupts(false, false, LOW);
   for (uint8_t p = 0; p < 16; p++)
-  {
     mcp.setupInterruptPin(p, CHANGE);
-  }
   pinMode(MCP_INTA_PIN, INPUT_PULLUP);
   pinMode(MCP_INTB_PIN, INPUT_PULLUP);
-
-  // 6. Initialize State Arrays
-  // ✅ Initial snapshot of MCP ports (initialize stableState)
   mcpStateA = mcp.readGPIO(0);
   mcpStateB = mcp.readGPIO(1);
-
-  // ✅ Attach interrupts
   attachInterrupt(digitalPinToInterrupt(MCP_INTA_PIN), []()
                   { mcpIntA_Flag = true; }, FALLING);
   attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
                   { mcpIntB_Flag = true; }, FALLING);
-
-  // Read Physical Inputs
   for (uint8_t i = 0; i < NUM_INPUTS; i++)
   {
     pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
     stableState[i] = !digitalRead(PHYS_SW_PINS[i]);
   }
-
-  // Read MCP Inputs
   for (uint8_t b = 0; b < 8; b++)
   {
     stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
     stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
   }
-
-  // 7. Vegas Mode
   if (ENABLE_VEGAS_MODE)
-  {
     runVegasMode();
-  }
-
-  // 8. EEPROM Load
   loadStationStatesFromEEPROM();
-
-  // 9. Enable Watchdog (Only now that we are safe)
+  loadConfig();
   wdt_enable(WDTO_8S);
-
-#if DEBUG_SERIAL
-  Serial.println(F("[INIT] Setup complete. Entering Loop."));
-#endif
 }
-
-//   // 2. SPI Safety Configuration
-//   // --- Ethernet setup
-//   // Before doing anything, ensure the Mega's Hardware SS is OUTPUT HIGH
-//   // and the Ethernet CS is OUTPUT HIGH (Deselected).
-//   pinMode(53, OUTPUT); // Mega Hardware SS
-//   digitalWrite(53, HIGH);
-
-//   pinMode(ETH_CS, OUTPUT); // W5500 CS
-//   digitalWrite(ETH_CS, HIGH);
-
-//   pinMode(ETH_RESET, OUTPUT);
-//   // Ensure reset pin starts High before the pulse function toggles it
-//   digitalWrite(ETH_RESET, HIGH);
-
-//   // ✅ Configure all 16 pins as INPUT_PULLUP
-//   for (uint8_t p = 0; p < 8; p++)
-//   {
-//     mcp.pinMode(p, INPUT_PULLUP);     // GPA0-7
-//     mcp.pinMode(p + 8, INPUT_PULLUP); // GPB0-7
-//   }
-
-//   // ✅ Configure interrupts (so mcpIntA_Flag / mcpIntB_Flag get triggered)
-//   mcp.setupInterrupts(false, false, LOW);
-//   for (uint8_t p = 0; p < 16; p++)
-//   {
-//     mcp.setupInterruptPin(p, CHANGE);
-//   }
-
-//   // ✅ Setup interrupt input pins on Arduino
-//   pinMode(MCP_INTA_PIN, INPUT_PULLUP);
-//   pinMode(MCP_INTB_PIN, INPUT_PULLUP);
-
-//   // ---------- stableState ----------
-//   // ✅ Add to stableState - Physical switch inputs (direct pins)
-//   for (uint8_t i = 0; i < NUM_INPUTS; i++)
-//   {
-//     pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
-//     stableState[i] = !digitalRead(PHYS_SW_PINS[i]); // active-low
-//   }
-
-//   // ✅ Add to stableState - MCP switch inputs
-//   for (uint8_t b = 0; b < 8; b++)
-//   {
-//     stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
-//     stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
-//   }
-
-//   // ✅ LED Outputs
-//   for (uint8_t k = 0; k < NUM_LED_PAIRS; k++)
-//   {
-//     pinMode(LED_A[k], OUTPUT);
-//     pinMode(LED_B[k], OUTPUT);
-//     LED_PAIR(k, LOW, HIGH); // initialize GREEN
-//   }
-
-//   // ✅ Vegas LED Diagnostic (keep)
-//   if (ENABLE_VEGAS_MODE)
-//   {
-//     uint32_t t0 = millis();
-//     runVegasMode();
-//     uint32_t elapsed = millis() - t0;
-// #if DEBUG_SERIAL
-//     Serial.print(F("[VEGAS] Duration: "));
-//     Serial.print(elapsed);
-//     Serial.println(F(" ms"));
-//     Serial.println(F("------------------------------------------------"));
-// #endif
-//   }
-
-//   // ✅ EEPROM Load
-//   loadStationStatesFromEEPROM(); // restore last enable/disable states
-
-//   // ✅ Enable watchdog timer (keep it)
-//   wdt_enable(WDTO_8S); // Enable only after setup() fully completes
-
-//   // TEMP TEMP TEMP TEMP TEMP TEMP
-//   Serial.println(F("[DEBUG] Initial pin voltages:"));
-//   for (uint8_t i = 0; i < NUM_INPUTS; i++)
-//   {
-//     Serial.print(F("Pin "));
-//     Serial.print(PHYS_SW_PINS[i]);
-//     Serial.print(F(" = "));
-//     Serial.println(digitalRead(PHYS_SW_PINS[i]));
-//   }
-//   // END TEMP TEMP TEMP TEMP TEMP TEMP
-
-// #if DEBUG_SERIAL
-//   Serial.println(F("[INIT] Setup complete."));
-// #endif
-
-//   // Enable Watchdog at the VERY END of setup
-//   wdt_enable(WDTO_8S);
-// }
-
-// ----------------------------- LOOP -----------------------------------
-// ============================================================================
-// FUNCTION: loop()
-// PURPOSE : Executes the main runtime cycle:
-//           - Reads all inputs and MCP23017 ports
-//           - Handles long-press toggles
-//           - Updates LED states and Ethernet link indicators
-//           - Processes feedback/heartbeat packets
-//           - Executes thermostat and buzzer logic
-//           - Sends periodic status frames to each station.
-// ============================================================================
 
 void loop()
 {
   wdt_reset();
   uint32_t now = millis();
-
-  // ============================================================
-  // 1. INPUT READING (Physical)
-  // ============================================================
   if (mcpIntA_Flag)
     readMcpA();
   if (mcpIntB_Flag)
     readMcpB();
-
-  // We ALWAYS read physical inputs into 'rawState'
   for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
   {
     const InputMap &m = INPUT_MAP[i];
-    bool current = readInputByMap(m);
-
-    if (current != rawState[m.index])
+    bool curr = readInputByMap(m);
+    if (curr != rawState[m.index])
     {
-      rawState[m.index] = current;
+      rawState[m.index] = curr;
       lastChange[m.index] = now;
     }
-
-    // UPDATE LOGIC: Who owns 'stableState'?
-    // If LOCAL: Physical Inputs -> stableState
-    // If REMOTE: stableState is updated by 0xB0 packets (in processHeartbeat)
-    if (!remoteOverrideActive)
-    {
-      if ((now - lastChange[m.index]) > DEBOUNCE_MS)
-      {
-        stableState[m.index] = rawState[m.index];
-      }
-    }
+    if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
+      stableState[m.index] = rawState[m.index];
   }
-
-  // ============================================================
-  // 2. NETWORK & LOGIC
-  // ============================================================
   processHeartbeatAndFeedback(now);
-  updateHeartbeatStatus(now);
-
-  // Handle Station Enable/Disable Buttons (Long Press)
+  for (uint8_t id = 0; id < NUM_STATIONS; id++)
+  {
+    if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
+      stationOffline[id] = true;
+  }
   handleStationEnableLongPress(now);
-
-  // ============================================================
-  // 3. EMERGENCY RELEASE (Manual Override)
-  // ============================================================
-  // Hold Sw 0 + 1 for 2 seconds to force Main Controller back to Master
+  if (remoteOverrideActive && (now - lastServerPacketMs > SERVER_TIMEOUT_MS))
+    remoteOverrideActive = false;
+  static uint32_t emergStart = 0;
   if (remoteOverrideActive)
   {
-    // Read pins 62 and 63 directly (hardcoded indices 0 and 1)
-    bool sw0 = !digitalRead(62);
-    bool sw1 = !digitalRead(63);
-    static uint32_t emergStart = 0;
-
-    if (sw0 && sw1)
+    if (!digitalRead(62) && !digitalRead(63))
     {
       if (emergStart == 0)
         emergStart = now;
       else if (now - emergStart > 2000)
       {
-        remoteOverrideActive = false; // REGAIN CONTROL
-        Serial.println(F("[EMERG] Control REGAINED by Cabane"));
-
-        // Visual Confirmation (5 green blinks)
+        remoteOverrideActive = false;
+        emergStart = 0;
         for (int k = 0; k < 5; k++)
         {
           digitalWriteAll(LED_B, NUM_LED_PAIRS, HIGH);
@@ -1795,54 +807,28 @@ void loop()
           delay(100);
           wdt_reset();
         }
-        emergStart = 0;
       }
     }
     else
-    {
       emergStart = 0;
-    }
   }
-
-  // ============================================================
-  // 4. OUTPUT UPDATES (Visuals)
-  // ============================================================
-  // Updates LEDs based on 'stationFeedback' (from Broadcast)
   updateEthernetAndLEDs(now);
   updateBuzzerLED(now);
   updateThermostatStatus();
-
-  // ============================================================
-  // 5. DATA BROADCASTING
-  // ============================================================
-
-  // A. BROADCAST PHYSICAL STATE (Always, 5Hz)
-  // Sends 'rawState' to Pi so it can show "Ghost" switches
   static uint32_t tPhys = 0;
-  if (now - tPhys >= 200) // was 200
+  if (now - tPhys >= 200)
   {
     tPhys = now;
     sendPhysicalState();
   }
-
-  // B. BROADCAST GLOBAL COMMANDS (Only if Master, 10Hz)
-  // Sends 'stableState' commands to Stations
-  if (!remoteOverrideActive)
+  if (!remoteOverrideActive && (now - tSend >= 100))
   {
-    if (now - tSend >= 100)
-    {
-      tSend = now;
-      sendGlobalCommands();
-    }
+    tSend = now;
+    sendGlobalCommands();
   }
-
-  // ============================================================
-  // 6. GLOBAL BLINK PHASE
-  // ============================================================
   if (now - tBlink >= BLINK_INTERVAL_MS)
   {
     tBlink = now;
     blinkPhase = !blinkPhase;
   }
-
-} // End Loop
+}

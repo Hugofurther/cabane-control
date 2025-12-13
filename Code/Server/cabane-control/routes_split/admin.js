@@ -60,6 +60,20 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 } catch (e) { console.error("Weather reload failed", e); }
             }
 
+            // ✅ NEW: Check for Buzzer Config Updates
+            if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min) {
+                // Fetch latest values (mix of new and existing) to be safe
+                db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min')", (err, rows) => {
+                    let on = 5, off = 10, rem = 2; // Defaults
+                    rows.forEach(r => {
+                        if (r.key === 'buzzer_alarm_on') on = parseInt(r.value);
+                        if (r.key === 'buzzer_alarm_off') off = parseInt(r.value);
+                        if (r.key === 'buzzer_reminder_min') rem = parseInt(r.value);
+                    });
+                    logicEngine.updateConfig(on, off, rem);
+                });
+            }
+
             logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
             res.json({ success: true });
         });

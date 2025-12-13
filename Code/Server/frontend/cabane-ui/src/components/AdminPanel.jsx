@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, User, Lock, Crown } from 'lucide-react';
+// ✅ ENSURE Volume2 IS IMPORTED HERE
+import { X, Check, Trash2, Shield, Globe, MapPin, Search, Save, HardDrive, Power, Clock, RefreshCw, Calculator, User, Lock, Crown, Volume2 } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
 import { useSocket } from '../contexts/SocketContext';
@@ -43,7 +44,11 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         weather_update_interval: '15',
         weather_update_interval_forecast: '60',
         weather_api_limit_min: '60',
-        weather_api_limit_month: '1000000'
+        weather_api_limit_month: '1000000',
+        // Defaults to prevent uncontrolled component warning
+        buzzer_alarm_on: '5',
+        buzzer_alarm_off: '10',
+        buzzer_reminder_min: '2'
     });
     const [locations, setLocations] = useState([]);
     const [disabledStations, setDisabledStations] = useState([]);
@@ -137,7 +142,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
 
         const limitMin = parseInt(sysSettings.weather_api_limit_min) || 60;
         const limitMonth = parseInt(sysSettings.weather_api_limit_month) || 1000000;
-        const estimatedMonth = totalPerMin * 43200; // 60min * 24hr * 30days
+        const estimatedMonth = totalPerMin * 43200;
 
         let status = 'SAFE';
         let color = 'text-green-400';
@@ -273,6 +278,50 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                 <div className="flex justify-between text-xs text-gray-400">
                                     <span>Used: {formatBytes(diskStats.used)}</span>
                                     <span>Free: {formatBytes(diskStats.free)}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* ✅ BUZZER CONFIGURATION (Fixed Inputs) */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Volume2 size={20} className="text-yellow-500" /> Buzzer Configuration</h3>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label htmlFor="buzzer_on" className="text-xs font-bold text-gray-500 mb-1 block">ALARM ON (SEC)</label>
+                                    <input
+                                        id="buzzer_on"
+                                        name="buzzer_on"
+                                        type="number" min="1" max="60"
+                                        autoComplete="off"
+                                        value={sysSettings.buzzer_alarm_on || '5'}
+                                        onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_on: e.target.value })}
+                                        className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="buzzer_off" className="text-xs font-bold text-gray-500 mb-1 block">ALARM OFF (SEC)</label>
+                                    <input
+                                        id="buzzer_off"
+                                        name="buzzer_off"
+                                        type="number" min="1" max="60"
+                                        autoComplete="off"
+                                        value={sysSettings.buzzer_alarm_off || '10'}
+                                        onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_off: e.target.value })}
+                                        className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="buzzer_rem" className="text-xs font-bold text-gray-500 mb-1 block">REMINDER INTERVAL (MIN)</label>
+                                    <input
+                                        id="buzzer_rem"
+                                        name="buzzer_rem"
+                                        type="number" min="1" max="240"
+                                        autoComplete="off"
+                                        value={sysSettings.buzzer_reminder_min || '2'}
+                                        onChange={e => setSysSettings({ ...sysSettings, buzzer_reminder_min: e.target.value })}
+                                        className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500"
+                                    />
                                 </div>
                             </div>
                         </div>

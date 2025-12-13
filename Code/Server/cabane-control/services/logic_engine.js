@@ -313,7 +313,16 @@ function pushUpdate() {
     }
 }
 
+function updateConfig(onSec, offSec, remMin) {
+    // Basic validation
+    if (onSec > 0 && offSec > 0 && remMin > 0) {
+        udpService.sendConfigPacket(onSec, offSec, remMin);
+        console.log(`[LOGIC] Sent Config: On=${onSec}s, Off=${offSec}s, Rem=${remMin}m`);
+    }
+}
+
+
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback,
-    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled
+    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig // ✅ Export
 };

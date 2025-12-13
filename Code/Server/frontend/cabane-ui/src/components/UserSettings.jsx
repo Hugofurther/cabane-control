@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock, User, Cloud, ScrollText, Zap } from 'lucide-react';
+import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock, User, Cloud, ScrollText, Zap, Sliders, Bell } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
 import axios from 'axios';
-
-// Import Embedded Components
 import { AdminPanel } from './AdminPanel';
 import { LogViewer } from './LogViewer';
 
@@ -21,14 +19,15 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
     const [msg, setMsg] = useState(null);
 
-    // Lockscreen
-    const [lockMethod, setLockMethod] = useState('DISABLED');
-    const [lockTimeout, setLockTimeout] = useState(5);
-
     const [sessionVal, setSessionVal] = useState(60);
     const [sessionUnit, setSessionUnit] = useState('d');
 
-    // Permissions
+    // ✅ NEW: Audio Interval State
+    // "Siren Silence": Seconds of silence between 1s blasts
+    const [appSirenSilence, setAppSirenSilence] = useState(5);
+    // "Chirp Interval": Minutes between chirps
+    const [appChirpInterval, setAppChirpInterval] = useState(2);
+
     const canAdmin = user?.role === 'ADMIN';
     const canLogs = canAdmin || user?.can_view_logs;
 
@@ -41,10 +40,9 @@ export const UserSettings = ({ isOpen, onClose }) => {
                     const match = user.settings.tokenExpiration.match(/^(\d+)([hdm])$/);
                     if (match) { setSessionVal(parseInt(match[1])); setSessionUnit(match[2]); }
                 }
-
-                setLockMethod(user.settings.lockMethod || 'DISABLED');
-                setLockTimeout(parseInt(user.settings.lockTimeout) || 5);
-
+                // ✅ Load Audio Settings
+                setAppSirenSilence(user.settings.appSirenSilence || 5);
+                setAppChirpInterval(user.settings.appChirpInterval || 2);
             }
             setProfile({ username: user.username || '', email: user.email || '' });
         }
@@ -62,12 +60,13 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 await axios.post(`${API_URL}/api/user/profile`, { newUsername: profile.username, newEmail: profile.email }, { headers: { Authorization: `Bearer ${token}` } });
             }
             const val = sessionVal > 0 ? sessionVal : 60;
+
             const finalSettings = {
                 ...localSettings,
                 tokenExpiration: `${val}${sessionUnit}`,
-                // Add new keys:
-                lockMethod,
-                lockTimeout
+                // ✅ Save Audio Settings
+                appSirenSilence: parseFloat(appSirenSilence) || 5,
+                appChirpInterval: parseFloat(appChirpInterval) || 2
             };
 
             await updateSettings(finalSettings);
@@ -88,27 +87,17 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     return (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={onClose}>
-            <div
-                className={clsx(
-                    "bg-gray-900 border border-gray-700 w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300",
-                    isWide ? "max-w-6xl h-[85vh]" : "max-w-md max-h-[90vh]"
-                )}
-                onClick={e => e.stopPropagation()}
-            >
+            <div className={clsx("bg-gray-900 border border-gray-700 w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300", isWide ? "max-w-6xl h-[85vh]" : "max-w-md max-h-[90vh]")} onClick={e => e.stopPropagation()}>
 
-                {/* HEADER */}
+                {/* HEADER & TABS (Same as before) */}
                 <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-800 shrink-0">
                     <h2 className="text-xl font-black text-white tracking-wide uppercase flex items-center gap-2">
-                        {activeTab === 'ADMIN' ? <Shield size={20} className="text-blue-500" /> :
-                            activeTab === 'LOGS' ? <ScrollText size={20} className="text-yellow-500" /> :
-                                <Users size={20} className="text-blue-500" />}
-                        {activeTab === 'ADMIN' ? "System Administration" :
-                            activeTab === 'LOGS' ? "System Logs" : "User Settings"}
+                        {activeTab === 'ADMIN' ? <Shield size={20} className="text-blue-500" /> : activeTab === 'LOGS' ? <ScrollText size={20} className="text-yellow-500" /> : <Users size={20} className="text-blue-500" />}
+                        {activeTab === 'ADMIN' ? "System Administration" : activeTab === 'LOGS' ? "System Logs" : "User Settings"}
                     </h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors"><X size={24} /></button>
                 </div>
 
-                {/* TABS */}
                 <div className="flex border-b border-gray-700 bg-gray-900 shrink-0 overflow-x-auto">
                     <button onClick={() => setActiveTab('GENERAL')} className={`flex-1 min-w-[80px] py-3 text-sm font-bold uppercase ${activeTab === 'GENERAL' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500 hover:text-gray-300'}`}>General</button>
                     <button onClick={() => setActiveTab('PROFILE')} className={`flex-1 min-w-[80px] py-3 text-sm font-bold uppercase ${activeTab === 'PROFILE' ? 'text-blue-400 border-t-2 border-blue-500 bg-gray-800' : 'text-gray-500 hover:text-gray-300'}`}>Profile</button>
@@ -117,105 +106,84 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 </div>
 
                 {/* BODY */}
-                <div className={clsx(
-                    "flex-grow bg-gray-900 p-0 relative",
-                    (activeTab === 'LOGS' || activeTab === 'ADMIN') ? "overflow-hidden flex flex-col" : "overflow-y-auto"
-                )}>
+                <div className={clsx("flex-grow bg-gray-900 p-0 relative", (activeTab === 'LOGS' || activeTab === 'ADMIN') ? "overflow-hidden flex flex-col" : "overflow-y-auto")}>
 
                     {activeTab === 'GENERAL' && (
                         <div className="p-6 space-y-8">
                             <section className="space-y-3">
-                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Interface</h3>
-
-                                <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-                                    <div className="flex items-center gap-3"><Cloud size={18} className="text-cyan-400" /><span className="text-sm font-medium text-gray-200">Show Weather Widget</span></div>
-                                    <Toggle checked={localSettings.showWeather ?? true} onChange={() => toggleSetting('showWeather')} />
-                                </div>
+                                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Interface & Audio</h3>
 
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3">{localSettings.soundEnabled ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-gray-500" />}<span className="text-sm font-medium text-gray-200">Master Sound</span></div>
                                     <Toggle checked={localSettings.soundEnabled ?? true} onChange={() => toggleSetting('soundEnabled')} />
                                 </div>
-
-                                {/* ✅ NEW: Flash Memo Sound Toggle */}
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-                                    <div className="flex items-center gap-3">
-                                        <Zap size={18} className={localSettings.flashSoundEnabled !== false ? "text-yellow-400" : "text-gray-500"} />
-                                        <span className="text-sm font-medium text-gray-200">Flash Memo Alert</span>
-                                    </div>
+                                    <div className="flex items-center gap-3"><Zap size={18} className={localSettings.flashSoundEnabled !== false ? "text-yellow-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">Flash Memo Alert</span></div>
                                     <Toggle checked={localSettings.flashSoundEnabled !== false} onChange={() => toggleSetting('flashSoundEnabled')} />
                                 </div>
 
+                                {/* ✅ NEW: APP AUDIO CONFIG */}
+                                <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-4">
+                                    {/* Siren Silence */}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3"><Sliders size={18} className="text-red-400" /><span className="text-sm font-medium text-gray-200">Siren Silence</span></div>
+                                            <span className="text-xs font-bold text-gray-400">{appSirenSilence}s</span>
+                                        </div>
+                                        <input type="range" min="1" max="30" step="1" value={appSirenSilence} onChange={(e) => setAppSirenSilence(e.target.value)} className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-500" />
+                                        <p className="text-[10px] text-gray-500 mt-1 text-right">Silence between alarm blasts</p>
+                                    </div>
+
+                                    {/* Chirp Interval */}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <div className="flex items-center gap-3"><Bell size={18} className="text-yellow-400" /><span className="text-sm font-medium text-gray-200">Chirp Interval</span></div>
+                                            <span className="text-xs font-bold text-gray-400">{appChirpInterval}m</span>
+                                        </div>
+                                        <input type="range" min="1" max="60" step="1" value={appChirpInterval} onChange={(e) => setAppChirpInterval(e.target.value)} className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500" />
+                                        <p className="text-[10px] text-gray-500 mt-1 text-right">Reminder frequency when muted</p>
+                                    </div>
+                                </div>
+
+                                {/* ... Other settings ... */}
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Smartphone size={18} className={localSettings.vibrationEnabled ? "text-purple-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">Haptic Feedback</span></div>
                                     <Toggle checked={localSettings.vibrationEnabled ?? true} onChange={() => toggleSetting('vibrationEnabled')} />
                                 </div>
-
+                                <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                                    <div className="flex items-center gap-3"><Cloud size={18} className="text-cyan-400" /><span className="text-sm font-medium text-gray-200">Show Weather Widget</span></div>
+                                    <Toggle checked={localSettings.showWeather ?? true} onChange={() => toggleSetting('showWeather')} />
+                                </div>
+                                {/* ... Clock & Status ... */}
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Clock size={18} className="text-blue-400" /><span className="text-sm font-medium text-gray-200">Clock Format</span></div>
                                     <div className="flex bg-gray-900 rounded p-1">
                                         {['12h', '24h'].map(fmt => (<button key={fmt} onClick={() => setSetting('clockFormat', fmt)} className={clsx("px-3 py-1 rounded text-xs font-bold transition-colors", (localSettings.clockFormat || '24h') === fmt ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>{fmt.toUpperCase()}</button>))}
                                     </div>
                                 </div>
-
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Layout size={18} className="text-yellow-400" /><span className="text-sm font-medium text-gray-200">Show Cabane Status</span></div>
                                     <Toggle checked={localSettings.showMainStatus ?? true} onChange={() => toggleSetting('showMainStatus')} />
                                 </div>
                             </section>
 
+                            {/* ... Group Defaults ... */}
                             <section className="space-y-3 pt-4 border-t border-gray-800">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Group Admin Defaults</h3>
-                                {/* --- INSERT AUTO LOCK CONFIG HERE --- */}
-                                <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 mb-4 space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-3">
-                                            <Lock size={18} className={lockMethod !== 'DISABLED' ? "text-blue-400" : "text-gray-500"} />
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-medium text-gray-200">Auto-Lock Screen</span>
-                                                <span className="text-[10px] text-gray-500">Lock interface after inactivity</span>
-                                            </div>
-                                        </div>
-                                        <select
-                                            value={lockMethod}
-                                            onChange={e => setLockMethod(e.target.value)}
-                                            className="bg-gray-900 border border-gray-600 rounded p-1.5 text-xs text-white outline-none"
-                                        >
-                                            <option value="DISABLED">Disabled</option>
-                                            <option value="SIMPLE">Click to Unlock</option>
-                                            <option value="PASSWORD">Require Password</option>
-                                        </select>
-                                    </div>
-
-                                    {lockMethod !== 'DISABLED' && (
-                                        <div className="flex items-center justify-between pl-8 animate-in slide-in-from-top-1">
-                                            <span className="text-xs text-gray-400 font-bold">Timeout (Minutes)</span>
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                max="60"
-                                                value={lockTimeout}
-                                                onChange={e => setLockTimeout(e.target.value)}
-                                                className="w-20 bg-gray-900 border border-gray-600 rounded p-1.5 text-center text-white text-xs outline-none"
-                                            />
-                                        </div>
-                                    )}
-                                </div>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-2">
                                     <div className="flex items-center gap-3 mb-2"><Shield size={18} className="text-red-400" /><span className="text-sm font-medium text-gray-200">Member Notifications</span></div>
                                     <div className="grid grid-cols-3 gap-2">
-                                        {['QUIET', 'PUBLIC', 'PRIVATE'].map(type => (
-                                            <button key={type} onClick={() => setSetting('defaultGroupNotify', type)} className={clsx("py-2 rounded text-[10px] font-bold uppercase transition-all border", (localSettings.defaultGroupNotify || 'PUBLIC') === type ? 'bg-red-900/50 border-red-500 text-red-200 shadow-sm' : 'bg-gray-900 border-gray-700 text-gray-500 hover:bg-gray-800')}>{type}</button>
-                                        ))}
+                                        {['QUIET', 'PUBLIC', 'PRIVATE'].map(type => (<button key={type} onClick={() => setSetting('defaultGroupNotify', type)} className={clsx("py-2 rounded text-[10px] font-bold uppercase transition-all border", (localSettings.defaultGroupNotify || 'PUBLIC') === type ? 'bg-red-900/50 border-red-500 text-red-200 shadow-sm' : 'bg-gray-900 border-gray-700 text-gray-500 hover:bg-gray-800')}>{type}</button>))}
                                     </div>
                                 </div>
                             </section>
                         </div>
                     )}
 
-                    {/* ... (Rest of Tabs: PROFILE, ADMIN, LOGS remain unchanged) ... */}
+                    {/* ... Profile, Admin, Logs logic ... */}
                     {activeTab === 'PROFILE' && (
                         <div className="p-6 space-y-8">
+                            {/* ... Profile inputs ... */}
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">My Profile</h3>
                                 <div className="space-y-3">
@@ -241,13 +209,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
                             </section>
                         </div>
                     )}
-
                     {activeTab === 'ADMIN' && <AdminPanel embedded={true} />}
                     {activeTab === 'LOGS' && <LogViewer embedded={true} />}
-
                 </div>
 
-                {/* FOOTER */}
                 {(activeTab === 'GENERAL' || activeTab === 'PROFILE') && (
                     <div className="p-4 bg-gray-900 border-t border-gray-800 flex gap-3 shrink-0">
                         <button onClick={() => { logout(); onClose(); }} className="flex-1 py-3 bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded font-bold uppercase tracking-widest transition-all text-xs flex items-center justify-center gap-2"><LogOut size={16} /> Sign Out</button>

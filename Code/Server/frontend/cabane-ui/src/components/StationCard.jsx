@@ -56,17 +56,21 @@ export const StationCard = ({ card, isRemote }) => {
     // Styling
     let bgClass = "bg-cabane-panel border-gray-700 shadow-lg";
     let textClass = "text-gray-400 border-gray-700";
-    let zIndexClass = "relative"; // ✅ Always relative to contain labels
+    let zIndexClass = "relative";
 
+    // Priority 1: Locked & Buzzer & Remote Active -> Elevate
     if (isLocked && isBuzzerCard && isRemote) {
         bgClass = "bg-gray-900 border-red-500/50 shadow-[0_0_30px_rgba(220,38,38,0.3)]";
         textClass = "text-gray-200 border-gray-600";
-        zIndexClass = "z-[101] relative"; // Pop above lock screen
+        // ✅ CHANGED: z-[45] puts it ABOVE LockScreen(40) but BELOW Header(50)/Modals(60)
+        zIndexClass = "z-[45] relative";
     }
+    // Priority 2: Offline
     else if (isFullOffline) {
         bgClass = "bg-gray-800 border-gray-800 opacity-60";
         textClass = "text-red-900 border-gray-800";
     }
+    // Priority 3: Remote Active
     else if (isRemote) {
         bgClass = "bg-gray-400 border-gray-500 shadow-xl";
         textClass = "text-gray-900 border-gray-600";
@@ -77,8 +81,6 @@ export const StationCard = ({ card, isRemote }) => {
     return (
         <div className={clsx("border rounded-lg p-4 flex flex-col transition-all duration-500 min-h-[220px]", bgClass, card.span, zIndexClass)}>
 
-            {/* OFFLINE LABELS */}
-            {/* ✅ Added overflow-hidden containment logic just in case, though relative should fix it */}
             {showOfflineLabel && (
                 <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20 pointer-events-none">
                     {offlineLabels.map(lbl => (

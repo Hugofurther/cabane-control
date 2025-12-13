@@ -451,36 +451,74 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ AdminPanel -> Timezone setting is not working. If I try to change the timezone, nothing seems to happen after I save. When re-opening, UTC is back as default. The timezone is set to EST and doesn't change from that, which is what we want anyway.
 
+√ When a user have control, the buttons to release should say "Server" and "Cabane", maybe with an icon to indicate to release control. Or a bracket above both with the mention "Release to" or something similar.
+
+√ The background opacity and blurriness of all modals should all be the same at the exception of MessageDrawer ( Which background is much clearer as we may spend more time on it than the others ). Let's adjust all the modals background blurriness and opacity to be the same, which should be barely opaque and barely blurry including the WeatherModal, UserSettings, FlashViewer
+
+√ Station Controller
+	√ The Display needs to be fixed:
+		√ Normal should be only the number to last digit ( the right most ) representing the station number it is set to. The rest should be off
+		√ When scrolling the station numbers, only the first number to the left should display the numbers being scrolled, the rest should be off.
+
+√ Main Controller - let's make the indicator for the Main Controller no having control to be only the 2 thermostat ledPairs blinking green. Leave the buzzer behaving normally. We need to know when there is an alarm.
+
+√ Main Controller:
+	√ Can you have a define setting to enable/disable the burglar alarm
+	√ If ST2 is disabled, the burglar alarm on ST2 should be disabled as well. Same for ST3
+	√ If the Server has control and the server becomes OFFLINE, the Main Controller should regain control automatically.
+
+√ The Station Controller should display "link" if it is not connected to the network. If it is connected to the network, but the station is disabled on the controlling device ( Main Controller, Server ,User ) it should blink "err x", x being the station number (e.g. "err3")
+
+√ When Station ST2 or ST3 are enabled and the burglar alarm is triggered, we should find a way to indicate it on the Main Controller. Could be the station ledPairs blinking red, or set a chasing lights on the station ledPairs. Let me know what you think or if you have other suggestions on this. We should also have an alarm displayed on the app.
+
 ---
 
 REQUESTED
 
+- Lock Screen - When in Lock Screen, the buzzer should sit just above the Lock Screen layer and under the modals.
+
+---------------
+---------------
+NEED TO VERIFY WITH BUZZER
+
+- Main Controller Buzzer - We need the sound period of the buzzer to start immediately when a reminder chirp or alarm conditions are set to output sound via D2.
+	- When the buzzer switch is OFF or the alarm condition is false,  keep resetting the timer
+	- When the buzzer switch is ON or the reminder chirp ( no alarm ) condition is false,  keep resetting the timer
+
+- Main Controller - Buzzer sound interval ON ( When the Sound should come out to the Buzzer with its intervals of ON/OFF )
+	- Alarm = BUZZER_ALERT_ON_MS 5000 --> #BUZZER_ALERT_OFF_MS 10000
+		- Any Vacuum switch is ON, but their Feedback ledPairs are RED or blinking RED.
+		- Thermostat switch for assigned station is ON AND the thermostat is active AND any of its assigned and enabled station's vacuum ledPair is RED or blinking RED.
+
+	- Reminder Chirp = REMINDER_ON_MS = 500 --> REMINDER_PERIOD_MS = 300000
+		(You forgot to include the ```#if BUZZER_REMINDER else if (!alert && !switchOn)``` section. I'm worried you may have forgotten other things now.)
+		- None of the enabled station's vacuum light is flashing RED ( everything is ok and there is no ALARM or Alert) AND the buzzer switch is OFF. This is a reminder to turn the buzzer switch ON when all is working fine.
 
 
 
+	
 
 ---
 
 NEXT
 
-
-
-- on the hardware ( Arduino ), we need to Add a new alarm feature. It is an alarm to tell if someone entered or opened a door while the alarm is armed.
-	- Triggering alarm: When input (feedback) of ST2 or ST3 5 (pin D6) are High ( not shorted to GND ) -> alarm is triggered
-	- When alarm is triggered: Output to ST0 relay A3 is High and activates the relay that triggers the 24 alarm.
-
-- If the Server has control and the server becomes OFFLINE, the Main Controller should regain control automatically.
-
-
--------------------------------------------------------
--------------------------------------------------------
-Requested
+App
+- When one of the stations a thermostat is assigned to is enabled, its thermostat switch should be enabled. (e.g. ST1 and/or ST2 and/or ST3 enabled -> Thermostat with switch idx 22 is enabled. ST4 and/or ST5 enabled -> Thermostat with switch idx 23 is enabled.
 
 
 
-- When a user have control, the buttons to release should say "Server" and "Cabane", maybe with an icon to indicate to release control. Or a bracket above both with the mention "Release to" or something similar.
 
-- The background opacity and blurriness of all modals should all be the same at the exception of MessageDrawer ( Which background is much clearer as we may spend more time on it than the others ). Let's adjust all the modals background blurriness and opacity to be the same, which should be barely opaque and barely blurry including the WeatherModal, UserSettings, FlashViewer
+
+
+
+
+---
+
+- The way the app should read the alarm and Reminder is by reading the state of the switches, not waiting for the Main Controller to tell it when to sound. 
+
+
+
+
 
 -----
 
@@ -490,7 +528,8 @@ Requested
 -------------------------------------------------------
 Debug
 
-
+Manny Rahman
+Mannyramen2007
 
 
 -------------------------------------------------------
@@ -555,7 +594,7 @@ NATIVE BROWSER ALERTS -> Should be Modal pop-up
 -----------------------------------
 LAYOUT
 
-
+- Lock Screen - When in Lock Screen, the buzzer should sit just above the Lock Screen layer and under the modals.
 
 
 -----------------------------------

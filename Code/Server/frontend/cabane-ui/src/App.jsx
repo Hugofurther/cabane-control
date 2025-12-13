@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Settings, Mail, StickyNote, Activity, LogOut, Cloud } from 'lucide-react';
 import axios from 'axios';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
@@ -17,9 +17,10 @@ import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
 
-console.log("🚀 CABANE UI VERSION: 4.2 - LAYOUT TWEAKS");
+console.log("🚀 CABANE UI VERSION: 4.3 - LOCAL AUDIO LOGIC");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
+const BUZZER_SWITCH_IDX = 21;
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 function Dashboard() {
@@ -31,8 +32,6 @@ function Dashboard() {
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
-  const [showAdmin, setShowAdmin] = useState(false); // Admin state was missing in previous cleanup, restoring just in case logic needs it, though likely handled inside UserSettings now.
-  const [showLogs, setShowLogs] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
@@ -47,6 +46,7 @@ function Dashboard() {
   const [hasNotes, setHasNotes] = useState(false);
 
   const audioCtx = useRef(null);
+  const chirpTimerRef = useRef(null);
 
   // --- 1. FETCH DIRECTORY ---
   useEffect(() => {
@@ -57,48 +57,76 @@ function Dashboard() {
         .catch(e => console.error("User fetch error:", e));
 
       axios.get(`${API_URL}/api/conversations`, { headers: { Authorization: `Bearer ${token}` } })
-        .then(res => {
-          if (Array.isArray(res.data)) {
-            setGroupList(res.data.filter(c => c.type === 'GROUP'));
-          }
-        })
+        .then(res => { if (Array.isArray(res.data)) setGroupList(res.data.filter(c => c.type === 'GROUP')); })
         .catch(e => console.error("Group fetch error:", e));
     }
   }, [user]);
 
-  // --- HELPER: Alarm Source ---
-  const getAlarmSources = () => {
-    const { virtualSwitches, physicalSwitches, stationFeedback, controller } = systemState;
-    const sources = [];
+  // --- 2. LOCAL ALARM LOGIC ---
+  // Calculates Alarm/Chirp state based on raw switches, independent of Controller Logic.
+  const { isAlarmActive, isChirpActive, alarmSources } = useMemo(() => {
+    const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
+
+    // Determine which switch state array to use.
+    // If Cabane is controlling, physical is truth. Otherwise virtual.
+    const activeSwitches = controller === 'CABANE' ? physicalSwitches : virtualSwitches;
+
+    let alarm = false;
+    let sources = [];
+    let systemRunning = false;
+
+    // Check Vacuum Pumps
     PANEL_LAYOUT.forEach(row => {
       row.cards.forEach(card => {
         card.controls.forEach(ctrl => {
           if (VACUUM_INDICES.includes(ctrl.idx)) {
             const st = ctrl.fb?.st;
             const bit = ctrl.fb?.bit;
-            if (st !== undefined && bit !== undefined) {
-              const isSwitchOn = (controller === 'CABANE') ? !!physicalSwitches[ctrl.idx] : !!virtualSwitches[ctrl.idx];
-              const isFeedbackOn = ((stationFeedback[st] >> bit) & 1) === 0;
-              if (isSwitchOn && !isFeedbackOn) {
-                sources.push(`${card.name} - ${ctrl.label.replace('\n', ' ')}`);
+
+            // Skip if station offline
+            if (st !== undefined && stationOnline[st]) {
+              const isOn = !!activeSwitches[ctrl.idx];
+              const isFeedbackOff = ((stationFeedback[st] >> bit) & 1) === 1;
+
+              if (isOn) {
+                // System is attempting to run
+                if (isFeedbackOff) {
+                  // ALARM: On but Feedback Off
+                  alarm = true;
+                  sources.push(`${card.name} - ${ctrl.label}`);
+                } else {
+                  // RUNNING: On and Feedback On
+                  systemRunning = true;
+                }
               }
             }
           }
         });
       });
     });
-    return sources;
-  };
+
+    // Check Buzzer Switch
+    const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
+
+    // Chirp Condition: No Alarm AND System Running AND Buzzer Off
+    const chirp = !alarm && systemRunning && !buzzerOn;
+
+    return { isAlarmActive: alarm, isChirpActive: chirp, alarmSources: sources };
+  }, [systemState]);
 
   // --- AUDIO LOGIC ---
   const playTone = (type) => {
     const saved = localStorage.getItem('cabane_settings');
+    // Note: user.settings holds the new intervals, localstorage holds enabled status (legacy, but kept for safety)
     const s = saved ? JSON.parse(saved) : { soundEnabled: true, vibrationEnabled: true };
 
     if (s.vibrationEnabled && navigator.vibrate) {
       navigator.vibrate(type === 'SIREN' ? [500, 200, 500] : 100);
     }
-    if (!s.soundEnabled) return;
+
+    // Global User Setting check
+    if (user?.settings?.soundEnabled === false) return;
+
     if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
     const osc = audioCtx.current.createOscillator();
     const gain = audioCtx.current.createGain();
@@ -164,26 +192,51 @@ function Dashboard() {
     };
   }, [socket, user]);
 
+  // --- 🔊 SOUND EFFECT LOOP ---
   useEffect(() => {
-    if (systemState.buzzerStatus === 'SIREN') {
+    // 1. Clear previous timers
+    if (chirpTimerRef.current) clearInterval(chirpTimerRef.current);
+
+    // Get intervals from settings
+    // Silence between siren blasts (Seconds)
+    const silenceSec = user?.settings?.appSirenSilence || 5;
+    // Chirp Interval (Minutes)
+    const chirpMin = user?.settings?.appChirpInterval || 2;
+
+    // Calculate Milliseconds
+    // Siren Loop = 1s (Sound) + Silence
+    const sirenLoopMs = 1000 + (silenceSec * 1000);
+    const chirpLoopMs = chirpMin * 60 * 1000;
+
+    let intervalId = null;
+
+    if (isAlarmActive) {
+      // SIREN LOOP
       playTone('SIREN');
-      const i = setInterval(() => playTone('SIREN'), 1500);
-      return () => clearInterval(i);
-    } else if (systemState.buzzerStatus === 'CHIRP') playTone('CHIRP');
-  }, [systemState.buzzerStatus]);
+      intervalId = setInterval(() => playTone('SIREN'), sirenLoopMs);
+    } else if (isChirpActive) {
+      // CHIRP LOOP
+      playTone('CHIRP');
+      intervalId = setInterval(() => playTone('CHIRP'), chirpLoopMs);
+    }
 
+    chirpTimerRef.current = intervalId;
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [isAlarmActive, isChirpActive, user?.settings]); // Re-run if settings change
+
+  // --- NOTIFICATION BANNER LOGIC ---
   useEffect(() => {
-    if (!systemState.globalVacuumAlarm) setNotification(prev => (prev?.type === 'ALARM' ? null : prev));
-    if (systemState.buzzerEnabled) setNotification(prev => (prev?.type === 'INFO' ? null : prev));
-
-    if (systemState.buzzerStatus === 'SIREN') {
-      const culprits = getAlarmSources();
-      setNotification({ type: 'ALARM', message: culprits.length ? `VACUUM LOSS:\n${culprits.join('\n')}` : "VACUUM ALARM" });
-    }
-    if (systemState.buzzerStatus === 'CHIRP') {
+    if (isAlarmActive) {
+      setNotification({ type: 'ALARM', message: alarmSources.length ? `VACUUM LOSS:\n${alarmSources.join('\n')}` : "VACUUM ALARM" });
+    } else if (isChirpActive) {
       setNotification({ type: 'INFO', message: "System Active but Buzzer MUTED." });
+    } else {
+      setNotification(null);
     }
-  }, [systemState.globalVacuumAlarm, systemState.buzzerStatus, systemState.buzzerEnabled]);
+  }, [isAlarmActive, isChirpActive, alarmSources]);
 
   const handleUnreadChange = (unread, notes) => {
     setUnreadCount(unread);
@@ -254,7 +307,7 @@ function Dashboard() {
         {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* 1. CONTROLS (Moved to Left of Messages) */}
+          {/* Controls (Left of Messages) */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">Take Control</button>
@@ -267,7 +320,7 @@ function Dashboard() {
                 onClick={releaseToServer}
                 className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"
               >
-                ➜ SERVER
+                <Cloud size={16} /> ➜ SERVER
               </button>
 
               {systemState.mainControllerOnline && (
@@ -275,13 +328,13 @@ function Dashboard() {
                   onClick={releaseToCabane}
                   className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"
                 >
-                  ➜ CABANE
+                  <Cloud size={16} /> ➜ CABANE
                 </button>
               )}
             </div>
           )}
 
-          {/* 2. MESSAGES */}
+          {/* Messages */}
           <button
             onClick={() => setShowMessageDrawer(true)}
             className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
@@ -293,7 +346,7 @@ function Dashboard() {
 
           {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title="You have reminders"><StickyNote size={20} /></div>}
 
-          {/* 3. USER SETTINGS */}
+          {/* User Settings */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500 shrink-0">
             <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
               <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
