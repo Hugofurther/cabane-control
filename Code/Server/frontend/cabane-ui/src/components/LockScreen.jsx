@@ -48,18 +48,18 @@ export const LockScreen = () => {
 
     return (
         // 1. INVISIBLE OVERLAY
-        // z-[100]: Covers standard content (z-0 to z-50).
-        // Since StationCard (Buzzer) is z-[101], it sits ON TOP of this div.
-        // Therefore, clicks on the Buzzer go to the card.
-        // Clicks anywhere else hit this div and trigger the modal.
+        // ✅ CHANGED: z-[40] (Was 100). 
+        // This places it ABOVE the Grid (z-0) but BELOW the Header (z-50) and Modals (z-55+).
+        // It still captures clicks on the grid area to trigger the modal.
         <div
-            className="fixed inset-0 z-[100] cursor-default"
+            className="fixed inset-0 z-[40] cursor-default"
             onClick={() => setShowModal(true)}
         >
 
             {/* 2. UNLOCK MODAL (Only appears when clicked) */}
             {showModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 z-[102]">
+                // ✅ CHANGED: z-[150] (Was 102). Ensures it pops over EVERYTHING when active.
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 z-[150]">
                     <div
                         onClick={(e) => e.stopPropagation()}
                         className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-8 w-full max-w-sm relative flex flex-col items-center gap-6"

@@ -19,6 +19,9 @@ const state = {
     disabledStations: []
 };
 
+// State Diffing
+let lastPushedStateStr = "";
+
 let controlHandshakeConfirmed = false;
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
@@ -84,17 +87,12 @@ function updateDisabled(jsonStr) {
     try { state.disabledStations = JSON.parse(jsonStr); pushUpdate(); } catch (e) { }
 }
 
-// ✅ NEW: Centralized Override Logic
 function applyThermostatOverrides() {
     let changed = false;
     THERMOSTATS.forEach(th => {
-        // If Thermostat Switch is Enabled
         if (state.virtualSwitches[th.swIdx]) {
-            // Check Feedback Sensor (Active Low: 0 = Cold/Active)
             const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
-
             if (rawBit === 0) {
-                // Force target switches ON
                 th.overrides.forEach(targetIdx => {
                     if (state.virtualSwitches[targetIdx] === 0) {
                         state.virtualSwitches[targetIdx] = 1;
@@ -107,56 +105,64 @@ function applyThermostatOverrides() {
     return changed;
 }
 
+// ✅ TRIGGERED BY UDP 0xB1
 function updatePhysicalState(switchBytes, isOverrideActive) {
-    if (!state.mainControllerOnline) {
-        console.log("[NET] Main Controller Detected Online.");
-        logSystemEvent('SYSTEM', "Main Controller Reconnected.");
-        state.mainControllerOnline = true;
-        if (state.controller !== 'CABANE') {
-            console.log("[SYNC] Main Reconnected. Yielding Control.");
-            state.controller = 'CABANE';
-            state.currentUser = null;
-            lastReleaseTime = Date.now();
-            controlHandshakeConfirmed = false;
-            isForcingRelease = true;
-            udpService.sendOverrideCommand(0);
-            pushUpdate();
-            return;
-        }
-    }
     state.lastMainHeartbeat = Date.now();
 
-    // Update Physical State
+    // 1. Detect Reconnection (Offline -> Online)
+    if (!state.mainControllerOnline) {
+        state.mainControllerOnline = true;
+        logSystemEvent('SYSTEM', "Main Controller Online. Restoring Physical Control.");
+
+        // Force Handover to Cabane immediately
+        state.controller = 'CABANE';
+        state.currentUser = null;
+        lastReleaseTime = Date.now();
+        controlHandshakeConfirmed = false;
+        isForcingRelease = true;
+        udpService.sendOverrideCommand(0);
+        pushUpdate();
+        return;
+    }
+
+    // 2. Parse Physical State
     for (let i = 0; i < 24; i++) {
         const byteIdx = Math.floor(i / 8);
         const bitIdx = i % 8;
         state.physicalSwitches[i] = (switchBytes[byteIdx] >> bitIdx) & 1;
     }
 
+    // 3. Handle Handshake Logic
     if (isForcingRelease) {
-        if (isOverrideActive) udpService.sendOverrideCommand(0);
-        else { isForcingRelease = false; }
+        if (isOverrideActive) {
+            udpService.sendOverrideCommand(0);
+        } else {
+            isForcingRelease = false;
+        }
         return;
     }
 
+    // 4. Normal Operation
     if (state.controller === 'CABANE') {
-        // 1. Reset Virtual to match Physical
         state.virtualSwitches = [...state.physicalSwitches];
-
-        // 2. ✅ IMMEDIATELY Apply Overrides (Prevents UI Flicker)
         applyThermostatOverrides();
 
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
-            console.log("[SYNC] Main in Override. Pi assuming SERVER.");
-            state.controller = 'SERVER'; state.currentUser = null; controlHandshakeConfirmed = true;
+            // Mismatch safety
+            state.controller = 'SERVER';
+            state.currentUser = null;
+            controlHandshakeConfirmed = true;
         }
     } else {
-        if (isOverrideActive) controlHandshakeConfirmed = true;
-        else {
+        if (isOverrideActive) {
+            controlHandshakeConfirmed = true;
+        } else {
             if (!controlHandshakeConfirmed) udpService.sendOverrideCommand(1);
             else {
-                console.log("[SYNC] Main Controller forced Manual Mode.");
-                state.controller = 'CABANE'; state.currentUser = null; controlHandshakeConfirmed = false;
+                logSystemEvent('CONTROL', "Physical Override Triggered on Panel.");
+                state.controller = 'CABANE';
+                state.currentUser = null;
+                controlHandshakeConfirmed = false;
             }
         }
     }
@@ -174,33 +180,42 @@ function updateStationFeedback(id, bits) {
 }
 
 function takeControl(username) {
-    state.controller = 'USER'; state.currentUser = username; lastControlTakeTime = Date.now();
-    controlHandshakeConfirmed = false; udpService.sendOverrideCommand(1);
+    state.controller = 'USER';
+    state.currentUser = username;
+    lastControlTakeTime = Date.now();
+    controlHandshakeConfirmed = false;
+    udpService.sendOverrideCommand(1);
     pushUpdate();
 }
+
 function releaseToServer() {
-    // 🛡️ SAFETY CHECK
-    if (!state.mainControllerOnline) {
-        takeControl('SYSTEM_FAILSAFE');
-        return;
-    }
-    state.controller = 'SERVER'; state.currentUser = null; lastControlTakeTime = Date.now();
-    udpService.sendOverrideCommand(1); pushUpdate();
-}
-function releaseToCabane() {
-    // 🛡️ SAFETY CHECK
-    if (!state.mainControllerOnline) {
-        takeControl('SYSTEM_FAILSAFE');
-        return;
-    }
-    state.controller = 'CABANE'; state.currentUser = null; lastReleaseTime = Date.now();
-    controlHandshakeConfirmed = false; isForcingRelease = true; udpService.sendOverrideCommand(0);
+    state.controller = 'SERVER';
+    state.currentUser = null;
+    lastControlTakeTime = Date.now();
+    udpService.sendOverrideCommand(1);
     pushUpdate();
 }
+
+function releaseToCabane() {
+    if (!state.mainControllerOnline) {
+        // Fallback if UI button wasn't hidden
+        releaseToServer();
+        return;
+    }
+    state.controller = 'CABANE';
+    state.currentUser = null;
+    lastReleaseTime = Date.now();
+    controlHandshakeConfirmed = false;
+    isForcingRelease = true;
+    udpService.sendOverrideCommand(0);
+    pushUpdate();
+}
+
 function toggleSwitch(idx, value) {
     if (idx < 0 || idx > 23) return;
     if (state.controller === 'CABANE') return;
-    state.virtualSwitches[idx] = value ? 1 : 0; pushUpdate();
+    state.virtualSwitches[idx] = value ? 1 : 0;
+    pushUpdate();
 }
 
 function controlLoop() {
@@ -208,26 +223,16 @@ function controlLoop() {
     let stateChanged = false;
     state.buzzerEnabled = !!state.virtualSwitches[21];
 
-    // ✅ RE-APPLY Overrides (Keeps logic consistent in Server/User modes)
-    if (applyThermostatOverrides()) {
-        stateChanged = true;
-    }
+    if (applyThermostatOverrides()) stateChanged = true;
 
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
-        // ✅ CRITICAL FIX: Skip check if station is Offline OR Disabled
-        // This prevents "Stale Data" from triggering false alarms
-        if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) {
-            return;
-        }
+        if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) return;
 
         const commandedOn = state.virtualSwitches[chk.swIdx];
         const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
-
-        // Logic: Commanded ON, but Feedback says OFF (1)
         if (commandedOn && rawFb === 1) alarmDetected = true;
     });
-
 
     if (state.globalVacuumAlarm !== alarmDetected) {
         state.globalVacuumAlarm = alarmDetected;
@@ -254,7 +259,8 @@ function controlLoop() {
         }
     }
     if (state.buzzerStatus !== newBuzzerStatus) {
-        state.buzzerStatus = newBuzzerStatus; stateChanged = true;
+        state.buzzerStatus = newBuzzerStatus;
+        stateChanged = true;
     }
     if (stateChanged) pushUpdate();
 
@@ -282,8 +288,12 @@ function checkHeartbeats() {
     if (state.mainControllerOnline && (now - state.lastMainHeartbeat > 5000)) {
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
         state.mainControllerOnline = false;
-        // Auto-Take Control if we were waiting for Cabane
-        if (state.controller === 'CABANE') takeControl('SYSTEM_FAILSAFE');
+
+        if (state.controller === 'CABANE') {
+            state.controller = 'SERVER';
+            state.currentUser = null;
+            udpService.sendOverrideCommand(1);
+        }
         pushUpdate();
     }
     for (let i = 0; i < 6; i++) {
@@ -294,7 +304,14 @@ function checkHeartbeats() {
     }
 }
 
-function pushUpdate() { if (ioRef) ioRef.emit('STATE_UPDATE', state); }
+function pushUpdate() {
+    if (!ioRef) return;
+    const newStateStr = JSON.stringify(state);
+    if (newStateStr !== lastPushedStateStr) {
+        ioRef.emit('STATE_UPDATE', state);
+        lastPushedStateStr = newStateStr;
+    }
+}
 
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback,

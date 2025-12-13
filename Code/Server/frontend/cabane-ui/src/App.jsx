@@ -7,17 +7,17 @@ import { UserSettings } from './components/UserSettings';
 import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
 import { MessageDrawer } from './components/MessageDrawer/index';
-import { ShareModal } from './components/MessageDrawer/ShareModal'; // ✅ Import ShareModal
+import { ShareModal } from './components/MessageDrawer/ShareModal';
 import { Clock } from './components/Clock';
 import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer';
 import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
-import { AutoLockProvider } from './contexts/AutoLockContext'; // ✅ New Import
-import { LockScreen } from './components/LockScreen';         // ✅ New Import
+import { AutoLockProvider } from './contexts/AutoLockContext'; // ✅ AutoLock
+import { LockScreen } from './components/LockScreen';         // ✅ LockScreen UI
 
-console.log("🚀 CABANE UI VERSION: 3.8 - GLOBAL FLASH SHARE");
+console.log("🚀 CABANE UI VERSION: 4.0 - AUTO LOCK & LAYERING");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
@@ -206,34 +206,36 @@ function Dashboard() {
 
       {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
 
-      {/* ✅ GLOBAL FLASH VIEWER WITH SHARE */}
+      {/* GLOBAL FLASH VIEWER WITH SHARE */}
       {flashMessages.length > 0 && (
         <FlashViewer
           messages={flashMessages}
           onDismiss={handleDismissFlash}
           onClose={() => setFlashMessages([])}
-          // Pass Share Handler
           onShare={(noteData) => {
-            // noteData is already parsed by FlashViewer
             setShareTargetNote(noteData);
             setShareModalOpen(true);
           }}
         />
       )}
 
-      {/* ✅ GLOBAL SHARE MODAL */}
+      {/* GLOBAL SHARE MODAL */}
       {shareModalOpen && shareTargetNote && (
         <ShareModal
           note={shareTargetNote}
           users={userList.filter(u => u.id !== user?.id)}
           groups={groupList}
-          isFlash={true} // Default to flash for re-flashes
+          isFlash={true}
           onClose={() => setShareModalOpen(false)}
         />
       )}
 
-      {/* HEADER */}
-      <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6">
+      {/* 
+          ✅ HEADER 
+          Added 'relative z-[50]' to sit ABOVE the Lock Screen overlay (z-[40])
+          This allows access to Weather, Clock, Messages, and Logout while locked.
+      */}
+      <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
 
         {/* LEFT: Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
@@ -267,6 +269,18 @@ function Dashboard() {
         {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
+          {/* Messages */}
+          <button
+            onClick={() => setShowMessageDrawer(true)}
+            className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            title="Messages"
+          >
+            <Mail size={20} />
+            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
+          </button>
+
+          {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
+
           {/* Controls */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
@@ -283,18 +297,6 @@ function Dashboard() {
             </div>
           )}
 
-          {/* Messages */}
-          <button
-            onClick={() => setShowMessageDrawer(true)}
-            className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-            title="Messages"
-          >
-            <Mail size={20} />
-            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
-          </button>
-
-          {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
-
           {/* User Settings */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500">
             <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
@@ -308,6 +310,7 @@ function Dashboard() {
       </div>
 
       {/* GRID */}
+      {/* Sits at Z-0 (default), so Lock Screen (Z-40) covers it */}
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         {PANEL_LAYOUT.map((row) => (
           <div key={row.id} className={`grid gap-6 ${row.cols}`}>
@@ -343,10 +346,10 @@ export default function App() {
   return (
     <ModalProvider>
       <SocketProvider>
-        <AutoLockProvider> {/* ✅ Added Here (Inside Socket, so it can read User settings) */}
+        <AutoLockProvider> {/* ✅ Auto-Lock Wraps Layout to access User/System settings */}
           <MainLayout />
           <GlobalModal />
-          <LockScreen /> {/* ✅ Added Here */}
+          <LockScreen /> {/* ✅ Rendered Globally */}
         </AutoLockProvider>
       </SocketProvider>
     </ModalProvider>

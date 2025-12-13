@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import { RockerSwitch } from './controls/RockerSwitch';
 import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
-import { useAutoLock } from '../contexts/AutoLockContext'; // ✅ New Import
+import { useAutoLock } from '../contexts/AutoLockContext';
 
 const formatDuration = (ms) => {
     if (!ms) return "00:00";
@@ -16,7 +16,7 @@ const formatDuration = (ms) => {
 
 export const StationCard = ({ card, isRemote }) => {
     const { systemState, siteSettings, toggleSwitch } = useSocket();
-    const { isLocked } = useAutoLock(); // ✅ Get Lock State
+    const { isLocked } = useAutoLock();
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -50,20 +50,18 @@ export const StationCard = ({ card, isRemote }) => {
     const isThermostat = card.name.includes("THERMOSTAT");
     const showOfflineLabel = isAnyOffline && !isThermostat;
 
-    // ✅ DETECT BUZZER CARD
-    // Check if any control in this card is the Buzzer (Index 21 or special='BUZZER')
+    // Detect Buzzer Card
     const isBuzzerCard = card.controls.some(c => c.idx === 21 || c.special === 'BUZZER');
 
-    // ✅ DYNAMIC STYLES
+    // Styling
     let bgClass = "bg-cabane-panel border-gray-700 shadow-lg";
     let textClass = "text-gray-400 border-gray-700";
-    let zIndexClass = ""; // Default z-auto
+    let zIndexClass = "relative"; // ✅ Always relative to contain labels
 
-    if (isLocked && isBuzzerCard) {
-        // 🔒 LOCKED STATE: Elevate Buzzer Card above the LockScreen overlay (which is usually z-50 or z-100)
-        bgClass = "bg-gray-900 border-red-500/50 shadow-[0_0_30px_rgba(220,38,38,0.3)]"; // Add a glow to show it's active
+    if (isLocked && isBuzzerCard && isRemote) {
+        bgClass = "bg-gray-900 border-red-500/50 shadow-[0_0_30px_rgba(220,38,38,0.3)]";
         textClass = "text-gray-200 border-gray-600";
-        zIndexClass = "z-[101] relative";
+        zIndexClass = "z-[101] relative"; // Pop above lock screen
     }
     else if (isFullOffline) {
         bgClass = "bg-gray-800 border-gray-800 opacity-60";
@@ -79,8 +77,10 @@ export const StationCard = ({ card, isRemote }) => {
     return (
         <div className={clsx("border rounded-lg p-4 flex flex-col transition-all duration-500 min-h-[220px]", bgClass, card.span, zIndexClass)}>
 
+            {/* OFFLINE LABELS */}
+            {/* ✅ Added overflow-hidden containment logic just in case, though relative should fix it */}
             {showOfflineLabel && (
-                <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20">
+                <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20 pointer-events-none">
                     {offlineLabels.map(lbl => (
                         <span key={lbl} className={`text-[10px] font-black font-mono border px-2 py-0.5 rounded shadow-sm whitespace-nowrap ${lbl.includes("DISABLED") ? "text-orange-500 border-orange-500/50 bg-orange-900/20" : "text-red-500 border-red-500/50 bg-gray-900/80"}`}>
                             {lbl}
@@ -93,7 +93,6 @@ export const StationCard = ({ card, isRemote }) => {
                 {card.name}
             </h3>
 
-            {/* Layout Container */}
             <div className={clsx("flex flex-wrap gap-4 justify-center items-start flex-grow mt-6", (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50")}>
                 {card.controls.map((ctrl) => {
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
@@ -104,11 +103,7 @@ export const StationCard = ({ card, isRemote }) => {
                     const virtualOn = !!systemState.virtualSwitches[ctrl.idx];
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
 
-                    // ✅ Allow interaction if Remote OR if it's the Buzzer during Lock
-                    // The RockerSwitch component has internal logic, but we pass isLocked prop.
-                    // If system is locked, we normally disable everything.
-                    // BUT for the Buzzer Card, we want it enabled.
-                    const isLockedControl = (!isRemote || isControlUnavailable) && !(isLocked && isBuzzerCard);
+                    const isLockedControl = (!isRemote || isControlUnavailable);
 
                     const props = {
                         label: null,
@@ -116,7 +111,7 @@ export const StationCard = ({ card, isRemote }) => {
                         feedback: ctrl.fb,
                         special: ctrl.special,
                         isLocked: isLockedControl,
-                        isActive: (isRemote && !isControlUnavailable) || (isLocked && isBuzzerCard),
+                        isActive: isRemote && !isControlUnavailable,
                     };
 
                     return (

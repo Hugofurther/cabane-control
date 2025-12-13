@@ -425,10 +425,29 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ In the forecast, can we add the "Snow volume for past 3 hours" and "Rain volume for past 3 hours"
 
+√ Why is there a "ST5 Never Connected" in the Header?
+
+√ the login page needs the "eye" on the password to be able to view it.
+
 ---
 
 REQUESTED
 
+- Can we review the "Take Control" and who is controlling feature. Can we make sure of the following:
+	- When Main Controller ( Cabane ) is OFFLINE, it is impossible for it to be the controlling device.
+	- When Main Controller ( Cabane ) is OFFLINE, releasing control to Cabane when it is obvious Cabane is OFFLINE, the control is released to the Server.
+	- When Main Controller ( Cabane ) becomes OFFLINE, Control releases automatically to the Server ( no one is really controlling, but the Server keeps the status )
+	- When Main Controller ( Cabane ) becomes ONLINE, either by reconnecting its ethernet cable or rebooting, the control gets release by default to the Main Controller ( Cabane ).
+	- When a user takes control:
+		- If Cabane is OFFLINE, the Release button is hidden and the user doesn't have access to releasing control to Cabane ( Main Controller )
+		- If Cabane is OFFLINE and for some reason, the user manage to release control to Cabane even if the Release button is hidden, when it is obvious Cabane is OFFLINE, the control is released to the Server.
+		- If Cabane is ONLINE, the "Release" button releases control to Cabane.
+		- the "Hold" Button releases control to the Server. ( Currently "hold" button isn't doing anything, tho it was working previously. )
+		- If another user takes control, control gets release to that user.
+		
+	- When the Server has control, no device really has control, the server cannot do much other than keeping the status of the switches and feedbacks.
+
+	- In "Lock Screen", if the user has control, the buzzer switch is accessible to toggle as normal. If the user doesn't have control, the buzzer is like the other StationCard locked behind the Lock Screen.
 
 
 
@@ -438,11 +457,13 @@ REQUESTED
 
 NEXT
 
-- Why is there a "ST5 Never Connected in the Header?"
+- when in locked screen and not controlling, the buzzer switch should behave the same as when the Lock Screen is not on and the user doesn't have control. As it is right now, when the Lock Screen is active and the user doesn't have access, the buzzer toggle can be switches with console error: "POST http://192.168.1.200:3000/api/control/toggle 403 (Forbidden)"
 
 - on the hardware ( Arduino ), we need to Add a new alarm feature. It is an alarm to tell if someone entered or opened a door while the alarm is armed.
 	- Triggering alarm: When input (feedback) of ST2 or ST3 5 (pin D6) are High ( not shorted to GND ) -> alarm is triggered
 	- When alarm is triggered: Output to ST0 relay A3 is High and activates the relay that triggers the 24 alarm.
+
+- If the Server has control and the server becomes OFFLINE, the Main Controller should regain control automatically.
 
 
 -------------------------------------------------------
@@ -459,9 +480,12 @@ Requested
 -----
 
 
+
 -------------------------------------------------------
 -------------------------------------------------------
 Debug
+
+- AdminPanel -> Timezone setting is not working. If you try to change the timezone, nothing seems to happen and when re-opening, UTC is back as default. The timezone is set to EST, which is what we want anyway.
 
 
 -------------------------------------------------------
@@ -473,14 +497,12 @@ NOTES
 
 - when a user gets removed from the "Shared with" list, or the note gets deleted, they should receive a brief message in their dm from the creator of the app stating they have been removed.
 
-- A user should be able to Re-Share a flash Memo direct from the Flash Memo.
-
 - When a Flash Memo is sent to a user who is not logged in, The minute the user logs in, the Flash Memo should appear on their screen.
 
 - In the NOTES tab, if a note creator edits a note, the users the note is shared with, should have a badge on it in the NOTES tab to indicate a change was made. We should use a different color than the "new unseen" badge. This badge is dismissed once the user sees it.
 
 
-- post MVP: Pin notes at the top
+- post MVP: Pin notes at the top, order notes
 
 -----------------------------------
 MESSAGIN
@@ -501,6 +523,9 @@ SERVER
 - The admin should be able to update the Server and the React app from the app. Download the update first, then when verified, update the React app and / or the Server. Then reboot automatically.
 
 - The server should be able to update itself
+
+- Add a way in admin to backup the entire database. Also expert all message and other for all notes.
+
 
 -----------------------------------
 UX
@@ -649,6 +674,34 @@ ST3 S3>S3 ON + St2 S3>S2 + ST2 transport + st3 vacuum + ST1 T2 Ferme + T2 Vidang
 
 ------------------------------------------------------------
 ------------------------------------------------------------
+PRODUCTION
+macOS: add Caddy root CA to Keychain → Always Trust
+
+
+ON PI
+sudo nano /etc/caddy/Caddyfile
+Uncomment the app.cabanecontrol.com part
+
+------------------------------------------------------------
+------------------------------------------------------------
+
+Backup SD CARD
+
+macOS Terminal:
+ssh admin@cabane-server.local "sudo tar --xattrs --acls -cpf - \
+  --exclude=/proc --exclude=/sys --exclude=/dev --exclude=/run --exclude=/tmp --exclude=/mnt --exclude=/media --exclude=/lost+found \
+  / /boot" | gzip > pi-backup-$(date +%F).tar.gz
+
+
+Restore to a new SD (bootable)
+	1.	Flash Raspberry Pi OS to the new SD (Raspberry Pi Imager). Boot it once, enable SSH.
+	2.	On the fresh Pi, restore your archive:
+
+gzip -dc pi-backup-YYYY-MM-DD.tar.gz | sudo tar --xattrs --acls -xpf - -C /
+sudo reboot
+
+------------------------------------------------------------
+------------------------------------------------------------
 
 After debugging:
 services/logic_engine.js
@@ -661,6 +714,37 @@ RAPPEL
 Le système est actif mais le buzzer est muet.
 Veuillez activer l’interrupteur du buzzer.
 
+
+
+<command 1>
+</command 1>
+
+<output 1>
+</output 1>
+
+---
+
+<command 2>
+</command 2>
+
+<output 2>
+</output 2>
+
+---
+
+<command 3>
+</command 3>
+
+<output 3>
+</output 3>
+
+---
+
+<command 4>
+</command 4>
+
+<output 4>
+</output 4>
 
 
 
