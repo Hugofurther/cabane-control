@@ -3,17 +3,19 @@ import { AlertTriangle, Info } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 
 export const GlobalModal = () => {
-    const { modalConfig } = useModal(); // ✅ Removed unused 'hideModal' destructuring if not used directly in JSX logic, but modalConfig handles it via callbacks
-
-    // ✅ NOTE: Scroll Lock useEffect REMOVED.
+    const { modalConfig } = useModal();
 
     if (!modalConfig) return null;
 
     const { type, title, message, onConfirm, onCancel, isDestructive } = modalConfig;
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-            <div className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden transform scale-100 transition-all" onClick={e => e.stopPropagation()}>
+        // ✅ CHANGED: Less opaque, slight blur
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div
+                onClick={(e) => e.stopPropagation()}
+                className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden transform scale-100 transition-all"
+            >
 
                 {/* Header */}
                 <div className="p-5 border-b border-gray-800 flex items-center gap-3 bg-gray-850">

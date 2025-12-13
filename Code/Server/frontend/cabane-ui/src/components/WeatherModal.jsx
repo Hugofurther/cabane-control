@@ -55,8 +55,11 @@ export const WeatherModal = ({ isOpen, onClose, weatherData, initialIndex }) => 
     const hasPrecip = rain3h > 0 || snow3h > 0;
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-4 animate-in fade-in" onClick={onClose}>
-            <div className="bg-gray-900 border border-gray-700 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden relative flex flex-col max-h-[85vh]" onClick={handleContentClick}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[70] flex items-center justify-center p-4 animate-in fade-in" onClick={onClose}>
+            <div
+                className="bg-gray-900 border border-gray-700 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden relative flex flex-col max-h-[85vh]"
+                onClick={handleContentClick}
+            >
 
                 <button onClick={onClose} className="absolute top-4 right-4 z-50 p-2 bg-black/40 hover:bg-red-600 rounded-full text-white transition-colors"><X size={20} /></button>
 

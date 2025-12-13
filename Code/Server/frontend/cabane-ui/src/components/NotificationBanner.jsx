@@ -9,8 +9,8 @@ export const NotificationBanner = ({ type, message, onDismiss }) => {
 
     return (
         <div className={clsx(
-            "fixed top-0 left-0 right-0 z-50 p-4 shadow-2xl flex items-center justify-center animate-slide-down",
-            isAlarm ? "bg-red-600 text-white" : "bg-yellow-500 text-gray-900"
+            "fixed top-0 left-0 right-0 z-[200] px-4 py-3 shadow-2xl flex items-center justify-between transition-transform duration-300 animate-in slide-in-from-top",
+            isAlarm ? "bg-red-600 text-white animate-alarm" : "bg-blue-600 text-white"
         )}>
             <div className="flex items-center gap-4 max-w-4xl w-full">
                 {/* Icon */}

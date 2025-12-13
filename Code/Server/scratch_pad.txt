@@ -429,25 +429,31 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ the login page needs the "eye" on the password to be able to view it.
 
+√ Can we review the "Take Control" and who is controlling feature. Can we make sure of the following:
+	√ When Main Controller ( Cabane ) is OFFLINE, it is impossible for it to be the controlling device.
+	√ When Main Controller ( Cabane ) is OFFLINE, releasing control to Cabane when it is obvious Cabane is OFFLINE, the control is released to the Server.
+	√ When Main Controller ( Cabane ) becomes OFFLINE, Control releases automatically to the Server ( no one is really controlling, but the Server keeps the status )
+	√ When Main Controller ( Cabane ) becomes ONLINE, either by reconnecting its ethernet cable or rebooting, the control gets release by default to the Main Controller ( Cabane ).
+	√ When a user takes control:
+		√ If Cabane is OFFLINE, the Release button is hidden and the user doesn't have access to releasing control to Cabane ( Main Controller )
+		√ If Cabane is OFFLINE and for some reason, the user manage to release control to Cabane even if the Release button is hidden, when it is obvious Cabane is OFFLINE, the control is released to the Server.
+		√ If Cabane is ONLINE, the "Release" button releases control to Cabane.
+		√ the "Hold" Button releases control to the Server. ( Currently "hold" button isn't doing anything, tho it was working previously. )
+		√ If another user takes control, control gets release to that user.
+		
+	√ When the Server has control, no device really has control, the server cannot do much other than keeping the status of the switches and feedbacks.
+
+	√ In "Lock Screen", if the user has control, the buzzer switch is accessible to toggle as normal. If the user doesn't have control, the buzzer is like the other StationCard locked behind the Lock Screen.
+
+√ when in locked screen and not controlling, the buzzer switch should behave the same as when the Lock Screen is not on and the user doesn't have control. As it is right now, when the Lock Screen is active and the user doesn't have access, the buzzer toggle can be switches with console error: "POST http://192.168.1.200:3000/api/control/toggle 403 (Forbidden)"
+
+√ the alert and alarm banners are below the header of App.jsx. We need to bring them on top.
+
+√ AdminPanel -> Timezone setting is not working. If I try to change the timezone, nothing seems to happen after I save. When re-opening, UTC is back as default. The timezone is set to EST and doesn't change from that, which is what we want anyway.
+
 ---
 
 REQUESTED
-
-- Can we review the "Take Control" and who is controlling feature. Can we make sure of the following:
-	- When Main Controller ( Cabane ) is OFFLINE, it is impossible for it to be the controlling device.
-	- When Main Controller ( Cabane ) is OFFLINE, releasing control to Cabane when it is obvious Cabane is OFFLINE, the control is released to the Server.
-	- When Main Controller ( Cabane ) becomes OFFLINE, Control releases automatically to the Server ( no one is really controlling, but the Server keeps the status )
-	- When Main Controller ( Cabane ) becomes ONLINE, either by reconnecting its ethernet cable or rebooting, the control gets release by default to the Main Controller ( Cabane ).
-	- When a user takes control:
-		- If Cabane is OFFLINE, the Release button is hidden and the user doesn't have access to releasing control to Cabane ( Main Controller )
-		- If Cabane is OFFLINE and for some reason, the user manage to release control to Cabane even if the Release button is hidden, when it is obvious Cabane is OFFLINE, the control is released to the Server.
-		- If Cabane is ONLINE, the "Release" button releases control to Cabane.
-		- the "Hold" Button releases control to the Server. ( Currently "hold" button isn't doing anything, tho it was working previously. )
-		- If another user takes control, control gets release to that user.
-		
-	- When the Server has control, no device really has control, the server cannot do much other than keeping the status of the switches and feedbacks.
-
-	- In "Lock Screen", if the user has control, the buzzer switch is accessible to toggle as normal. If the user doesn't have control, the buzzer is like the other StationCard locked behind the Lock Screen.
 
 
 
@@ -457,7 +463,7 @@ REQUESTED
 
 NEXT
 
-- when in locked screen and not controlling, the buzzer switch should behave the same as when the Lock Screen is not on and the user doesn't have control. As it is right now, when the Lock Screen is active and the user doesn't have access, the buzzer toggle can be switches with console error: "POST http://192.168.1.200:3000/api/control/toggle 403 (Forbidden)"
+
 
 - on the hardware ( Arduino ), we need to Add a new alarm feature. It is an alarm to tell if someone entered or opened a door while the alarm is armed.
 	- Triggering alarm: When input (feedback) of ST2 or ST3 5 (pin D6) are High ( not shorted to GND ) -> alarm is triggered
@@ -472,10 +478,9 @@ Requested
 
 
 
+- When a user have control, the buttons to release should say "Server" and "Cabane", maybe with an icon to indicate to release control. Or a bracket above both with the mention "Release to" or something similar.
 
-
-
-
+- The background opacity and blurriness of all modals should all be the same at the exception of MessageDrawer ( Which background is much clearer as we may spend more time on it than the others ). Let's adjust all the modals background blurriness and opacity to be the same, which should be barely opaque and barely blurry including the WeatherModal, UserSettings, FlashViewer
 
 -----
 
@@ -485,7 +490,7 @@ Requested
 -------------------------------------------------------
 Debug
 
-- AdminPanel -> Timezone setting is not working. If you try to change the timezone, nothing seems to happen and when re-opening, UTC is back as default. The timezone is set to EST, which is what we want anyway.
+
 
 
 -------------------------------------------------------
@@ -540,10 +545,6 @@ UX
 - When overing over a component, can we have a tiny comment or pop up explanation of the feature (e.g. overing over "Flash Message" -> pop-up content: Add this option to display the message in a big message viewer on the recipient's screen)
 
 - Can we make the app bi-langual ( French / English )
-
-- When a user have control, the buttons to release should say "Server" and "Cabane", maybe with an icon to indicate to release control. Or a bracket above both with the mention "Release to" or something similar.
-
-- The background opacity and blurriness of all modals should all be the same at the exception of MessageDrawer ( Which background is much clearer as we may spend more time on it than the others ). Let's adjust all the modals background blurriness and opacity to barely opaque and barely blurry including the WeatherModal, UserSettings, FlashViewer
 
 
 -----------------------------------
@@ -761,6 +762,10 @@ Veuillez activer l’interrupteur du buzzer.
 <server.js terminal>
 
 </server.js terminal>
+
+---
+
+In , why are we going from x line to x lines.
 
 
 ---

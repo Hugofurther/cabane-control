@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
-const db = require('../db'); // ✅ Import Shared DB
+const db = require('../db');
 const checkDiskSpace = require('check-disk-space').default;
 const logicEngine = require('../services/logic_engine');
 
@@ -11,6 +11,64 @@ const logAction = (io, userId, username, type, message) => {
     db.run("INSERT INTO logs (user_id, type, message, timestamp) VALUES (?, ?, ?, ?)", [userId, type, message, timestamp]);
     if (io) io.emit('NEW_LOG', { id: Date.now(), timestamp, user_id: userId, username, type, message });
 };
+
+// ============================================================
+// ⚙️ SYSTEM SETTINGS (Timezone, Weather, etc.)
+// ============================================================
+
+// GET SETTINGS
+router.get('/system/settings', authenticateToken, (req, res) => {
+    db.all("SELECT key, value FROM system_settings", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: "DB Error" });
+        const settings = {};
+        rows.forEach(row => settings[row.key] = row.value);
+        res.json(settings);
+    });
+});
+
+// SAVE SETTINGS
+router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
+    const settings = req.body;
+    const keys = Object.keys(settings);
+    if (keys.length === 0) return res.status(400).json({ error: "No settings" });
+
+    let completed = 0;
+
+    // Use a Transaction for safety
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+
+        keys.forEach(key => {
+            // Stringify values to ensure they store correctly (especially JSON arrays like weather_locations)
+            const val = typeof settings[key] === 'object' ? JSON.stringify(settings[key]) : String(settings[key]);
+
+            db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", [key, val], (err) => {
+                if (err) console.error(`Error saving ${key}:`, err);
+            });
+        });
+
+        db.run("COMMIT", () => {
+            // ✅ Notify Services of Changes
+            if (settings.timezone) logicEngine.updateTimezone(settings.timezone);
+            if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
+
+            // Reload Weather if needed
+            if (settings.weather_locations || settings.weather_update_interval || settings.weather_api_key) {
+                try {
+                    const weatherService = require('../services/weather_service');
+                    if (weatherService.reloadSettings) weatherService.reloadSettings();
+                } catch (e) { console.error("Weather reload failed", e); }
+            }
+
+            logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
+            res.json({ success: true });
+        });
+    });
+});
+
+// ============================================================
+// 📊 STATUS & LOGS
+// ============================================================
 
 router.get('/system/status', authenticateToken, async (req, res) => {
     try {
@@ -26,7 +84,10 @@ router.get('/logs', authenticateToken, (req, res) => {
     });
 });
 
-// Control
+// ============================================================
+// 🏭 CONTROL (Admin/User Actions)
+// ============================================================
+
 router.post('/control/take', authenticateToken, (req, res) => {
     db.get("SELECT can_control FROM users WHERE id = ?", [req.user.id], (err, row) => {
         if (!row || !row.can_control) return res.status(403).json({ error: "Permission denied" });
@@ -36,16 +97,13 @@ router.post('/control/take', authenticateToken, (req, res) => {
     });
 });
 
-// ✅ ADDED: Release to Server (Hold)
 router.post('/control/release-server', authenticateToken, (req, res) => {
     logicEngine.releaseToServer();
     logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Released to Server (Hold)');
     res.json({ success: true });
 });
 
-// ✅ ADDED: Release to Cabane
 router.post('/control/release-cabane', authenticateToken, (req, res) => {
-    // Logic Engine handles the safety check (if Cabane is offline -> fall back to Server)
     logicEngine.releaseToCabane();
     logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Released to Cabane');
     res.json({ success: true });
@@ -55,10 +113,7 @@ router.post('/control/toggle', authenticateToken, (req, res) => {
     const { index, value } = req.body;
     if (logicEngine.getFullState().controller === 'CABANE') return res.status(403).json({ error: "In Cabane Mode" });
 
-    // Allow toggle if currentUser matches OR if controller is SERVER (Headless adjustment)
-    // Actually, usually specific user must drive. 
-    // If logicEngine.currentUser is null (Server Mode), maybe allow Admin to toggle?
-    // For now, strict:
+    // Check active controller
     const state = logicEngine.getFullState();
     if (state.controller === 'SERVER' || state.currentUser === req.user.username) {
         logicEngine.toggleSwitch(index, value, req.user.username);
@@ -69,13 +124,18 @@ router.post('/control/toggle', authenticateToken, (req, res) => {
     }
 });
 
-// Admin User Mgmt
+// ============================================================
+// 👥 USER MANAGEMENT
+// ============================================================
+
 router.get('/users', authenticateToken, requireAdmin, (req, res) => {
     db.all("SELECT id, username, email, role, status, can_control, can_view_logs, created_at FROM users", [], (err, rows) => res.json(rows));
 });
+
 router.post('/users/approve', authenticateToken, requireAdmin, (req, res) => {
     db.run("UPDATE users SET status = 'ACTIVE' WHERE id = ?", [req.body.userId], () => res.json({ success: true }));
 });
+
 router.post('/users/permission', authenticateToken, requireAdmin, (req, res) => {
     const { userId, type, value } = req.body;
     const col = type === 'control' ? 'can_control' : 'can_view_logs';
@@ -84,15 +144,34 @@ router.post('/users/permission', authenticateToken, requireAdmin, (req, res) => 
         res.json({ success: true });
     });
 });
+
 router.post('/users/delete', authenticateToken, requireAdmin, (req, res) => {
     db.run("DELETE FROM users WHERE id = ?", [req.body.userId], () => res.json({ success: true }));
 });
+
 router.post('/users/transfer-admin', authenticateToken, requireAdmin, (req, res) => {
     const { newAdminId } = req.body;
     const currentAdminId = req.user.id;
-    // ... (Keep existing logic from previous turn)
-    // Simplified for brevity here, assume existing logic
-    res.json({ success: true });
+
+    if (String(currentAdminId) === String(newAdminId)) return res.status(400).json({ error: "Cannot transfer to yourself." });
+
+    db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+        // Promote New
+        db.run("UPDATE users SET role = 'ADMIN', can_control = 1, can_view_logs = 1 WHERE id = ?", [newAdminId]);
+        // Demote Old
+        db.run("UPDATE users SET role = 'USER' WHERE id = ?", [currentAdminId]);
+
+        db.run("COMMIT", (err) => {
+            if (err) return res.status(500).json({ error: "DB Error" });
+
+            // Broadcast changes
+            req.io.emit('USER_PERMISSION_UPDATE', { userId: currentAdminId, key: 'role', value: 'USER' });
+            req.io.emit('USER_PERMISSION_UPDATE', { userId: newAdminId, key: 'role', value: 'ADMIN' });
+
+            res.json({ success: true });
+        });
+    });
 });
 
 module.exports = router;

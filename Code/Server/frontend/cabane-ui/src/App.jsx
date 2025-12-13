@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Mail, StickyNote, Activity, LogOut } from 'lucide-react';
+import { Settings, Mail, StickyNote, Activity, LogOut, Cloud } from 'lucide-react';
 import axios from 'axios';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
@@ -14,10 +14,10 @@ import { FlashViewer } from './components/FlashViewer';
 import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
-import { AutoLockProvider } from './contexts/AutoLockContext'; // ✅ AutoLock
-import { LockScreen } from './components/LockScreen';         // ✅ LockScreen UI
+import { AutoLockProvider } from './contexts/AutoLockContext';
+import { LockScreen } from './components/LockScreen';
 
-console.log("🚀 CABANE UI VERSION: 4.0 - AUTO LOCK & LAYERING");
+console.log("🚀 CABANE UI VERSION: 4.2 - LAYOUT TWEAKS");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
@@ -31,11 +31,13 @@ function Dashboard() {
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false); // Admin state was missing in previous cleanup, restoring just in case logic needs it, though likely handled inside UserSettings now.
+  const [showLogs, setShowLogs] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
 
-  // Share State (For Global FlashViewer)
+  // Share State
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareTargetNote, setShareTargetNote] = useState(null);
   const [userList, setUserList] = useState([]);
@@ -46,16 +48,14 @@ function Dashboard() {
 
   const audioCtx = useRef(null);
 
-  // --- 1. FETCH DIRECTORY (Needed for Sharing) ---
+  // --- 1. FETCH DIRECTORY ---
   useEffect(() => {
     if (user) {
       const token = localStorage.getItem('cabane_token');
-      // Fetch Users
       axios.get(`${API_URL}/api/users/directory`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => { if (Array.isArray(res.data)) setUserList(res.data); })
         .catch(e => console.error("User fetch error:", e));
 
-      // Fetch Groups
       axios.get(`${API_URL}/api/conversations`, { headers: { Authorization: `Bearer ${token}` } })
         .then(res => {
           if (Array.isArray(res.data)) {
@@ -66,7 +66,7 @@ function Dashboard() {
     }
   }, [user]);
 
-  // --- HELPER: Find Alarm Source ---
+  // --- HELPER: Alarm Source ---
   const getAlarmSources = () => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller } = systemState;
     const sources = [];
@@ -120,20 +120,14 @@ function Dashboard() {
     if (audioCtx.current && audioCtx.current.state === 'suspended') audioCtx.current.resume();
   };
 
-  // --- FLASH MESSAGE LOGIC ---
+  // --- FLASH LOGIC ---
   const checkFlashMessages = async () => {
     if (!user) return 0;
     const token = localStorage.getItem('cabane_token');
     try {
       const res = await axios.get(`${API_URL}/api/messages`, { headers: { Authorization: `Bearer ${token}` } });
       const msgs = res.data;
-
-      const urgentUnacked = msgs.filter(m =>
-        m.priority === 'URGENT' &&
-        m.is_ack_by_me === 0 &&
-        String(m.sender_id) !== String(user.id)
-      );
-
+      const urgentUnacked = msgs.filter(m => m.priority === 'URGENT' && m.is_ack_by_me === 0 && String(m.sender_id) !== String(user.id));
       setFlashMessages(urgentUnacked);
       return urgentUnacked.length;
     } catch (e) { return 0; }
@@ -148,7 +142,6 @@ function Dashboard() {
     } catch (e) { console.error(e); }
   };
 
-  // Poll for Flash Messages
   useEffect(() => {
     if (!socket) return;
     const handleNewMessage = (msg) => {
@@ -161,9 +154,7 @@ function Dashboard() {
       }
     };
     const handleUpdateMessage = (data) => {
-      if (data.priority === 'NORMAL') {
-        setFlashMessages(prev => prev.filter(m => m.id !== data.id));
-      }
+      if (data.priority === 'NORMAL') setFlashMessages(prev => prev.filter(m => m.id !== data.id));
     };
     socket.on('NEW_MESSAGE', handleNewMessage);
     socket.on('UPDATE_MESSAGE', handleUpdateMessage);
@@ -173,7 +164,6 @@ function Dashboard() {
     };
   }, [socket, user]);
 
-  // --- EFFECT: BUZZER & ALARMS ---
   useEffect(() => {
     if (systemState.buzzerStatus === 'SIREN') {
       playTone('SIREN');
@@ -206,7 +196,7 @@ function Dashboard() {
 
       {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
 
-      {/* GLOBAL FLASH VIEWER WITH SHARE */}
+      {/* FLASH VIEWER */}
       {flashMessages.length > 0 && (
         <FlashViewer
           messages={flashMessages}
@@ -219,7 +209,7 @@ function Dashboard() {
         />
       )}
 
-      {/* GLOBAL SHARE MODAL */}
+      {/* SHARE MODAL */}
       {shareModalOpen && shareTargetNote && (
         <ShareModal
           note={shareTargetNote}
@@ -230,17 +220,12 @@ function Dashboard() {
         />
       )}
 
-      {/* 
-          ✅ HEADER 
-          Added 'relative z-[50]' to sit ABOVE the Lock Screen overlay (z-[40])
-          This allows access to Weather, Clock, Messages, and Logout while locked.
-      */}
+      {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
 
         {/* LEFT: Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
-
           <div className="flex items-center gap-3 text-xs font-bold tracking-wider uppercase">
             {user?.settings?.showMainStatus && (
               <>
@@ -269,36 +254,47 @@ function Dashboard() {
         {/* RIGHT: Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* Messages */}
+          {/* 1. CONTROLS (Moved to Left of Messages) */}
+          {systemState.currentUser !== user?.username && (
+            user?.can_control ?
+              <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">Take Control</button>
+              : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">View Only</div>
+          )}
+
+          {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
+            <div className="flex gap-2 shrink-0">
+              <button
+                onClick={releaseToServer}
+                className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"
+              >
+                ➜ SERVER
+              </button>
+
+              {systemState.mainControllerOnline && (
+                <button
+                  onClick={releaseToCabane}
+                  className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"
+                >
+                  ➜ CABANE
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* 2. MESSAGES */}
           <button
             onClick={() => setShowMessageDrawer(true)}
-            className={`p-3 rounded transition-colors relative ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+            className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             title="Messages"
           >
             <Mail size={20} />
             {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
           </button>
 
-          {hasNotes && <div className="text-yellow-400 animate-pulse" title="You have reminders"><StickyNote size={20} /></div>}
+          {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title="You have reminders"><StickyNote size={20} /></div>}
 
-          {/* Controls */}
-          {systemState.currentUser !== user?.username && (
-            user?.can_control ?
-              <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap">Take Control</button>
-              : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap">View Only</div>
-          )}
-
-          {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
-            <div className="flex gap-2">
-              <button onClick={releaseToServer} className="px-4 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Hold</button>
-              {systemState.mainControllerOnline && (
-                <button onClick={releaseToCabane} className="px-4 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap">Release</button>
-              )}
-            </div>
-          )}
-
-          {/* User Settings */}
-          <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500">
+          {/* 3. USER SETTINGS */}
+          <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500 shrink-0">
             <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
               <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
             </button>
@@ -310,7 +306,6 @@ function Dashboard() {
       </div>
 
       {/* GRID */}
-      {/* Sits at Z-0 (default), so Lock Screen (Z-40) covers it */}
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         {PANEL_LAYOUT.map((row) => (
           <div key={row.id} className={`grid gap-6 ${row.cols}`}>
@@ -346,10 +341,10 @@ export default function App() {
   return (
     <ModalProvider>
       <SocketProvider>
-        <AutoLockProvider> {/* ✅ Auto-Lock Wraps Layout to access User/System settings */}
+        <AutoLockProvider>
           <MainLayout />
           <GlobalModal />
-          <LockScreen /> {/* ✅ Rendered Globally */}
+          <LockScreen />
         </AutoLockProvider>
       </SocketProvider>
     </ModalProvider>

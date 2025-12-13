@@ -59,7 +59,7 @@ export const LockScreen = () => {
             {/* 2. UNLOCK MODAL (Only appears when clicked) */}
             {showModal && (
                 // ✅ CHANGED: z-[150] (Was 102). Ensures it pops over EVERYTHING when active.
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200 z-[150]">
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center p-4 animate-in fade-in duration-200 z-[150]">
                     <div
                         onClick={(e) => e.stopPropagation()}
                         className="bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl p-8 w-full max-w-sm relative flex flex-col items-center gap-6"

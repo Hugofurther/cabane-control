@@ -87,7 +87,7 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const isWide = activeTab === 'ADMIN' || activeTab === 'LOGS';
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={onClose}>
             <div
                 className={clsx(
                     "bg-gray-900 border border-gray-700 w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300",
