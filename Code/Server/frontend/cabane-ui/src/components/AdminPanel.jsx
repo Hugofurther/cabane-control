@@ -409,6 +409,26 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                 })}
                             </div>
                         </div>
+                        {/* BURGLAR CONFIG */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Shield size={20} className="text-red-500" /> Burglar Alarm</h3>
+
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 mb-1 block">INPUT SOURCE (PIN A5)</label>
+                                <select
+                                    value={sysSettings.burglar_station || '0'}
+                                    onChange={e => setSysSettings({ ...sysSettings, burglar_station: e.target.value })}
+                                    className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none"
+                                >
+                                    <option value="0">Disabled</option>
+                                    <option value="2">Station 2 (Garage)</option>
+                                    <option value="3">Station 3 (Barn)</option>
+                                </select>
+                                <p className="text-[10px] text-gray-500 mt-1">
+                                    Triggers System Alarm (Siren) when input is OPEN (High).
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 )}
             </div>

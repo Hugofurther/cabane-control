@@ -62,7 +62,6 @@ export const StationCard = ({ card, isRemote }) => {
     if (isLocked && isBuzzerCard && isRemote) {
         bgClass = "bg-gray-900 border-red-500/50 shadow-[0_0_30px_rgba(220,38,38,0.3)]";
         textClass = "text-gray-200 border-gray-600";
-        // ✅ CHANGED: z-[45] puts it ABOVE LockScreen(40) but BELOW Header(50)/Modals(60)
         zIndexClass = "z-[45] relative";
     }
     // Priority 2: Offline
@@ -98,7 +97,21 @@ export const StationCard = ({ card, isRemote }) => {
             <div className={clsx("flex flex-wrap gap-4 justify-center items-start flex-grow mt-6", (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50")}>
                 {card.controls.map((ctrl) => {
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
-                    const isDisabled = targetSt !== undefined && disabledList.includes(targetSt);
+
+                    // --- ENABLE/DISABLE LOGIC ---
+                    let isDisabled = targetSt !== undefined && disabledList.includes(targetSt);
+
+                    // 🌡️ Thermostat Overrides
+                    // Strict Logic: Only enabled if the station it is physically connected to is enabled.
+                    if (ctrl.idx === 22) {
+                        // TH1 (Assigned to ST0/ST1) -> Check ST1
+                        isDisabled = disabledList.includes(1);
+                    }
+                    else if (ctrl.idx === 23) {
+                        // TH2 (Assigned to ST4) -> Check ST4
+                        isDisabled = disabledList.includes(4);
+                    }
+
                     const isOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
                     const isControlUnavailable = isDisabled || isOffline;
 

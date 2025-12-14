@@ -471,11 +471,48 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ When Station ST2 or ST3 are enabled and the burglar alarm is triggered, we should find a way to indicate it on the Main Controller. Could be the station ledPairs blinking red, or set a chasing lights on the station ledPairs. Let me know what you think or if you have other suggestions on this. We should also have an alarm displayed on the app.
 
+√ Lock Screen - When in Lock Screen, the buzzer should sit just above the Lock Screen layer and under the modals.
+
+√ The way the app should read the alarm and Reminder is by reading the state of the switches, not waiting for the Main Controller to tell it when to sound. 
+
+√ Concerning the Burglar feature, We need to make it assignable to ST2 or ST3 or none. How should we accomplish that in the simplest way?
+
+√ The Alarm Banner when vacuum loss, need to be triggered when the condition becomes true and when dismissed, stays dismissed until the condition becomes false and then true again. Currently, it seems like the banner keep reappearing as long as the condition is true which makes it impossible to dismiss. Also we need to keep the auto dismiss when the alert / alarm / reminder condition becomes false. This was working great before and it seems like it got "corrupted" at some point.
+
+√ On the Main Controller, whenever the burglar alarm is enabled, when the alarm is triggered, the ledPairs of the station should blink RED only, Currently they are blinking GREEN/RED. Let's fix that.
+
+√ The Alarm banner is being dismissed properly. Thank you. Now we should do the same for the Rappel blue banner.
+
+√ Is there a the burglar alarm notification on the app?
+
+√ The alert and rappel banners's "x" buttons are not all the way to the right. Also, these banners should get dismissible by clicking anywhere on it.
 ---
 
 REQUESTED
 
-- Lock Screen - When in Lock Screen, the buzzer should sit just above the Lock Screen layer and under the modals.
+
+---
+
+NEXT
+
+- the "rappel" banner, the reminder chirp condition should be true in the following condition:
+	- the buzzer switch must be OFF and NO vacuum ALARM is true. The same should go for the Main Controller. When ever these condition become true, the first chirp should be heard.
+
+- The burglar alert on the app should look different from the vacuum alert.
+
+- is the Burglar settings on the AminPanel of the app persistent on the Main Controller?
+
+- When settings are saved on the App while the Main Controller is offline. How do we know when the settings are saved to the Main Controller or not?
+
+- On the App, the Buzzer sound interval is ON even after turning the buzzer switch OFF. In order for the alarm sound interval to be true, the following contidions need to be met:
+	- A vacuum alarm needs be active and the Buzzer switch needs to be ON.
+
+- the alarms should be based on the last read of a station. If a station triggers an alarm or alert, if a station gets disconnected, Main Controller and App consider the last state the station was in when it got disconnected and the alert, reminder and alarm conditions are taken using these last reads.
+
+- The Lock Screen timer should before it locks should start from the last mouse or any activity on the device. (e.g. if the mouse moves, the timer starts when the mouse or any other action occurring stops.)
+
+
+
 
 ---------------
 ---------------
@@ -502,8 +539,10 @@ NEED TO VERIFY WITH BUZZER
 
 NEXT
 
-App
-- When one of the stations a thermostat is assigned to is enabled, its thermostat switch should be enabled. (e.g. ST1 and/or ST2 and/or ST3 enabled -> Thermostat with switch idx 22 is enabled. ST4 and/or ST5 enabled -> Thermostat with switch idx 23 is enabled.
+- On the Main Controller ( Arduino ) When a station with burglar alarm enabled goes from undetected ( GREEN / RED blinking ) to detected while the burglar alarm is active, the lepPairs should go from blinking GREEN/RED to blinking RED only. Currently when the burglar alarm is active, it is blinking GREEN/RED also, which is missleading.
+
+- The Six OFFLINE should display time 
+
 
 
 
@@ -514,7 +553,7 @@ App
 
 ---
 
-- The way the app should read the alarm and Reminder is by reading the state of the switches, not waiting for the Main Controller to tell it when to sound. 
+
 
 
 
@@ -603,6 +642,8 @@ CONNECTION
 
 -----------------------------------
 ARDUINO
+
+
 
 - Alerts when a user has control should be sent to the Main Controller and it's buzzer should be heard regardless of its buzzer switch position.
  
@@ -742,6 +783,122 @@ sudo reboot
 
 ------------------------------------------------------------
 ------------------------------------------------------------
+
+TESTING APP
+Let's say I want to create a station testing page to simulate the physical stations to demonstrate how the system works. How would you suggest we go about doing that.?
+
+Can we create a separate "Station Test" React App simulating the 6 stations (including ST0), that the main app, with a "testing" user setting enabled, would emit the udp packets to the network as usual, but also to the "Station Test" app. This way, to demonstrate the system, we could use this app. The Testing app would send feedback, the same way the stations would when connected.
+
+- It would be nice to have a logo representing the device each relay is controlling.
+- For each relay, there is a feedback that can latch to the relay when the option is selected ( per relay ). If the latch is enabled. the feedback is set to on automatically when the relay is triggered, otherwise there's a manual toggle to send the positive feedback.
+- It gets tricky for vacuum pump for ST0 as the Vacuum pumps are in ST0 for the feedback for these are on ST1.
+- We also need the thermostat on ST0 and ST4 which can be a represented by a switch.
+- We have the Burglar Alarm on ST2 and ST3 to trigger ST0 relay 4
+
+---
+
+Here's the list of the type of devices the relays control and their feedback
+
+1 - Transport Pumps: Pumps that transport the maple sap from the pumping stations to the main building ( Cabane ). The Vacuum tanks where the maple water is collected has a sensor to stop the pump when the water level is too low ( tank is empty ), which turns the pump OFF and the other sensor turns the pump ON when the level of water is high enough to start sending the water to the main building. The push button on the main controller simulates the trigger high water lever to start the pump with a momentary On action. The pump stay on until there is no water in the tank. The feedback represents the pump ON ( GREEN ) or OFF ( RED ).
+
+2 - Vacuum Pumps: The vacuum pumps create vacuum in the vacuum tanks which helps collecting the maple water from each tree via the pipeline. These pumps get turned on when the trees are producing maple water, which requires the outdoor temperature to be above freezing. These pumps get turned ON/OFF with a toggle switch  on the main controller and can be automated via a thermostat which, when enables, will turn the vacuum pumps on at a certain temperature. The feedback for these pumps are represent the vacuum in their vacuum tank, not the pump themselves. High vacuum ( GREEN ) or low vacuum ( RED ).
+
+3 - Valves: Valves are 24vdc operated valves, each switch control one valves which send a voltage feedback to indicate if the valve successfully opened or is still closed. Their feedback represent valve open ( GREEN ) or valve closed ( RED ).
+
+4 - Thermostat: These only send feedback so that when the Main Controller enables them and the temperature they read is above a set temperature, they override the vacuum switches of the Stations assigned to them. The feedback is temperature above threshold ( GREEN ) or temperature below threshold ( RED ).
+
+5 - Burglar Alarms: These are also feedback only. A simple circuit open or closed that opens when the alarm is armed and a door gets opened, which opens the circuit and electric current stops flowing. So instead of a ledPair being controlled its a pin status getting changed. the basic concept is to replicate the electric circuit on another Station Controller. The way it is accomplished is that when the circuit is openned and the current stops flowing to GND, the pin becomes HIGH and the alarm, which sends the message to the Main Controller. The Main Controller receives the message and tells the Station Controller connected to the alarm to close the circuit and the alarm system does it alarm business.
+
+---
+
+Here's the list of the Relay and Feedbacks per stations
+
+ST0
+Relays
+1 - ST1 Vacuum Pump 1
+2 - ST1 Vacuum Pump 2
+4 - Burglar Alarm output
+
+Feedback
+4 - Thermostat for overriding vacuum switches ST0, ST2, ST3
+
+
+ST1
+Relays
+1 - Transport Pump 1
+2 - Transport Pump 2
+3 - Drain Valve T1 -> ST1
+4 - Open Valve T2
+5 - Drain Valve T2 -> ST1
+6 - Drain Valve ST2 -> ST1
+
+Feedback
+1 - Transport Pump 1 
+2 - Transport Pump 2
+3 - Vacuum ST1 ( Feedback for Vacuum pumps 1 & 2 ST0 )
+4 - Drain Valve T1 -> ST1
+5 - Open Valve T2
+6 - Drain Valve T2 -> ST1
+7 - Drain Valve ST2 -> ST1
+
+
+ST2
+Relays
+1 - Transport Pump
+2 - Vacuum Pump
+3 - Drain Valve ST1-> ST2
+4 - Drain Valve ST3-> ST2
+5 - Burglar Alarm Input
+
+Feedback
+1 - Transport Pump
+2 - Vacuum Pump
+3 - Drain Valve ST1-> ST2
+4 - Drain Valve ST3-> ST2
+
+ST3
+Relays
+1 - Transport Pump 1
+2 - Transport Pump 2
+3 - Vacuum Pump
+4 - Drain Valve ST2-> ST3
+5 - Burglar Alarm Input
+
+Feedback
+1 - Transport Pump 1
+2 - Transport Pump 2
+3 - Vacuum Pump
+4 - Drain Valve ST2-> ST3
+
+ST4
+Feedback
+1 - Transport Pump
+2 - Vacuum Pump ST4 & ST5
+3 - Drain Valve ST4
+
+Feedback
+1 - Transport Pump
+2 - Vacuum Pump ST4 & ST5
+3 - Drain Valve ST4
+4 - Thermostat for overriding vacuum switches ST4 ( ST5 uses vacuum from ST4 )
+
+ST5
+Feedback
+1 - Transport Pump
+2 - Drain Valve ST5
+
+Feedback
+1 - Transport Pump
+2 - Drain Valve ST5
+
+
+------------------------------------------------------------
+------------------------------------------------------------
+
+------------------------------------------------------------
+FOR PRODUCTION
+
+- Decouple the ST0 and ST1
 
 After debugging:
 services/logic_engine.js

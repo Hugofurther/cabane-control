@@ -17,7 +17,7 @@ import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
 
-console.log("🚀 CABANE UI VERSION: 4.3 - LOCAL AUDIO LOGIC");
+console.log("🚀 CABANE UI VERSION: 4.5 - FINAL AUDIO & LAYOUT");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const BUZZER_SWITCH_IDX = 21;
@@ -25,7 +25,7 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 
 function Dashboard() {
   const {
-    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user
+    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings
   } = useSocket();
 
   const canInteract = systemState.controller === 'USER' && systemState.currentUser === user?.username;
@@ -35,6 +35,10 @@ function Dashboard() {
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
+
+  // Audio & Notification State
+  const [alarmDismissed, setAlarmDismissed] = useState(false);
+  const [reminderDismissed, setReminderDismissed] = useState(false);
 
   // Share State
   const [shareModalOpen, setShareModalOpen] = useState(false);
@@ -63,39 +67,30 @@ function Dashboard() {
   }, [user]);
 
   // --- 2. LOCAL ALARM LOGIC ---
-  // Calculates Alarm/Chirp state based on raw switches, independent of Controller Logic.
   const { isAlarmActive, isChirpActive, alarmSources } = useMemo(() => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
-
-    // Determine which switch state array to use.
-    // If Cabane is controlling, physical is truth. Otherwise virtual.
     const activeSwitches = controller === 'CABANE' ? physicalSwitches : virtualSwitches;
 
     let alarm = false;
     let sources = [];
     let systemRunning = false;
 
-    // Check Vacuum Pumps
+    // A. Check Vacuum Pumps
     PANEL_LAYOUT.forEach(row => {
       row.cards.forEach(card => {
         card.controls.forEach(ctrl => {
           if (VACUUM_INDICES.includes(ctrl.idx)) {
             const st = ctrl.fb?.st;
             const bit = ctrl.fb?.bit;
-
-            // Skip if station offline
             if (st !== undefined && stationOnline[st]) {
               const isOn = !!activeSwitches[ctrl.idx];
               const isFeedbackOff = ((stationFeedback[st] >> bit) & 1) === 1;
 
               if (isOn) {
-                // System is attempting to run
                 if (isFeedbackOff) {
-                  // ALARM: On but Feedback Off
                   alarm = true;
                   sources.push(`${card.name} - ${ctrl.label}`);
                 } else {
-                  // RUNNING: On and Feedback On
                   systemRunning = true;
                 }
               }
@@ -105,26 +100,31 @@ function Dashboard() {
       });
     });
 
-    // Check Buzzer Switch
-    const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
+    // B. Check Burglar Alarm
+    const burgSt = parseInt(siteSettings.burglar_station) || 0;
+    if (burgSt === 2 && stationOnline[2] && ((stationFeedback[2] >> 4) & 1)) {
+      alarm = true;
+      sources.push("ST2 - BURGLAR ALARM");
+    }
+    if (burgSt === 3 && stationOnline[3] && ((stationFeedback[3] >> 4) & 1)) {
+      alarm = true;
+      sources.push("ST3 - BURGLAR ALARM");
+    }
 
-    // Chirp Condition: No Alarm AND System Running AND Buzzer Off
+    // C. Check Buzzer/Chirp
+    const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
     const chirp = !alarm && systemRunning && !buzzerOn;
 
     return { isAlarmActive: alarm, isChirpActive: chirp, alarmSources: sources };
-  }, [systemState]);
+  }, [systemState, siteSettings.burglar_station]);
 
-  // --- AUDIO LOGIC ---
+  // --- AUDIO HELPER ---
   const playTone = (type) => {
     const saved = localStorage.getItem('cabane_settings');
-    // Note: user.settings holds the new intervals, localstorage holds enabled status (legacy, but kept for safety)
     const s = saved ? JSON.parse(saved) : { soundEnabled: true, vibrationEnabled: true };
+    if (s.vibrationEnabled && navigator.vibrate) navigator.vibrate(type === 'SIREN' ? [500, 200, 500] : 100);
 
-    if (s.vibrationEnabled && navigator.vibrate) {
-      navigator.vibrate(type === 'SIREN' ? [500, 200, 500] : 100);
-    }
-
-    // Global User Setting check
+    // Global User Switch
     if (user?.settings?.soundEnabled === false) return;
 
     if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -144,9 +144,7 @@ function Dashboard() {
     }
   };
 
-  const wakeAudio = () => {
-    if (audioCtx.current && audioCtx.current.state === 'suspended') audioCtx.current.resume();
-  };
+  const wakeAudio = () => { if (audioCtx.current && audioCtx.current.state === 'suspended') audioCtx.current.resume(); };
 
   // --- FLASH LOGIC ---
   const checkFlashMessages = async () => {
@@ -176,14 +174,10 @@ function Dashboard() {
       if (msg.recipient_id && String(msg.recipient_id) !== String(user?.id)) return;
       if (msg.priority === 'URGENT' && String(msg.sender_id) !== String(user?.id)) {
         const soundOn = user?.settings?.flashSoundEnabled !== false;
-        checkFlashMessages().then((count) => {
-          if (count > 0 && soundOn) playTone('CHIRP');
-        });
+        checkFlashMessages().then((count) => { if (count > 0 && soundOn) playTone('CHIRP'); });
       }
     };
-    const handleUpdateMessage = (data) => {
-      if (data.priority === 'NORMAL') setFlashMessages(prev => prev.filter(m => m.id !== data.id));
-    };
+    const handleUpdateMessage = (data) => { if (data.priority === 'NORMAL') setFlashMessages(prev => prev.filter(m => m.id !== data.id)); };
     socket.on('NEW_MESSAGE', handleNewMessage);
     socket.on('UPDATE_MESSAGE', handleUpdateMessage);
     return () => {
@@ -192,62 +186,78 @@ function Dashboard() {
     };
   }, [socket, user]);
 
-  // --- 🔊 SOUND EFFECT LOOP ---
+  // --- 🔊 SOUND LOOP (Configurable) ---
   useEffect(() => {
-    // 1. Clear previous timers
     if (chirpTimerRef.current) clearInterval(chirpTimerRef.current);
 
-    // Get intervals from settings
-    // Silence between siren blasts (Seconds)
+    // Siren: 1s Sound + Xs Silence. Default 5s silence.
     const silenceSec = user?.settings?.appSirenSilence || 5;
-    // Chirp Interval (Minutes)
-    const chirpMin = user?.settings?.appChirpInterval || 2;
-
-    // Calculate Milliseconds
-    // Siren Loop = 1s (Sound) + Silence
     const sirenLoopMs = 1000 + (silenceSec * 1000);
-    const chirpLoopMs = chirpMin * 60 * 1000;
+
+    // Chirp: Default 2 mins
+    const chirpMs = (user?.settings?.appChirpInterval || 2) * 60 * 1000;
 
     let intervalId = null;
 
     if (isAlarmActive) {
-      // SIREN LOOP
       playTone('SIREN');
       intervalId = setInterval(() => playTone('SIREN'), sirenLoopMs);
     } else if (isChirpActive) {
-      // CHIRP LOOP
       playTone('CHIRP');
-      intervalId = setInterval(() => playTone('CHIRP'), chirpLoopMs);
+      intervalId = setInterval(() => playTone('CHIRP'), chirpMs);
     }
 
     chirpTimerRef.current = intervalId;
+    return () => { if (intervalId) clearInterval(intervalId); };
+  }, [isAlarmActive, isChirpActive, user?.settings]);
 
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [isAlarmActive, isChirpActive, user?.settings]); // Re-run if settings change
-
-  // --- NOTIFICATION BANNER LOGIC ---
+  // --- 🔔 NOTIFICATION LOGIC ---
   useEffect(() => {
+    // 1. ALARM (Red)
     if (isAlarmActive) {
-      setNotification({ type: 'ALARM', message: alarmSources.length ? `VACUUM LOSS:\n${alarmSources.join('\n')}` : "VACUUM ALARM" });
-    } else if (isChirpActive) {
-      setNotification({ type: 'INFO', message: "System Active but Buzzer MUTED." });
-    } else {
+      if (!alarmDismissed) {
+        setNotification({ type: 'ALARM', message: alarmSources.length ? `ALARM:\n${alarmSources.join('\n')}` : "SYSTEM ALARM" });
+      } else {
+        setNotification(null);
+      }
+    }
+    // 2. CHIRP (Blue)
+    else if (isChirpActive) {
+      // Logic reset: If alarm clears, red dismiss is reset for next time
+      setAlarmDismissed(false);
+
+      if (!reminderDismissed) {
+        setNotification({ type: 'INFO', message: "System Active but Buzzer MUTED." });
+      } else {
+        setNotification(null);
+      }
+    }
+    // 3. CLEAN
+    else {
+      setAlarmDismissed(false);
+      setReminderDismissed(false);
       setNotification(null);
     }
-  }, [isAlarmActive, isChirpActive, alarmSources]);
+  }, [isAlarmActive, isChirpActive, alarmSources, alarmDismissed, reminderDismissed]);
 
-  const handleUnreadChange = (unread, notes) => {
-    setUnreadCount(unread);
-    if (notes !== null) setHasNotes(notes > 0);
-  };
+  const handleUnreadChange = (unread, notes) => { setUnreadCount(unread); if (notes !== null) setHasNotes(notes > 0); };
 
   // --- RENDER ---
   return (
     <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20" onClick={wakeAudio} onTouchStart={wakeAudio}>
 
-      {notification && <NotificationBanner type={notification.type} message={notification.message} onDismiss={() => setNotification(null)} />}
+      {/* NOTIFICATION BANNER */}
+      {notification && (
+        <NotificationBanner
+          type={notification.type}
+          message={notification.message}
+          onDismiss={() => {
+            if (notification.type === 'ALARM') setAlarmDismissed(true);
+            if (notification.type === 'INFO') setReminderDismissed(true);
+            setNotification(null);
+          }}
+        />
+      )}
 
       {/* FLASH VIEWER */}
       {flashMessages.length > 0 && (
@@ -255,10 +265,7 @@ function Dashboard() {
           messages={flashMessages}
           onDismiss={handleDismissFlash}
           onClose={() => setFlashMessages([])}
-          onShare={(noteData) => {
-            setShareTargetNote(noteData);
-            setShareModalOpen(true);
-          }}
+          onShare={(noteData) => { setShareTargetNote(noteData); setShareModalOpen(true); }}
         />
       )}
 
@@ -276,7 +283,7 @@ function Dashboard() {
       {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
 
-        {/* LEFT: Status */}
+        {/* Left Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
           <div className="flex items-center gap-3 text-xs font-bold tracking-wider uppercase">
@@ -298,16 +305,16 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* CENTER: Clock & Weather */}
+        {/* Center Clock/Weather */}
         <div className="flex-grow flex flex-col items-center justify-center gap-2">
           <Clock />
           <Weather />
         </div>
 
-        {/* RIGHT: Actions */}
+        {/* Right Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* Controls (Left of Messages) */}
+          {/* 1. CONTROLS (Left of Messages) */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">Take Control</button>
@@ -334,7 +341,7 @@ function Dashboard() {
             </div>
           )}
 
-          {/* Messages */}
+          {/* 2. MESSAGES */}
           <button
             onClick={() => setShowMessageDrawer(true)}
             className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
@@ -346,7 +353,7 @@ function Dashboard() {
 
           {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title="You have reminders"><StickyNote size={20} /></div>}
 
-          {/* User Settings */}
+          {/* 3. SETTINGS/LOGOUT */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500 shrink-0">
             <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
               <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
@@ -374,32 +381,6 @@ function Dashboard() {
   );
 }
 
-const SplashScreen = () => (
-  <div className="min-h-screen bg-cabane-dark flex items-center justify-center">
-    <div className="flex flex-col items-center gap-4">
-      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-      <h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2>
-    </div>
-  </div>
-);
-
-const MainLayout = () => {
-  const { user, authLoading } = useSocket();
-  if (authLoading) return <SplashScreen />;
-  if (!user) return <AuthPage />;
-  return <Dashboard />;
-};
-
-export default function App() {
-  return (
-    <ModalProvider>
-      <SocketProvider>
-        <AutoLockProvider>
-          <MainLayout />
-          <GlobalModal />
-          <LockScreen />
-        </AutoLockProvider>
-      </SocketProvider>
-    </ModalProvider>
-  );
-}
+const SplashScreen = () => (<div className="min-h-screen bg-cabane-dark flex items-center justify-center"><div className="flex flex-col items-center gap-4"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div><h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2></div></div>);
+const MainLayout = () => { const { user, authLoading } = useSocket(); if (authLoading) return <SplashScreen />; if (!user) return <AuthPage />; return <Dashboard />; };
+export default function App() { return (<ModalProvider><SocketProvider><AutoLockProvider><MainLayout /><GlobalModal /><LockScreen /></AutoLockProvider></SocketProvider></ModalProvider>); }

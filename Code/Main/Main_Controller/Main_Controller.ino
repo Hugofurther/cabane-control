@@ -1,20 +1,20 @@
 /*
   ==========================================================================================
-  MAIN CONTROLLER — FIRMWARE v4.7
+  MAIN CONTROLLER — FIRMWARE v4.8
 
   UPDATES:
-  - Fixed 0xCF Config Packet Debugging
-  - Added Serial Logs for Config Updates
-  - Explicit Checksum Calculation
+  - Dynamic Burglar Alarm Configuration (Off, ST2, or ST3) via App
+  - Expanded Config Packet (0xCF) to 6 bytes
+  - Logic checks specific assigned station for intrusion
   ==========================================================================================
 */
 
-#define FIRMWARE_VERSION "v4.7-CfgDebug"
+#define FIRMWARE_VERSION "v4.8-DynBurglar"
 #define DEBUG_SERIAL 1
 #define DEBUG_LEVEL 3
 #define BUZZER_REMINDER 1
 #define ENABLE_VEGAS_MODE 1
-#define ENABLE_BURGLAR_ALARM true
+// Note: ENABLE_BURGLAR_ALARM removed in favor of dynamic cfgBurglarStation
 
 #include <SPI.h>
 #include <Ethernet.h>
@@ -39,21 +39,25 @@ IPAddress ipBroadcast(192, 168, 1, 255);
 IPAddress ipServer(192, 168, 1, 200);
 IPAddress ipMain(192, 168, 1, 220);
 
-// --- BUZZER CONFIGURATION (Dynamic) ---
+// --- BUZZER CONFIGURATION ---
 #define PIN_BUZZER 2
 #define BUZZER_ALERT_MODE 1
 
-// Configurable Variables (Defaults)
-uint32_t cfgAlarmOnMs = 5000;          // 5 Seconds
-uint32_t cfgAlarmOffMs = 10000;        // 10 Seconds
-uint32_t cfgReminderPeriodMs = 120000; // 2 Minutes
-const uint32_t REMINDER_ON_MS = 500;   // Chirp length (Fixed)
+// Configurable Variables (Loaded from EEPROM)
+uint32_t cfgAlarmOnMs = 5000;
+uint32_t cfgAlarmOffMs = 10000;
+uint32_t cfgReminderPeriodMs = 120000;
+const uint32_t REMINDER_ON_MS = 500;
+
+// ✅ NEW: Burglar Config (0=Disabled, 2=ST2, 3=ST3)
+uint8_t cfgBurglarStation = 0;
 
 // EEPROM Addresses
 #define EEPROM_CFG_BASE 100
-#define EEPROM_ALARM_ON 100  // 1 byte (Seconds)
-#define EEPROM_ALARM_OFF 101 // 1 byte (Seconds)
-#define EEPROM_REMINDER 102  // 1 byte (Minutes)
+#define EEPROM_ALARM_ON 100
+#define EEPROM_ALARM_OFF 101
+#define EEPROM_REMINDER 102
+#define EEPROM_BURGLAR_STATION 103 // ✅ NEW ADDRESS
 
 // Timers
 uint32_t buzzerAlarmStart = 0;
@@ -255,25 +259,36 @@ void loadConfig()
   uint8_t aOff = EEPROM.read(EEPROM_ALARM_OFF);
   uint8_t remMin = EEPROM.read(EEPROM_REMINDER);
 
-  // Defaults if empty (0xFF)
+  // ✅ NEW: Burglar Source
+  uint8_t burgSt = EEPROM.read(EEPROM_BURGLAR_STATION);
+
+  // Defaults
   cfgAlarmOnMs = (aOn == 0xFF) ? 5000 : (uint32_t)aOn * 1000;
   cfgAlarmOffMs = (aOff == 0xFF) ? 10000 : (uint32_t)aOff * 1000;
   cfgReminderPeriodMs = (remMin == 0xFF) ? 120000 : (uint32_t)remMin * 60000;
+  cfgBurglarStation = (burgSt == 0xFF) ? 0 : burgSt; // Default 0 (Disabled)
 
-  // Safety Bounds
+  // Safety
   if (cfgAlarmOnMs < 1000)
     cfgAlarmOnMs = 1000;
   if (cfgAlarmOffMs < 1000)
     cfgAlarmOffMs = 1000;
   if (cfgReminderPeriodMs < 60000)
     cfgReminderPeriodMs = 60000;
+  // Burglar station must be 0, 2, or 3
+  if (cfgBurglarStation != 0 && cfgBurglarStation != 2 && cfgBurglarStation != 3)
+    cfgBurglarStation = 0;
 
-  Serial.print(F("[CFG] Loaded: On="));
+#if DEBUG_SERIAL
+  Serial.print(F("[CFG] On="));
   Serial.print(cfgAlarmOnMs);
   Serial.print(F(" Off="));
   Serial.print(cfgAlarmOffMs);
   Serial.print(F(" Rem="));
-  Serial.println(cfgReminderPeriodMs);
+  Serial.print(cfgReminderPeriodMs);
+  Serial.print(F(" BurgSt="));
+  Serial.println(cfgBurglarStation);
+#endif
 }
 
 // ============================================================
@@ -290,11 +305,10 @@ void updateBuzzerLED(uint32_t now)
   bool switchOn = stableState[BUZZER_SWITCH_IDX];
   bool alert = anyVacuumAlert || burglarAlarmActive;
 
-  // --- 1. ALARM LOGIC ---
   if (alert)
   {
     buzzerReminderStart = 0;
-    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW); // Blink RED
+    LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
 
     if (switchOn)
     {
@@ -307,7 +321,6 @@ void updateBuzzerLED(uint32_t now)
         buzzerAlarmStart = now;
         elapsed = 0;
       }
-
       digitalWrite(PIN_BUZZER, (elapsed < cfgAlarmOnMs) ? HIGH : LOW);
     }
     else
@@ -318,13 +331,11 @@ void updateBuzzerLED(uint32_t now)
     return;
   }
 
-  // --- 2. NO ALARM ---
   buzzerAlarmStart = 0;
   digitalWrite(PIN_BUZZER, LOW);
   LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
 
 #if BUZZER_REMINDER
-  // --- 3. REMINDER ---
   if (!switchOn && isSystemRunning())
   {
     if (buzzerReminderStart == 0)
@@ -335,7 +346,6 @@ void updateBuzzerLED(uint32_t now)
       buzzerReminderStart = now;
       elapsed = 0;
     }
-
     if (elapsed < REMINDER_ON_MS)
     {
       digitalWrite(PIN_BUZZER, HIGH);
@@ -352,7 +362,9 @@ void updateBuzzerLED(uint32_t now)
   buzzerReminderStart = 0;
 }
 
-// ... [LED & LINK LOGIC] ...
+// ============================================================
+// 🌐 LED & LINK LOGIC
+// ============================================================
 void updateEthernetAndLEDs(uint32_t now)
 {
   static bool linkDown = false;
@@ -370,13 +382,29 @@ void updateEthernetAndLEDs(uint32_t now)
 
   anyVacuumAlert = false;
 
-#if ENABLE_BURGLAR_ALARM
-  st2_intruder = stationEnabled[2] && ((stationFeedback[2] >> 4) & 1);
-  st3_intruder = stationEnabled[3] && ((stationFeedback[3] >> 4) & 1);
-  burglarAlarmActive = (st2_intruder || st3_intruder);
-#else
+  // ✅ DYNAMIC BURGLAR CHECK
   burglarAlarmActive = false;
-#endif
+  st2_intruder = false;
+  st3_intruder = false;
+
+  if (cfgBurglarStation == 2)
+  {
+    // Check if ST2 Enabled and Bit 4 Active
+    if (stationEnabled[2] && ((stationFeedback[2] >> 4) & 1))
+    {
+      st2_intruder = true;
+      burglarAlarmActive = true;
+    }
+  }
+  else if (cfgBurglarStation == 3)
+  {
+    // Check if ST3 Enabled and Bit 4 Active
+    if (stationEnabled[3] && ((stationFeedback[3] >> 4) & 1))
+    {
+      st3_intruder = true;
+      burglarAlarmActive = true;
+    }
+  }
 
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
   {
@@ -391,9 +419,13 @@ void updateEthernetAndLEDs(uint32_t now)
       LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, blinkPhase ? LOW : HIGH);
       continue;
     }
+
+    // ✅ BURGLAR VISUALS (Priority)
+    // Only flash if this specific station is the one triggered
     if ((st2_intruder && m.station == 2) || (st3_intruder && m.station == 3))
     {
-      LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, blinkPhase ? LOW : HIGH);
+      // ✅ CHANGED: Red Blink Only (Was Red/Green)
+      LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, LOW);
       continue;
     }
 
@@ -425,7 +457,7 @@ void updateEthernetAndLEDs(uint32_t now)
   }
 }
 
-// ... [HELPERS SAME AS BEFORE] ...
+// ... [HELPERS SAME] ...
 void updateThermostatStatus()
 {
   if (!ENABLE_THERMOSTAT)
@@ -642,32 +674,22 @@ void processHeartbeatAndFeedback(uint32_t now)
       }
     }
 
-    // ✅ NEW: CONFIG PACKET [0xCF] with DEBUG PRINTS
-    else if (buf[0] == 0xCF && n >= 5)
+    // ✅ NEW: 6-BYTE CONFIG PACKET [0xCF] [On] [Off] [Rem] [BurgSt] [Cks]
+    else if (buf[0] == 0xCF && n >= 6)
     {
       uint8_t onSec = buf[1];
       uint8_t offSec = buf[2];
       uint8_t remMin = buf[3];
-      uint8_t calcChecksum = buf[0] ^ buf[1] ^ buf[2] ^ buf[3];
+      uint8_t burgSt = buf[4];
+      uint8_t calcChecksum = buf[0] ^ buf[1] ^ buf[2] ^ buf[3] ^ buf[4];
 
-      Serial.print(F("[CFG] Pkt Recv: "));
-      Serial.print(onSec);
-      Serial.print("/");
-      Serial.print(offSec);
-      Serial.print("/");
-      Serial.println(remMin);
-
-      if (buf[4] == calcChecksum)
+      if (buf[5] == calcChecksum)
       {
-        Serial.println(F("[CFG] Checksum OK. Saving..."));
         EEPROM.update(EEPROM_ALARM_ON, onSec);
         EEPROM.update(EEPROM_ALARM_OFF, offSec);
         EEPROM.update(EEPROM_REMINDER, remMin);
-        loadConfig(); // Reload and print to confirm
-      }
-      else
-      {
-        Serial.println(F("[CFG] Checksum FAIL."));
+        EEPROM.update(EEPROM_BURGLAR_STATION, burgSt);
+        loadConfig(); // Reload
       }
     }
   }

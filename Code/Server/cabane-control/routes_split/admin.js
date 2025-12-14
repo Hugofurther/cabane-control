@@ -74,6 +74,20 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 });
             }
 
+            // ✅ CHECK FOR BUZZER or BURGLAR CONFIG
+            if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
+                db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min', 'burglar_station')", (err, rows) => {
+                    let on = 5, off = 10, rem = 2, burg = 0;
+                    rows.forEach(r => {
+                        if (r.key === 'buzzer_alarm_on') on = parseInt(r.value);
+                        if (r.key === 'buzzer_alarm_off') off = parseInt(r.value);
+                        if (r.key === 'buzzer_reminder_min') rem = parseInt(r.value);
+                        if (r.key === 'burglar_station') burg = parseInt(r.value);
+                    });
+                    logicEngine.updateConfig(on, off, rem, burg);
+                });
+            }
+
             logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
             res.json({ success: true });
         });

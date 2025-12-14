@@ -120,15 +120,15 @@ function sendRemoteData(switchBytes) {
     safeSend(packet, MAIN_CONTROLLER_IP, PORT, "RemoteData");
 }
 
-// ✅ NEW: Send Config to Main
-// Format: [0xCF] [OnSec] [OffSec] [RemMin] [Checksum]
-function sendConfigPacket(alarmOnSec, alarmOffSec, reminderMin) {
-    const packet = Buffer.alloc(5);
+// ✅ NEW: Format: [0xCF] [On] [Off] [Rem] [BurgSt] [Cks]
+function sendConfigPacket(alarmOnSec, alarmOffSec, reminderMin, burglarStation) {
+    const packet = Buffer.alloc(6); // Increased to 6
     packet[0] = 0xCF;
     packet[1] = Math.min(255, alarmOnSec);
     packet[2] = Math.min(255, alarmOffSec);
     packet[3] = Math.min(255, reminderMin);
-    packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
+    packet[4] = Math.min(255, burglarStation || 0); // New Byte
+    packet[5] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3] ^ packet[4]; // New Checksum
 
     safeSend(packet, MAIN_CONTROLLER_IP, PORT, "ConfigUpdate");
 }
@@ -138,5 +138,6 @@ module.exports = {
     sendGlobalBroadcast,
     sendOverrideCommand,
     sendRemoteData,
-    sendConfigPacket // ✅ Export
+    sendConfigPacket, // ✅ Export
+    sendConfigPacket
 };
