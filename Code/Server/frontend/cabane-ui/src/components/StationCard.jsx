@@ -4,12 +4,12 @@ import { RockerSwitch } from './controls/RockerSwitch';
 import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 import { useAutoLock } from '../contexts/AutoLockContext';
+import { useTranslation } from 'react-i18next'; // ✅ Import Hook
 
-// ✅ EXTENDED DURATION FORMATTER (Days/Hours/Minutes)
+// ... (formatDuration helper remains the same) ...
 const formatDuration = (ms) => {
     if (!ms || ms < 0) return "00:00";
     const seconds = Math.floor(ms / 1000);
-
     if (seconds < 3600) {
         const m = Math.floor(seconds / 60);
         const s = seconds % 60;
@@ -28,6 +28,7 @@ const formatDuration = (ms) => {
 export const StationCard = ({ card, isRemote }) => {
     const { systemState, siteSettings, toggleSwitch } = useSocket();
     const { isLocked } = useAutoLock();
+    const { t } = useTranslation(); // ✅ Hook
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -45,20 +46,24 @@ export const StationCard = ({ card, isRemote }) => {
     if (card.stationIds) {
         card.stationIds.forEach(id => {
             if (disabledList.includes(id)) {
-                offlineLabels.push(`ST${id} DISABLED`);
+                // ✅ Translated Label
+                offlineLabels.push(`ST${id} ${t('common.disabled').toUpperCase()}`);
                 isAnyOffline = true;
             }
             else if (!systemState.stationOnline[id]) {
                 isAnyOffline = true;
                 const lastSeen = systemState.stationLastSeen[id];
-                let labelText = lastSeen === 0 ? `ST${id} NEVER CONNECTED` : `ST${id} OFFLINE ${formatDuration(Date.now() - lastSeen)}`;
+                // ✅ Translated Labels
+                let labelText = lastSeen === 0 ?
+                    `ST${id} ${t('station.never_connected')}` :
+                    `ST${id} ${t('station.offline')} ${formatDuration(Date.now() - lastSeen)}`;
                 offlineLabels.push(labelText);
             }
         });
     }
 
     const isFullOffline = card.stationIds && card.stationIds.length > 0 && offlineLabels.length === card.stationIds.length;
-    const isThermostat = card.name.includes("THERMOSTAT");
+    const isThermostat = card.name.includes("THERMOSTAT") || card.name.includes("station_names.th"); // Check key too
     const showOfflineLabel = isAnyOffline && !isThermostat;
 
     // Detect Buzzer Card
@@ -69,18 +74,15 @@ export const StationCard = ({ card, isRemote }) => {
     let textClass = "text-gray-400 border-gray-700";
     let zIndexClass = "relative";
 
-    // Priority 1: Locked & Buzzer & Remote Active -> Elevate
     if (isLocked && isBuzzerCard && isRemote) {
         bgClass = "bg-gray-900 border-red-500/50 shadow-[0_0_30px_rgba(220,38,38,0.3)]";
         textClass = "text-gray-200 border-gray-600";
         zIndexClass = "z-[45] relative";
     }
-    // Priority 2: Offline
     else if (isFullOffline) {
         bgClass = "bg-gray-800 border-gray-800 opacity-60";
         textClass = "text-red-900 border-gray-800";
     }
-    // Priority 3: Remote Active
     else if (isRemote) {
         bgClass = "bg-gray-400 border-gray-500 shadow-xl";
         textClass = "text-gray-900 border-gray-600";
@@ -94,22 +96,21 @@ export const StationCard = ({ card, isRemote }) => {
             {showOfflineLabel && (
                 <div className="absolute top-2 right-2 flex flex-col gap-1 items-end z-20 pointer-events-none">
                     {offlineLabels.map(lbl => (
-                        <span key={lbl} className={`text-[10px] font-black font-mono border px-2 py-0.5 rounded shadow-sm whitespace-nowrap ${lbl.includes("DISABLED") ? "text-orange-500 border-orange-500/50 bg-orange-900/20" : "text-red-500 border-red-500/50 bg-gray-900/80"}`}>
+                        <span key={lbl} className={`text-[10px] font-black font-mono border px-2 py-0.5 rounded shadow-sm whitespace-nowrap ${lbl.includes(t('common.disabled').toUpperCase()) ? "text-orange-500 border-orange-500/50 bg-orange-900/20" : "text-red-500 border-red-500/50 bg-gray-900/80"}`}>
                             {lbl}
                         </span>
                     ))}
                 </div>
             )}
 
-            {/* ✅ FIXED: Changed h-14 to min-h-[3.5rem] to allow title to grow without overlapping border */}
+            {/* ✅ TRANSLATED NAME */}
             <h3 className={clsx("font-black tracking-widest text-lg mb-0 border-b-2 pb-2 text-center whitespace-pre-line min-h-[3.5rem] flex items-center justify-center", textClass)}>
-                {card.name}
+                {t(card.name)}
             </h3>
 
             <div className={clsx("flex flex-wrap gap-4 justify-center items-start flex-grow mt-6", (isFullOffline && isThermostat) && "pointer-events-none grayscale opacity-50")}>
                 {card.controls.map((ctrl) => {
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
-
                     let isDisabled = targetSt !== undefined && disabledList.includes(targetSt);
 
                     if (ctrl.idx === 22) isDisabled = disabledList.includes(1);
@@ -141,8 +142,9 @@ export const StationCard = ({ card, isRemote }) => {
                                 )}
                             </div>
                             <div className="h-10 flex items-start justify-center">
+                                {/* ✅ TRANSLATED LABEL */}
                                 <span className={clsx("text-xs font-bold text-center leading-tight uppercase", (isRemote || (isLocked && isBuzzerCard)) ? "text-gray-800" : "text-gray-400")}>
-                                    {ctrl.label}
+                                    {t(ctrl.label)}
                                 </span>
                             </div>
                         </div>

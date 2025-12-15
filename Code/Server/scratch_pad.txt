@@ -525,7 +525,7 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 REQUESTED
 
-
+- I would like to give the user to select between 2 languages ( French / English) for the UI. How should we go about this. I would need to verify each translations. What is the standard procedure for this type of of implementation?
 
 
 
@@ -575,8 +575,6 @@ NEED TO VERIFY WITH BUZZER
 -------------------------------------------------------
 Debug
 
-Manny Rahman
-Mannyramen2007
 
 
 -------------------------------------------------------
@@ -628,7 +626,7 @@ UX
 
 - When overing over a component, can we have a tiny comment or pop up explanation of the feature (e.g. overing over "Flash Message" -> pop-up content: Add this option to display the message in a big message viewer on the recipient's screen)
 
-- Can we make the app bi-langual ( French / English )
+
 
 
 -----------------------------------

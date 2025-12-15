@@ -16,6 +16,7 @@ import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
+import { useTranslation } from 'react-i18next'; // 1. Import
 
 console.log("🚀 CABANE UI VERSION: 4.6 - REMINDER LOGIC FIX");
 
@@ -24,6 +25,7 @@ const BUZZER_SWITCH_IDX = 21;
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 function Dashboard() {
+  const { t } = useTranslation(); // 2. Hook
   const {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings
   } = useSocket();

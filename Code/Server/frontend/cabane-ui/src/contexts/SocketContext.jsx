@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { useModal } from './ModalContext';
+import { useTranslation } from 'react-i18next'; // ✅ Import
 
 const SocketContext = createContext();
 
@@ -10,6 +11,7 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
+    const { i18n } = useTranslation(); // ✅ Init
     const { showAlert } = useModal();
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
@@ -121,6 +123,15 @@ export const SocketProvider = ({ children }) => {
         };
         checkSession();
     }, [token]);
+
+    useEffect(() => {
+        if (user && user.settings && user.settings.language) {
+            // ✅ SYNC LANGUAGE ON LOGIN/LOAD
+            if (i18n.language !== user.settings.language) {
+                i18n.changeLanguage(user.settings.language);
+            }
+        }
+    }, [user, i18n]);
 
     useEffect(() => {
         if (socket && user?.username) {
