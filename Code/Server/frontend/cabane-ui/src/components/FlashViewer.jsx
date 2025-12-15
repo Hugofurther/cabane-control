@@ -1,30 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AlertTriangle, X, Check, Edit3, Zap, ChevronDown, Share2, Users, Calendar } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useTranslation } from 'react-i18next'; // ✅ Import
 
 export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, onShare, onUnshare, isOwner, initialEditMode = false }) => {
+    const { t } = useTranslation(); // ✅ Hook
     const [currentIndex, setCurrentIndex] = useState(0);
     const [editMode, setEditMode] = useState(initialEditMode);
     const [editContent, setEditContent] = useState('');
     const [editTitle, setEditTitle] = useState('');
-
-    // Dropdown States
     const [activeDropdown, setActiveDropdown] = useState(null);
-    const toggleDropdown = (name) => setActiveDropdown(prev => prev === name ? null : name);
 
+    const toggleDropdown = (name) => setActiveDropdown(prev => prev === name ? null : name);
     const textareaRef = useRef(null);
     const currentMsg = messages[currentIndex];
 
     // --- PARSE CONTENT ---
     let noteData = null;
     let displayContent = "";
-
-    // Define realNoteId
     let realNoteId = currentMsg?.id;
 
     if (currentMsg) {
         try {
-            if (currentMsg.content && currentMsg.content.startsWith('{') && currentMsg.content.includes('NOTE_FLASH')) {
+            if (currentMsg.content && typeof currentMsg.content === 'string' && currentMsg.content.startsWith('{') && currentMsg.content.includes('NOTE_FLASH')) {
                 noteData = JSON.parse(currentMsg.content);
                 displayContent = noteData.content;
                 if (noteData.noteId) realNoteId = noteData.noteId;
@@ -64,26 +62,23 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     const lastShare = history.length > 0 ? history[history.length - 1] : null;
     const creatorName = currentMsg.creator_name || noteData?.creatorName || 'Unknown';
 
-    // Shared By Label
-    let sharedByLabel = `Shared by ${creatorName}`;
+    let sharedByLabel = `${t('messages.shared_by')} ${creatorName}`;
     if (lastShare) {
         const actionPrefix = (lastShare.action === 'RE-SHARED' || lastShare.action === 'RE-FLASHED' || lastShare.user !== creatorName)
-            ? "Re-Shared" : "Shared";
-        sharedByLabel = `${actionPrefix} by ${lastShare.user}`;
+            ? t('messages.re_shared_by')
+            : t('messages.shared_by');
+        sharedByLabel = `${actionPrefix} ${lastShare.user}`;
     }
 
-    // Shared With List
     const rawSharedWith = noteData?.sharedWith || currentMsg.shared_with_names || "";
     const sharedWithList = rawSharedWith ? rawSharedWith.split(', ').filter(s => s.trim() !== '') : [];
 
-    // Dates
     const dateOpts = { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-
     let displayDate = currentMsg.updated_at || Date.now();
-    let dateLabel = "Edited";
+    let dateLabel = t('messages.edited');
 
     if (isFlashMemo) {
-        dateLabel = "Shared";
+        dateLabel = t('messages.shared');
         if (currentMsg.timestamp) displayDate = currentMsg.timestamp;
     }
 
@@ -135,12 +130,11 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
     }
 
     return (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-[100] flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-200" onClick={onClose}>
             <div className={clsx("w-full max-w-2xl bg-gray-900 border-2 rounded-2xl overflow-hidden flex flex-col relative max-h-[90vh]", borderColor, shadowColor)} onClick={e => e.stopPropagation()}>
 
                 {pulseClass && <div className={`absolute inset-0 ${pulseClass} pointer-events-none`} />}
 
-                {/* OVERLAY for Dropdown Dismissal */}
                 {activeDropdown && (
                     <div className="fixed inset-0 z-[30] cursor-default" onClick={() => setActiveDropdown(null)} />
                 )}
@@ -162,26 +156,19 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                                     onChange={e => setEditTitle(e.target.value)}
                                     onKeyDown={e => { if (e.key === 'Enter') textareaRef.current?.focus(); }}
                                     className="bg-black/20 border-b border-white/20 text-white outline-none w-full font-black text-xl uppercase tracking-widest placeholder-gray-500"
-                                    placeholder="NOTE TITLE"
+                                    placeholder={t('messages.note_title') || 'TITLE'}
                                     autoFocus
                                 />
                             ) : (
                                 <h2 className="text-2xl font-black text-white uppercase tracking-widest leading-tight break-words">
-                                    {editTitle || currentMsg.title || (isFlashMemo ? "MEMO REMINDER" : "MESSAGE")}
+                                    {editTitle || currentMsg.title || (isFlashMemo ? t('messages.memo_reminder') : t('messages.flash_message'))}
                                 </h2>
                             )}
 
                             {/* METADATA ROW */}
                             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 pl-0">
-
                                 {/* 1. SHARED BY */}
-                                <HeaderDropdown
-                                    icon={<Share2 size={12} />}
-                                    label={sharedByLabel}
-                                    isActive={activeDropdown === 'SHARED_BY'}
-                                    onToggle={() => toggleDropdown('SHARED_BY')}
-                                    color="text-blue-300"
-                                >
+                                <HeaderDropdown icon={<Share2 size={12} />} label={sharedByLabel} isActive={activeDropdown === 'SHARED_BY'} onToggle={() => toggleDropdown('SHARED_BY')} color="text-blue-300">
                                     <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Share History</div>
                                     {history.length === 0 ? <div className="text-gray-500 italic">No history</div> :
                                         history.slice().reverse().map((h, i) => (
@@ -196,30 +183,13 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
                                 {/* 2. SHARED WITH */}
                                 {sharedWithList.length > 0 && (
-                                    <HeaderDropdown
-                                        icon={<Users size={12} />}
-                                        label={`Shared with ${sharedWithList.length}`}
-                                        isActive={activeDropdown === 'SHARED_WITH'}
-                                        onToggle={() => toggleDropdown('SHARED_WITH')}
-                                        color="text-green-300"
-                                    >
+                                    <HeaderDropdown icon={<Users size={12} />} label={`${t('messages.shared_with')} ${sharedWithList.length}`} isActive={activeDropdown === 'SHARED_WITH'} onToggle={() => toggleDropdown('SHARED_WITH')} color="text-green-300">
                                         <div className="text-xs font-bold text-gray-500 mb-2 uppercase border-b border-gray-700 pb-1">Currently shared with</div>
                                         {sharedWithList.map((u, i) => (
                                             <div key={i} className="flex justify-between items-center py-1.5 px-2 group hover:bg-gray-800 rounded transition-colors">
                                                 <span className="text-gray-300">{u}</span>
-                                                {/* REMOVE BUTTON */}
                                                 {isOwner && onUnshare && (
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.preventDefault();
-                                                            e.stopPropagation();
-                                                            onUnshare(realNoteId, u.trim());
-                                                        }}
-                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer relative z-[60]"
-                                                        title="Revoke Access"
-                                                    >
-                                                        <X size={14} />
-                                                    </button>
+                                                    <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); onUnshare(realNoteId, u.trim()); }} className="text-gray-400 hover:text-red-500 p-1.5 rounded-md hover:bg-gray-700 transition-all flex items-center justify-center cursor-pointer relative z-[60]" title="Revoke Access"><X size={14} /></button>
                                                 )}
                                             </div>
                                         ))}
@@ -228,15 +198,9 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 
                                 {/* 3. DATES */}
                                 {(formattedDisplayDate) && (
-                                    <HeaderDropdown
-                                        icon={<Calendar size={12} />}
-                                        label={`${dateLabel}: ${formattedDisplayDate}`}
-                                        isActive={activeDropdown === 'DATES'}
-                                        onToggle={() => toggleDropdown('DATES')}
-                                        color="text-gray-400"
-                                    >
+                                    <HeaderDropdown icon={<Calendar size={12} />} label={`${dateLabel}: ${formattedDisplayDate}`} isActive={activeDropdown === 'DATES'} onToggle={() => toggleDropdown('DATES')} color="text-gray-400">
                                         <div className="mb-2">
-                                            <span className="text-gray-500 font-bold uppercase text-[10px]">Created</span>
+                                            <span className="text-gray-500 font-bold uppercase text-[10px]">{t('messages.created')}</span>
                                             <div className="text-gray-300">{createdDate}</div>
                                         </div>
                                     </HeaderDropdown>
@@ -248,16 +212,16 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                     {/* ACTIONS */}
                     <div className="flex gap-2 shrink-0 ml-4">
                         {onShare && (isNote || isFlashMemo) && (
-                            <button onClick={handleShareClick} className="p-2 bg-black/20 hover:bg-blue-600/50 text-blue-400 hover:text-white rounded transition-colors" title="Share / Re-Share">
+                            <button onClick={handleShareClick} className="p-2 bg-black/20 hover:bg-blue-600/50 text-blue-400 hover:text-white rounded transition-colors" title={t('messages.share_note')}>
                                 <Share2 size={20} />
                             </button>
                         )}
 
                         {isNote && isOwner && !editMode && (
-                            <button onClick={() => setEditMode(true)} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors" title="Edit"><Edit3 size={20} /></button>
+                            <button onClick={() => setEditMode(true)} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors" title={t('common.edit')}><Edit3 size={20} /></button>
                         )}
                         {editMode && (
-                            <button onClick={handleSave} className="p-2 bg-green-600 hover:bg-green-500 rounded text-white shadow-lg transition-colors" title="Save"><Check size={20} /></button>
+                            <button onClick={handleSave} className="p-2 bg-green-600 hover:bg-green-500 rounded text-white shadow-lg transition-colors" title={t('common.save')}><Check size={20} /></button>
                         )}
                         <button onClick={onClose} className="p-2 bg-black/20 hover:bg-black/40 rounded text-white transition-colors"><X size={24} /></button>
                     </div>
@@ -271,7 +235,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                             value={editContent}
                             onChange={e => setEditContent(e.target.value)}
                             className="w-full h-full min-h-[300px] bg-transparent text-white font-mono text-lg outline-none resize-none placeholder-gray-600"
-                            placeholder="Type your note content here..."
+                            placeholder={t('messages.type_message')}
                         />
                     ) : (
                         <div className={clsx("whitespace-pre-wrap leading-relaxed font-medium text-lg", isUrgent ? "text-white drop-shadow-sm" : "text-gray-300")}>
@@ -284,7 +248,7 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
                 {!readOnly && isUrgent && !isOwner && (
                     <div className="p-4 bg-gray-900 border-t border-gray-800 z-10 flex gap-4">
                         <button onClick={() => onDismiss(currentMsg.id)} className={clsx("flex-grow py-4 font-black text-xl uppercase tracking-[0.2em] rounded shadow-xl transition-transform active:scale-95 flex items-center justify-center gap-3", isFlashMemo ? "bg-yellow-500 text-black hover:bg-yellow-400" : "bg-white text-red-600 hover:bg-gray-200")}>
-                            <Check size={28} strokeWidth={3} /> Acknowledge
+                            <Check size={28} strokeWidth={3} /> {t('messages.acknowledge')}
                         </button>
                     </div>
                 )}
@@ -296,13 +260,9 @@ export const FlashViewer = ({ messages, readOnly, onDismiss, onClose, onSave, on
 // Reusable Dropdown
 const HeaderDropdown = ({ icon, label, children, isActive, onToggle, color = "text-gray-400" }) => (
     <div className={clsx("relative", isActive ? "z-[40]" : "z-auto")}>
-        <button
-            onClick={(e) => { e.stopPropagation(); onToggle(); }}
-            className={`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`}
-        >
+        <button onClick={(e) => { e.stopPropagation(); onToggle(); }} className={`flex items-center gap-1.5 text-[10px] font-bold uppercase transition-colors hover:text-white ${color}`}>
             {icon} {label} <ChevronDown size={10} />
         </button>
-
         {isActive && (
             <div className="absolute top-full left-0 mt-2 bg-gray-900 border border-gray-600 rounded-lg shadow-2xl p-3 w-60 text-xs normal-case font-normal text-gray-300 cursor-default animate-in fade-in zoom-in-95 duration-100 z-[50]" onClick={e => e.stopPropagation()}>
                 {children}

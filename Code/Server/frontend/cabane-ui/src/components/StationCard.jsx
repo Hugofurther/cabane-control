@@ -6,7 +6,6 @@ import { useSocket } from '../contexts/SocketContext';
 import { useAutoLock } from '../contexts/AutoLockContext';
 import { useTranslation } from 'react-i18next'; // ✅ Import Hook
 
-// ... (formatDuration helper remains the same) ...
 const formatDuration = (ms) => {
     if (!ms || ms < 0) return "00:00";
     const seconds = Math.floor(ms / 1000);
@@ -63,13 +62,11 @@ export const StationCard = ({ card, isRemote }) => {
     }
 
     const isFullOffline = card.stationIds && card.stationIds.length > 0 && offlineLabels.length === card.stationIds.length;
-    const isThermostat = card.name.includes("THERMOSTAT") || card.name.includes("station_names.th"); // Check key too
+    const isThermostat = card.name.includes("THERMOSTAT") || card.name.includes("station_names.th");
     const showOfflineLabel = isAnyOffline && !isThermostat;
 
-    // Detect Buzzer Card
     const isBuzzerCard = card.controls.some(c => c.idx === 21 || c.special === 'BUZZER');
 
-    // Styling
     let bgClass = "bg-cabane-panel border-gray-700 shadow-lg";
     let textClass = "text-gray-400 border-gray-700";
     let zIndexClass = "relative";

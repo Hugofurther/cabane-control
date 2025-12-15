@@ -29,15 +29,20 @@ Find: title="Messages" -> title={t('nav.messages')}
 Find: title="Settings" -> title={t('nav.settings')}
 Find: title="Logout" -> title={t('nav.logout')}
 
-
-!!! To Change
-
-
 📁 src/components/StationCard.jsx
 Labels:
 Find: `ST${id} DISABLED` -> `ST${id} ${t('common.disabled').toUpperCase()}`
 Find: `ST${id} NEVER CONNECTED` -> `ST${id} ${t('station.never_connected')}`
 Find: `ST${id} OFFLINE ${...}` -> `ST${id} ${t('station.offline')} ${...}`
+
+
+
+
+!!! To Change
+
+
+
+
 📁 src/components/LockScreen.jsx
 Text:
 Find: "Emergency / Buzzer" -> {t('lock.emergency')}
@@ -45,11 +50,13 @@ Find: "System Locked" -> {t('lock.locked')}
 Find: placeholder="Enter Password..." -> placeholder={t('lock.enter_password')}
 Find: "UNLOCK" -> {t('lock.unlock')}
 Find: "RESUME SESSION" -> {t('lock.resume')}
+
 📁 src/components/NotificationBanner.jsx
 Titles:
 Find: "SYSTEM ALARM" -> {t('notifications.alarm')}
 Find: "SECURITY ALERT" -> {t('notifications.burglar')}
 Find: "SYSTEM REMINDER" -> {t('notifications.reminder')}
+
 📁 src/components/AdminPanel.jsx
 Header & Tabs:
 Find: "ADMINISTRATION" -> {t('admin.title').toUpperCase()}
@@ -85,7 +92,8 @@ Find: "EST. MONTHLY:" -> {t('admin.est_monthly')}:
 Find: "Station Configuration" -> {t('admin.station_config')}
 Find: "DISABLED" -> {t('common.disabled').toUpperCase()}
 Find: "ENABLED" -> {t('common.enabled').toUpperCase()}
-Find: "SAVE ALL SETTINGS" -> {t('settings.save_all').toUpperCase()}
+Find: "SAVE ALL SETTINGS" -> {t('settings.save_all').toUpperCase()}'
+
 📁 src/components/LogViewer.jsx
 Header:
 Find: "SYSTEM LOGS" -> {t('logs.title').toUpperCase()}
@@ -100,6 +108,7 @@ Find: "All Users" -> {t('logs.all_users')}
 Find: placeholder="Search messages..." -> placeholder={t('logs.search')}
 Find: title="Export CSV" -> title={t('logs.export')}
 Find: title="Refresh" -> title={t('logs.refresh')}
+
 📁 src/components/FlashViewer.jsx
 Text:
 Find: "FLASH MESSAGE" -> {t('messages.flash_message')}
@@ -112,6 +121,7 @@ Find: "Shared" -> {t('messages.shared')}
 Find: "Created" -> {t('messages.created')}
 Find: "Acknowledge" -> {t('messages.acknowledge')}
 Find: placeholder="NOTE TITLE" -> placeholder={t('messages.note_title') || 'TITLE'}
+
 📁 src/components/AuthPage.jsx
 Text:
 Find: "Control System Access" -> {t('auth.title')}
@@ -123,3 +133,9 @@ Find: "CREATE ACCOUNT" -> {t('auth.register').toUpperCase()}
 Find: "Req: 8+ chars..." -> {t('auth.password_req')}
 Find: "New User? Register" -> {t('auth.toggle_register')}
 Find: "Have an account? Login" -> {t('auth.toggle_login')}
+
+
+
+src/App.jsx
+src/components/StationCard.jsx
+src/components/LockScreen.jsx

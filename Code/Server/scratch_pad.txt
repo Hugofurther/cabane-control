@@ -536,6 +536,8 @@ NEXT
 
 - The OFFLINE label on Station Cards is a bit too close vertically from "Station x" title. Can we add a tiny bit of bottom padding to it, or whatever is the best thing to do.
 
+- ??? Fix the prompt ??? When toggling OFF the disabled station visibility, how can we bring Station Card up one row when possible?
+
 
 
 ---------------

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Settings, Mail, StickyNote, Activity, LogOut, Cloud } from 'lucide-react';
 import axios from 'axios';
+import { useTranslation } from 'react-i18next'; // ✅ Import i18n
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
@@ -16,16 +17,13 @@ import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
-import { useTranslation } from 'react-i18next'; // 1. Import
-
-console.log("🚀 CABANE UI VERSION: 4.6 - REMINDER LOGIC FIX");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const BUZZER_SWITCH_IDX = 21;
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 function Dashboard() {
-  const { t } = useTranslation(); // 2. Hook
+  const { t } = useTranslation(); // ✅ Hook
   const {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings
   } = useSocket();
@@ -51,17 +49,10 @@ function Dashboard() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotes, setHasNotes] = useState(false);
 
-  const audioCtx = useRef(null);
-  const chirpTimerRef = useRef(null);
-
-  // ✅ NEW: Screen Size Detection
   const [isLargeScreen, setIsLargeScreen] = useState(window.innerWidth >= 1024);
 
-  useEffect(() => {
-    const handleResize = () => setIsLargeScreen(window.innerWidth >= 1024);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const audioCtx = useRef(null);
+  const chirpTimerRef = useRef(null);
 
   // --- 1. FETCH DIRECTORY ---
   useEffect(() => {
@@ -77,7 +68,13 @@ function Dashboard() {
     }
   }, [user]);
 
-  // --- 2. LOCAL ALARM & RUNNING LOGIC ---
+  useEffect(() => {
+    const handleResize = () => setIsLargeScreen(window.innerWidth >= 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // --- 2. LOCAL ALARM LOGIC ---
   const { isAlarmActive, isChirpActive, alarmSources, alarmType } = useMemo(() => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
     const activeSwitches = controller === 'CABANE' ? physicalSwitches : virtualSwitches;
@@ -85,6 +82,7 @@ function Dashboard() {
     let vacuumAlarm = false;
     let burglarAlarm = false;
     let sources = [];
+    let systemRunning = false;
 
     // A. Check Vacuum Pumps
     PANEL_LAYOUT.forEach(row => {
@@ -97,9 +95,14 @@ function Dashboard() {
               const isOn = !!activeSwitches[ctrl.idx];
               const isFeedbackOff = ((stationFeedback[st] >> bit) & 1) === 1;
 
-              if (isOn && isFeedbackOff) {
-                vacuumAlarm = true;
-                sources.push(`${card.name} - ${ctrl.label}`);
+              if (isOn) {
+                if (isFeedbackOff) {
+                  vacuumAlarm = true;
+                  // ✅ Translated source name
+                  sources.push(`${t(card.name)} - ${t(ctrl.label)}`);
+                } else {
+                  systemRunning = true;
+                }
               }
             }
           }
@@ -111,25 +114,19 @@ function Dashboard() {
     const burgSt = parseInt(siteSettings.burglar_station) || 0;
     if (burgSt === 2 && stationOnline[2] && ((stationFeedback[2] >> 4) & 1)) {
       burglarAlarm = true;
-      sources.push("INTRUSION DETECTED: STATION 2");
+      sources.push(`${t('notifications.burglar')}: ST2`);
     }
     if (burgSt === 3 && stationOnline[3] && ((stationFeedback[3] >> 4) & 1)) {
       burglarAlarm = true;
-      sources.push("INTRUSION DETECTED: STATION 3");
+      sources.push(`${t('notifications.burglar')}: ST3`);
     }
 
     const overallAlarm = vacuumAlarm || burglarAlarm;
 
     // C. Check Buzzer/Chirp
     const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
+    const chirp = !overallAlarm && systemRunning && !buzzerOn;
 
-    // ✅ CHANGED: Chirp if No Alarm AND Buzzer Muted.
-    // This covers:
-    // 1. System Running + Muted
-    // 2. System Stopped + Muted (Reminder to re-arm)
-    const chirp = !overallAlarm && !buzzerOn;
-
-    // Determine type for Banner
     let type = 'INFO';
     if (burglarAlarm) type = 'BURGLAR';
     else if (vacuumAlarm) type = 'ALARM';
@@ -140,13 +137,14 @@ function Dashboard() {
       alarmSources: sources,
       alarmType: type
     };
-  }, [systemState, siteSettings.burglar_station]);
+  }, [systemState, siteSettings.burglar_station, t]);
 
-  // --- AUDIO LOGIC ---
+  // --- AUDIO HELPER ---
   const playTone = (type) => {
     const saved = localStorage.getItem('cabane_settings');
     const s = saved ? JSON.parse(saved) : { soundEnabled: true, vibrationEnabled: true };
     if (s.vibrationEnabled && navigator.vibrate) navigator.vibrate(type === 'SIREN' ? [500, 200, 500] : 100);
+
     if (user?.settings?.soundEnabled === false) return;
 
     if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -226,22 +224,22 @@ function Dashboard() {
     return () => { if (intervalId) clearInterval(intervalId); };
   }, [isAlarmActive, isChirpActive, user?.settings]);
 
-  // --- 🔔 NOTIFICATION LOGIC ---
+  // --- NOTIFICATION BANNER LOGIC ---
   useEffect(() => {
     if (isAlarmActive) {
       if (!alarmDismissed) {
         setNotification({
           type: alarmType,
-          message: alarmSources.length ? alarmSources.join('\n') : "SYSTEM ALARM"
+          message: alarmSources.length ? alarmSources.join('\n') : t('notifications.alarm')
         });
       } else {
         setNotification(null);
       }
     }
     else if (isChirpActive) {
-      setAlarmDismissed(false); // Clear alarm dismiss when alarm clears
+      setAlarmDismissed(false);
       if (!reminderDismissed) {
-        setNotification({ type: 'INFO', message: "System Active but Buzzer MUTED." });
+        setNotification({ type: 'INFO', message: t('notifications.muted_reminder') }); // ✅ Translated
       } else {
         setNotification(null);
       }
@@ -251,16 +249,14 @@ function Dashboard() {
       setReminderDismissed(false);
       setNotification(null);
     }
-  }, [isAlarmActive, isChirpActive, alarmSources, alarmDismissed, reminderDismissed, alarmType]);
+  }, [isAlarmActive, isChirpActive, alarmSources, alarmDismissed, reminderDismissed, alarmType, t]);
 
   const handleUnreadChange = (unread, notes) => { setUnreadCount(unread); if (notes !== null) setHasNotes(notes > 0); };
 
-  // --- HELPER: CHECK IF CARD IS DISABLED ---
   const isCardDisabled = (card) => {
     if (!card.stationIds || card.stationIds.length === 0) return false;
     try {
       const disabledList = JSON.parse(siteSettings.disabled_stations || '[]');
-      // Returns true only if ALL stations in this card are disabled
       return card.stationIds.every(id => disabledList.includes(id));
     } catch (e) { return false; }
   };
@@ -300,9 +296,8 @@ function Dashboard() {
         />
       )}
 
-      {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
-        {/* ... (Header Content Same as Before) ... */}
+
         {/* Left Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
@@ -341,18 +336,21 @@ function Dashboard() {
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2 shrink-0">
-              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ {t('common.server') || 'SERVER'}</button>
-              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ {t('common.cabane') || 'CABANE'}</button>}
+              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
+              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
             </div>
           )}
 
           <button onClick={() => setShowMessageDrawer(true)} className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`} title={t('nav.messages')}><Mail size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}</button>
-          {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title="You have reminders"><StickyNote size={20} /></div>}
+          {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title={t('dashboard.reminders')}><StickyNote size={20} /></div>}
 
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500 shrink-0">
-            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title={t('nav.settings')}><Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
+            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title={t('nav.settings')}>
+              <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
             </button>
-            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title={t('nav.logout')}><LogOut size={18} /></button>
+            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title={t('nav.logout')}>
+              <LogOut size={18} />
+            </button>
           </div>
         </div>
       </div>
@@ -360,18 +358,12 @@ function Dashboard() {
       {/* GRID */}
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
         {PANEL_LAYOUT.map((row) => {
-          // Filter cards in this row based on settings
           const visibleCards = row.cards.filter(card => {
-            if (!isCardDisabled(card)) return true; // Always show enabled
-
-            // If disabled, check user preference
+            if (!isCardDisabled(card)) return true;
             if (isLargeScreen) return user?.settings?.showDisabledLarge !== false;
             return user?.settings?.showDisabledSmall !== false;
           });
-
-          // If no cards are visible in this row, don't render the row
           if (visibleCards.length === 0) return null;
-
           return (
             <div key={row.id} className={`grid gap-6 ${row.cols}`}>
               {visibleCards.map((card, i) => (
@@ -390,7 +382,4 @@ function Dashboard() {
 
 const SplashScreen = () => (<div className="min-h-screen bg-cabane-dark flex items-center justify-center"><div className="flex flex-col items-center gap-4"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div><h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2></div></div>);
 const MainLayout = () => { const { user, authLoading } = useSocket(); if (authLoading) return <SplashScreen />; if (!user) return <AuthPage />; return <Dashboard />; };
-export default function App() {
-  const { t } = useTranslation();
-  return (<ModalProvider><SocketProvider><AutoLockProvider><MainLayout /><GlobalModal /><LockScreen /></AutoLockProvider></SocketProvider></ModalProvider>);
-}
+export default function App() { return (<ModalProvider><SocketProvider><AutoLockProvider><MainLayout /><GlobalModal /><LockScreen /></AutoLockProvider></SocketProvider></ModalProvider>); }
