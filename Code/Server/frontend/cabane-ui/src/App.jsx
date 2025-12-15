@@ -52,6 +52,15 @@ function Dashboard() {
   const audioCtx = useRef(null);
   const chirpTimerRef = useRef(null);
 
+  // ✅ NEW: Screen Size Detection
+  const [isLargeScreen, setIsLargeScreen] = useState(window.innerWidth >= 1024);
+
+  useEffect(() => {
+    const handleResize = () => setIsLargeScreen(window.innerWidth >= 1024);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // --- 1. FETCH DIRECTORY ---
   useEffect(() => {
     if (user) {
@@ -67,7 +76,6 @@ function Dashboard() {
   }, [user]);
 
   // --- 2. LOCAL ALARM & RUNNING LOGIC ---
-  // --- 2. LOCAL ALARM LOGIC ---
   const { isAlarmActive, isChirpActive, alarmSources, alarmType } = useMemo(() => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
     const activeSwitches = controller === 'CABANE' ? physicalSwitches : virtualSwitches;
@@ -245,6 +253,16 @@ function Dashboard() {
 
   const handleUnreadChange = (unread, notes) => { setUnreadCount(unread); if (notes !== null) setHasNotes(notes > 0); };
 
+  // --- HELPER: CHECK IF CARD IS DISABLED ---
+  const isCardDisabled = (card) => {
+    if (!card.stationIds || card.stationIds.length === 0) return false;
+    try {
+      const disabledList = JSON.parse(siteSettings.disabled_stations || '[]');
+      // Returns true only if ALL stations in this card are disabled
+      return card.stationIds.every(id => disabledList.includes(id));
+    } catch (e) { return false; }
+  };
+
   // --- RENDER ---
   return (
     <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20" onClick={wakeAudio} onTouchStart={wakeAudio}>
@@ -339,11 +357,27 @@ function Dashboard() {
 
       {/* GRID */}
       <div className="flex flex-col gap-6 max-w-7xl mx-auto">
-        {PANEL_LAYOUT.map((row) => (
-          <div key={row.id} className={`grid gap-6 ${row.cols}`}>
-            {row.cards.map((card, i) => <StationCard key={i} card={card} isRemote={canInteract} />)}
-          </div>
-        ))}
+        {PANEL_LAYOUT.map((row) => {
+          // Filter cards in this row based on settings
+          const visibleCards = row.cards.filter(card => {
+            if (!isCardDisabled(card)) return true; // Always show enabled
+
+            // If disabled, check user preference
+            if (isLargeScreen) return user?.settings?.showDisabledLarge !== false;
+            return user?.settings?.showDisabledSmall !== false;
+          });
+
+          // If no cards are visible in this row, don't render the row
+          if (visibleCards.length === 0) return null;
+
+          return (
+            <div key={row.id} className={`grid gap-6 ${row.cols}`}>
+              {visibleCards.map((card, i) => (
+                <StationCard key={i} card={card} isRemote={canInteract} />
+              ))}
+            </div>
+          );
+        })}
       </div>
 
       <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} />

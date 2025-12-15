@@ -509,21 +509,23 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ On the Main Controller ( Arduino ) When a station with burglar alarm enabled goes from undetected ( GREEN / RED blinking ) to detected while the burglar alarm is active, the lepPairs should go from blinking GREEN/RED to blinking RED only. Currently when the burglar alarm is active, it is blinking GREEN/RED also, which is missleading.
 
+√ The red label "OFFLINE time" should display time extended to days. Currently it stops at 99 minutes then displays >99. It would be great to keep the timer on for days.
+
+√ The Lock Screen timer, before it locks should start from detecting inactivity from the user on the device. (e.g. if the mouse moves, the timer starts when the mouse or any other action occurring stops.)
+
+√ Let's add 2 user setting for the disabled stations to toggle displaying the offline stations on/off
+	√ setting 1: if the screen is large enough to show all of the stations without scrolling after resizing, but before rearranging the layouts, show/hide disabled stations
+	√ setting 2: if the screen is too small to show all of the stations without scrolling after resizing, show/hide disabled stations
+
+√ Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
+
+√ When resizing the StationCard and the card's title becomes 3 lines, the title gets stacked over the horizontal line. Can we fix this so the title doesn't get displayed over that horizontal line.
+
 ---
 
 REQUESTED
 
-- The red label "OFFLINE time" should display time extended to days. Currently it stops at 99 minutes then displays >99. It would be great to keep the timer on for days.
 
-
-- The Lock Screen timer, before it locks should start from detecting inactivity from the user on the device. (e.g. if the mouse moves, the timer starts when the mouse or any other action occurring stops.)
-
-- Let's add 2 user setting for the disabled stations to toggle displaying the offline stations on/off
-	- setting 1: if the screen is large enough to show all of the stations without scrolling after resizing, but before rearranging the layouts, show/hide disabled stations
-	- setting 2: if the screen is too small to show all of the stations without scrolling after resizing, show/hide disabled stations
-
-
----
 
 
 
@@ -532,7 +534,7 @@ REQUESTED
 
 NEXT
 
-conditions are taken using these last reads.
+
 
 
 
@@ -560,6 +562,10 @@ NEED TO VERIFY WITH BUZZER
 	- A vacuum alarm needs be active and the Buzzer switch needs to be ON.
 
 - the alarms should be based on the last read of a station. If a station triggers an alarm or alert, if a station gets disconnected, Main Controller and App consider the last state the station was in when it got disconnected and the alert, reminder and alarm 
+
+- Main Controller - Buzzer
+	- the timer to alternate sound ON and Sound OFF should reset at all pass until there is an actual alert or reminder live. This would allow the buzzer to be heard as soon as the condition becomes true.
+	- Reminder chirp is not working when the buzzer switch is OFF and there is no alert active.
 	
 
 
@@ -633,7 +639,7 @@ NATIVE BROWSER ALERTS -> Should be Modal pop-up
 -----------------------------------
 LAYOUT
 
-- Lock Screen - When in Lock Screen, the buzzer should sit just above the Lock Screen layer and under the modals.
+
 
 
 -----------------------------------
@@ -643,19 +649,10 @@ CONNECTION
 -----------------------------------
 ARDUINO
 
+- Verify the stations behaviors when disconnecting the Main Controller while the server is UP
 
-
-- Alerts when a user has control should be sent to the Main Controller and it's buzzer should be heard regardless of its buzzer switch position.
+- Alerts when a user has control should be sent to the Main Controller and its buzzer should be heard regardless of its buzzer switch position.
  
-- Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
-
-- Main Controller - Buzzer
-	- the timer to alternate sound ON and Sound OFF should reset at all pass until there is an actual alert or reminder live. This would allow the buzzer to be heard as soon as the condition becomes true.
-	- Reminder chirp is not working when the buzzer switch is OFF and there is no alert active.
-
-
-
-
 - POST MVP: We need a system to be able to upload a new firmware via the server. The server downloads the new firmware, then once downloaded and verified, upgrades the arduino board firmware.
 
 
@@ -963,6 +960,10 @@ Veuillez activer l’interrupteur du buzzer.
 
 In , why are we going from x line to x lines.
 
+
+---
+
+Can you please give me a detailed explanation of the work we did on this branch alone with a list of the files that were modified.
 
 ---
 

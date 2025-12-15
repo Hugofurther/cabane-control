@@ -10,12 +10,11 @@ export const AutoLockProvider = ({ children }) => {
     const [isLocked, setIsLocked] = useState(false);
 
     // Settings (Defaults)
-    const [lockMethod, setLockMethod] = useState('DISABLED'); // DISABLED, SIMPLE, PASSWORD
+    const [lockMethod, setLockMethod] = useState('DISABLED');
     const [timeoutMinutes, setTimeoutMinutes] = useState(5);
 
     const idleTimer = useRef(null);
 
-    // Load Settings when User loads
     useEffect(() => {
         if (user?.settings) {
             setLockMethod(user.settings.lockMethod || 'DISABLED');
@@ -23,7 +22,6 @@ export const AutoLockProvider = ({ children }) => {
         }
     }, [user]);
 
-    // Reset Timer on Activity
     const resetTimer = useCallback(() => {
         if (lockMethod === 'DISABLED' || isLocked) return;
 
@@ -35,13 +33,12 @@ export const AutoLockProvider = ({ children }) => {
         }, timeoutMinutes * 60 * 1000);
     }, [lockMethod, timeoutMinutes, isLocked]);
 
-    // Listen to Activity
     useEffect(() => {
         if (lockMethod === 'DISABLED') return;
 
-        const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+        // ✅ ADDED: 'mousemove'
+        const events = ['mousedown', 'mousemove', 'keydown', 'touchstart', 'scroll'];
 
-        // Initial set
         resetTimer();
 
         const handleActivity = () => resetTimer();
@@ -53,10 +50,7 @@ export const AutoLockProvider = ({ children }) => {
         };
     }, [resetTimer, lockMethod]);
 
-    // Function to manually lock (e.g. from a button)
     const lockScreen = () => setIsLocked(true);
-
-    // Function to unlock
     const unlockScreen = () => {
         setIsLocked(false);
         resetTimer();

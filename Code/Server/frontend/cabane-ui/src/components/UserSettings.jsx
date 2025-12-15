@@ -6,6 +6,7 @@ import { clsx } from 'clsx';
 import axios from 'axios';
 import { AdminPanel } from './AdminPanel';
 import { LogViewer } from './LogViewer';
+import { Eye, EyeOff } from 'lucide-react'; // Added icons if needed for visuals
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -31,6 +32,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const canAdmin = user?.role === 'ADMIN';
     const canLogs = canAdmin || user?.can_view_logs;
 
+    // ✅ NEW: Disabled Station Visibility
+    const [showDisabledLarge, setShowDisabledLarge] = useState(true);
+    const [showDisabledSmall, setShowDisabledSmall] = useState(true);
+
     useEffect(() => {
         if (isOpen && user) {
             setActiveTab('GENERAL');
@@ -45,6 +50,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 setAppChirpInterval(user.settings.appChirpInterval || 2);
             }
             setProfile({ username: user.username || '', email: user.email || '' });
+
+            // ✅ Load Visibility Settings (Default true)
+            setShowDisabledLarge(user.settings.showDisabledLarge !== false);
+            setShowDisabledSmall(user.settings.showDisabledSmall !== false);
         }
     }, [isOpen, user]);
 
@@ -66,7 +75,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 tokenExpiration: `${val}${sessionUnit}`,
                 // ✅ Save Audio Settings
                 appSirenSilence: parseFloat(appSirenSilence) || 5,
-                appChirpInterval: parseFloat(appChirpInterval) || 2
+                appChirpInterval: parseFloat(appChirpInterval) || 2,
+                // ✅ Save New Settings
+                showDisabledLarge,
+                showDisabledSmall
             };
 
             await updateSettings(finalSettings);
@@ -164,6 +176,30 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Layout size={18} className="text-yellow-400" /><span className="text-sm font-medium text-gray-200">Show Cabane Status</span></div>
                                     <Toggle checked={localSettings.showMainStatus ?? true} onChange={() => toggleSetting('showMainStatus')} />
+                                </div>
+
+                                {/* ✅ NEW: DISABLED STATION VISIBILITY */}
+                                <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-3">
+                                    <div className="flex items-center gap-3 mb-1">
+                                        <EyeOff size={18} className="text-gray-400" />
+                                        <span className="text-sm font-medium text-gray-200">Disabled Stations Visibility</span>
+                                    </div>
+
+                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs font-bold text-gray-300">Desktop / Tablet</span>
+                                            <span className="text-[10px] text-gray-500">Large screens (No horizontal scroll)</span>
+                                        </div>
+                                        <Toggle checked={showDisabledLarge} onChange={() => setShowDisabledLarge(!showDisabledLarge)} />
+                                    </div>
+
+                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs font-bold text-gray-300">Mobile</span>
+                                            <span className="text-[10px] text-gray-500">Small screens (Stacked layout)</span>
+                                        </div>
+                                        <Toggle checked={showDisabledSmall} onChange={() => setShowDisabledSmall(!showDisabledSmall)} />
+                                    </div>
                                 </div>
                             </section>
 

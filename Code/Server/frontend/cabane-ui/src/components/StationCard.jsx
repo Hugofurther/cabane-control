@@ -5,13 +5,24 @@ import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 import { useAutoLock } from '../contexts/AutoLockContext';
 
+// ✅ EXTENDED DURATION FORMATTER (Days/Hours/Minutes)
 const formatDuration = (ms) => {
-    if (!ms) return "00:00";
+    if (!ms || ms < 0) return "00:00";
     const seconds = Math.floor(ms / 1000);
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    if (m > 99) return "> 99m";
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+
+    if (seconds < 3600) {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    if (seconds < 86400) {
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        return `${h}h ${m}m`;
+    }
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    return `${d}d ${h}h`;
 };
 
 export const StationCard = ({ card, isRemote }) => {
@@ -90,7 +101,8 @@ export const StationCard = ({ card, isRemote }) => {
                 </div>
             )}
 
-            <h3 className={clsx("font-black tracking-widest text-lg mb-0 border-b-2 pb-2 text-center whitespace-pre-line h-14 flex items-center justify-center", textClass)}>
+            {/* ✅ FIXED: Changed h-14 to min-h-[3.5rem] to allow title to grow without overlapping border */}
+            <h3 className={clsx("font-black tracking-widest text-lg mb-0 border-b-2 pb-2 text-center whitespace-pre-line min-h-[3.5rem] flex items-center justify-center", textClass)}>
                 {card.name}
             </h3>
 
@@ -98,26 +110,16 @@ export const StationCard = ({ card, isRemote }) => {
                 {card.controls.map((ctrl) => {
                     const targetSt = ctrl.targetSt ?? ctrl.fb?.st ?? card.stationIds?.[0];
 
-                    // --- ENABLE/DISABLE LOGIC ---
                     let isDisabled = targetSt !== undefined && disabledList.includes(targetSt);
 
-                    // 🌡️ Thermostat Overrides
-                    // Strict Logic: Only enabled if the station it is physically connected to is enabled.
-                    if (ctrl.idx === 22) {
-                        // TH1 (Assigned to ST0/ST1) -> Check ST1
-                        isDisabled = disabledList.includes(1);
-                    }
-                    else if (ctrl.idx === 23) {
-                        // TH2 (Assigned to ST4) -> Check ST4
-                        isDisabled = disabledList.includes(4);
-                    }
+                    if (ctrl.idx === 22) isDisabled = disabledList.includes(1);
+                    else if (ctrl.idx === 23) isDisabled = disabledList.includes(4);
 
                     const isOffline = targetSt !== undefined && !systemState.stationOnline[targetSt];
                     const isControlUnavailable = isDisabled || isOffline;
 
                     const virtualOn = !!systemState.virtualSwitches[ctrl.idx];
                     const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
-
                     const isLockedControl = (!isRemote || isControlUnavailable);
 
                     const props = {
