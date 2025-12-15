@@ -310,18 +310,18 @@ function Dashboard() {
             {user?.settings?.showMainStatus && (
               <>
                 <div className={`flex items-center gap-1 ${systemState.mainControllerOnline ? 'text-green-400' : 'text-red-500 animate-pulse'}`}>
-                  <Activity size={12} /> {systemState.mainControllerOnline ? "CABANE ONLINE" : "CABANE OFFLINE"}
+                  <Activity size={12} /> {systemState.mainControllerOnline ? t('nav.cabane_online') : t('nav.cabane_offline')}
                 </div>
                 <span className="text-gray-700">|</span>
               </>
             )}
             <div className="flex items-center gap-2 text-gray-400">
               <span className={`w-2 h-2 rounded-full shadow ${isConnected ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
-              <span>{isConnected ? "USER ONLINE" : "CONNECTING..."}</span>
+              <span>{isConnected ? t('nav.user_online') : t('nav.connecting')}</span>
             </div>
           </div>
           <div className={`font-mono font-bold text-sm mt-1 ${systemState.controller === 'CABANE' ? 'text-yellow-500' : 'text-blue-400'}`}>
-            MASTER: {systemState.controller === 'USER' ? (systemState.currentUser || 'USER') : systemState.controller}
+            {t('nav.master')}: {systemState.controller === 'USER' ? (systemState.currentUser || 'USER') : systemState.controller}
           </div>
         </div>
 
@@ -335,24 +335,24 @@ function Dashboard() {
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
-              <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">Take Control</button>
-              : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">View Only</div>
+              <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">{t('dashboard.take_control')}</button>
+              : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">{t('dashboard.view_only')}</div>
           )}
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2 shrink-0">
-              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
-              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
+              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ {t('common.server') || 'SERVER'}</button>
+              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ {t('common.cabane') || 'CABANE'}</button>}
             </div>
           )}
 
-          <button onClick={() => setShowMessageDrawer(true)} className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`} title="Messages"><Mail size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}</button>
+          <button onClick={() => setShowMessageDrawer(true)} className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`} title={t('nav.messages')}><Mail size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}</button>
           {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title="You have reminders"><StickyNote size={20} /></div>}
 
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500 shrink-0">
-            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings"><Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
+            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title={t('nav.settings')}><Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
             </button>
-            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title="Logout"><LogOut size={18} /></button>
+            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title={t('nav.logout')}><LogOut size={18} /></button>
           </div>
         </div>
       </div>
@@ -390,4 +390,7 @@ function Dashboard() {
 
 const SplashScreen = () => (<div className="min-h-screen bg-cabane-dark flex items-center justify-center"><div className="flex flex-col items-center gap-4"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div><h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2></div></div>);
 const MainLayout = () => { const { user, authLoading } = useSocket(); if (authLoading) return <SplashScreen />; if (!user) return <AuthPage />; return <Dashboard />; };
-export default function App() { return (<ModalProvider><SocketProvider><AutoLockProvider><MainLayout /><GlobalModal /><LockScreen /></AutoLockProvider></SocketProvider></ModalProvider>); }
+export default function App() {
+  const { t } = useTranslation();
+  return (<ModalProvider><SocketProvider><AutoLockProvider><MainLayout /><GlobalModal /><LockScreen /></AutoLockProvider></SocketProvider></ModalProvider>);
+}

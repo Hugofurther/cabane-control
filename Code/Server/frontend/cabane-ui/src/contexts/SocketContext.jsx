@@ -11,8 +11,8 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 export const useSocket = () => useContext(SocketContext);
 
 export const SocketProvider = ({ children }) => {
-    const { i18n } = useTranslation(); // ✅ Init
     const { showAlert } = useModal();
+    const { i18n } = useTranslation(); // ✅ Init
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
@@ -131,7 +131,7 @@ export const SocketProvider = ({ children }) => {
                 i18n.changeLanguage(user.settings.language);
             }
         }
-    }, [user, i18n]);
+    }, [user]);
 
     useEffect(() => {
         if (socket && user?.username) {

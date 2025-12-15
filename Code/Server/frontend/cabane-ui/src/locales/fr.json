@@ -15,7 +15,8 @@
     "disabled": "Désactivé",
     "yes": "Oui",
     "no": "Non",
-    "ok": "OK"
+    "ok": "OK",
+    "server": "SERVER"
   },
   "auth": {
     "title": "Accès Système de Contrôle",
@@ -38,7 +39,7 @@
     "cabane_offline": "CABANE HORS LIGNE",
     "user_online": "UTILISATEUR EN LIGNE",
     "connecting": "CONNEXION...",
-    "master": "MAÎTRE",
+    "master": "CONTRÔLEUR",
     "settings": "Paramètres",
     "logout": "Déconnexion",
     "messages": "Messages"

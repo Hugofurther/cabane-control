@@ -534,7 +534,7 @@ REQUESTED
 
 NEXT
 
-
+- The OFFLINE label on Station Cards is a bit too close vertically from "Station x" title. Can we add a tiny bit of bottom padding to it, or whatever is the best thing to do.
 
 
 

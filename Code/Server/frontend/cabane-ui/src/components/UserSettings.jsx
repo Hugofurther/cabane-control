@@ -142,8 +142,20 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                         <span className="text-sm font-medium text-gray-200">Select Language / Langue</span>
                                     </div>
                                     <div className="flex bg-gray-900 rounded p-1">
-                                        <button onClick={() => changeLanguage('en')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language === 'en' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>ENGLISH</button>
-                                        <button onClick={() => changeLanguage('fr')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language === 'fr' ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>FRANÇAIS</button>
+                                        <button
+                                            onClick={() => changeLanguage('en')}
+                                            // ✅ FIXED: Use startsWith to handle 'en-US', 'en-GB' etc.
+                                            className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('en') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}
+                                        >
+                                            ENGLISH
+                                        </button>
+                                        <button
+                                            onClick={() => changeLanguage('fr')}
+                                            // ✅ FIXED: Use startsWith to handle 'fr-CA', 'fr-FR' etc.
+                                            className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('fr') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}
+                                        >
+                                            FRANÇAIS
+                                        </button>
                                     </div>
                                 </div>
                             </section>

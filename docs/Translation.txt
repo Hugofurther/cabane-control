@@ -1,0 +1,125 @@
+2. 📝 Find & Replace Guide (by File)
+I have prepared these replacements based on the exact keys created in src/locales/en.json and fr.json.
+Prerequisite for all files:
+
+ Make sure to add this import inside the component function:
+import { useTranslation } from 'react-i18next';
+
+// Inside function:
+//export const MyComponent
+     const { t } = useTranslation();
+
+---
+
+!!! DONE
+
+📁 src/App.jsx
+Header Status:
+Find: "CABANE ONLINE" -> Replace: {t('nav.cabane_online')}
+Find: "CABANE OFFLINE" -> Replace: {t('nav.cabane_offline')}
+Find: "USER ONLINE" -> Replace: {t('nav.user_online')}
+Find: "CONNECTING..." -> Replace: {t('nav.connecting')}
+Find: "MASTER:" -> Replace: {t('nav.master')}:
+Buttons & Tooltips:
+Find: > Take Control -> > {t('dashboard.take_control')}
+Find: > View Only -> > {t('dashboard.view_only')}
+Find: > ➜ SERVER -> > ➜ {t('common.server') || 'SERVER'} (Note: Add "SERVER" to json or leave static if preferred)
+Find: > ➜ CABANE -> > ➜ {t('common.cabane') || 'CABANE'}
+Find: title="Messages" -> title={t('nav.messages')}
+Find: title="Settings" -> title={t('nav.settings')}
+Find: title="Logout" -> title={t('nav.logout')}
+
+
+!!! To Change
+
+
+📁 src/components/StationCard.jsx
+Labels:
+Find: `ST${id} DISABLED` -> `ST${id} ${t('common.disabled').toUpperCase()}`
+Find: `ST${id} NEVER CONNECTED` -> `ST${id} ${t('station.never_connected')}`
+Find: `ST${id} OFFLINE ${...}` -> `ST${id} ${t('station.offline')} ${...}`
+📁 src/components/LockScreen.jsx
+Text:
+Find: "Emergency / Buzzer" -> {t('lock.emergency')}
+Find: "System Locked" -> {t('lock.locked')}
+Find: placeholder="Enter Password..." -> placeholder={t('lock.enter_password')}
+Find: "UNLOCK" -> {t('lock.unlock')}
+Find: "RESUME SESSION" -> {t('lock.resume')}
+📁 src/components/NotificationBanner.jsx
+Titles:
+Find: "SYSTEM ALARM" -> {t('notifications.alarm')}
+Find: "SECURITY ALERT" -> {t('notifications.burglar')}
+Find: "SYSTEM REMINDER" -> {t('notifications.reminder')}
+📁 src/components/AdminPanel.jsx
+Header & Tabs:
+Find: "ADMINISTRATION" -> {t('admin.title').toUpperCase()}
+Find: "Users" -> {t('admin.users')}
+Find: "System Settings" -> {t('admin.system')}
+Table Headers:
+Find: <th>User</th> -> <th>{t('auth.username')}</th>
+Find: <th>Role</th> -> <th>{t('admin.role')}</th>
+Find: <th>Status</th> -> <th>{t('admin.status')}</th>
+Find: <th>Control</th> -> <th>{t('admin.control')}</th>
+Find: <th>Logs</th> -> <th>{t('settings.tabs.logs')}</th>
+Find: <th>Actions</th> -> <th>Actions</th> (Or add key if missing)
+Settings Labels:
+Find: "Timezone" -> {t('admin.timezone')}
+Find: "Storage" -> {t('admin.storage')}
+Find: "FULL" -> {t('admin.full')}
+Find: "TOTAL" -> {t('admin.total')}
+Find: "Used:" -> {t('admin.used')}:
+Find: "Free:" -> {t('admin.free')}:
+Find: "Buzzer Configuration" -> {t('admin.buzzer_config')}
+Find: "ALARM ON (SEC)" -> {t('admin.alarm_on')}
+Find: "ALARM OFF (SEC)" -> {t('admin.alarm_off')}
+Find: "REMINDER INTERVAL (MIN)" -> {t('admin.reminder_int')}
+Find: "Weather Services" -> {t('admin.weather_services')}
+Find: "API KEY" -> {t('admin.api_key')}
+Find: "LIMIT (CALLS/MIN)" -> {t('admin.limit_min')}
+Find: "LIMIT (CALLS/MONTH)" -> {t('admin.limit_month')}
+Find: "CURRENT (MIN)" -> {t('admin.current_min')}
+Find: "FORECAST (MIN)" -> {t('admin.forecast_min')}
+Find: "ROTATION (SEC)" -> {t('admin.rotation_sec')}
+Find: "USAGE:" -> {t('admin.usage')}:
+Find: "EST. MONTHLY:" -> {t('admin.est_monthly')}:
+Find: "Station Configuration" -> {t('admin.station_config')}
+Find: "DISABLED" -> {t('common.disabled').toUpperCase()}
+Find: "ENABLED" -> {t('common.enabled').toUpperCase()}
+Find: "SAVE ALL SETTINGS" -> {t('settings.save_all').toUpperCase()}
+📁 src/components/LogViewer.jsx
+Header:
+Find: "SYSTEM LOGS" -> {t('logs.title').toUpperCase()}
+Toolbar:
+Find: "Date Range" -> {t('logs.date_range')}
+Find: "Date Filter" -> {t('logs.date_filter')}
+Find: "After (Start)" -> {t('logs.start')}
+Find: "Before (End)" -> {t('logs.end')}
+Find: "Clear Date Filter" -> {t('logs.clear_filter')}
+Find: "All Types" -> {t('logs.all_types')}
+Find: "All Users" -> {t('logs.all_users')}
+Find: placeholder="Search messages..." -> placeholder={t('logs.search')}
+Find: title="Export CSV" -> title={t('logs.export')}
+Find: title="Refresh" -> title={t('logs.refresh')}
+📁 src/components/FlashViewer.jsx
+Text:
+Find: "FLASH MESSAGE" -> {t('messages.flash_message')}
+Find: "MEMO REMINDER" -> {t('messages.memo_reminder')}
+Find: "Shared by" -> {t('messages.shared_by')}
+Find: "Re-Shared by" -> {t('messages.re_shared_by')}
+Find: "Shared with" -> {t('messages.shared_with')}
+Find: "Edited" -> {t('messages.edited')}
+Find: "Shared" -> {t('messages.shared')}
+Find: "Created" -> {t('messages.created')}
+Find: "Acknowledge" -> {t('messages.acknowledge')}
+Find: placeholder="NOTE TITLE" -> placeholder={t('messages.note_title') || 'TITLE'}
+📁 src/components/AuthPage.jsx
+Text:
+Find: "Control System Access" -> {t('auth.title')}
+Find: placeholder="Username" -> placeholder={t('auth.username')}
+Find: placeholder="Email Address" -> placeholder={t('auth.email')}
+Find: placeholder="Password" -> placeholder={t('auth.password')}
+Find: "LOGIN" -> {t('auth.login').toUpperCase()}
+Find: "CREATE ACCOUNT" -> {t('auth.register').toUpperCase()}
+Find: "Req: 8+ chars..." -> {t('auth.password_req')}
+Find: "New User? Register" -> {t('auth.toggle_register')}
+Find: "Have an account? Login" -> {t('auth.toggle_login')}

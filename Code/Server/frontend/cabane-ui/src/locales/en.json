@@ -15,7 +15,8 @@
     "disabled": "Disabled",
     "yes": "Yes",
     "no": "No",
-    "ok": "OK"
+    "ok": "OK",
+    "server": "SERVER"
   },
   "auth": {
     "title": "Control System Access",
