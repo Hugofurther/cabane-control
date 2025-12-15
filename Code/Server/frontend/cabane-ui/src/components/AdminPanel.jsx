@@ -420,9 +420,10 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                     onChange={e => setSysSettings({ ...sysSettings, burglar_station: e.target.value })}
                                     className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none"
                                 >
+                                    {/* ✅ UPDATED OPTIONS */}
                                     <option value="0">Disabled</option>
-                                    <option value="2">Station 2 (Garage)</option>
-                                    <option value="3">Station 3 (Barn)</option>
+                                    <option value="2">Station 2</option>
+                                    <option value="3">Station 3</option>
                                 </select>
                                 <p className="text-[10px] text-gray-500 mt-1">
                                     Triggers System Alarm (Siren) when input is OPEN (High).

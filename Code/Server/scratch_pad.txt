@@ -486,31 +486,53 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ Is there a the burglar alarm notification on the app?
 
 √ The alert and rappel banners's "x" buttons are not all the way to the right. Also, these banners should get dismissible by clicking anywhere on it.
+
+√ the "rappel" banner, the reminder chirp condition should be true in the following condition:
+	√ the buzzer switch must be OFF and NO vacuum ALARM is true. The same should go for the Main Controller. Whenever these condition become true, the first chirp should be heard.
+
+√ are the Burglar settings on the AminPanel of the app persistent on the Main Controller?
+
+√ When settings are saved on the App while the Main Controller is offline. How do we know when the settings are saved to the Main Controller or not?
+
+√ The burglar alert on the app should look different from the vacuum alert.
+
+√ the banners can cover the entire header of the main page, from the top of the page to below the wether widget where the horizontal line is.
+
+√ Make all the banners at the top fade in and out like the burglar banner behaves.
+
+√ Reminder Logic Contidions for true:
+     √ Buzzer Switch needs to be OFF in all cases.
+          √ vacuum switch OFF
+          √ vacuum switch ON + Feedback (Green/Low)
+
+√ When the banners fade in and out, can we have the fade with opacity 100% for 2 seconds, then when opacity is 0% stay for 1 second?	
+
+√ On the Main Controller ( Arduino ) When a station with burglar alarm enabled goes from undetected ( GREEN / RED blinking ) to detected while the burglar alarm is active, the lepPairs should go from blinking GREEN/RED to blinking RED only. Currently when the burglar alarm is active, it is blinking GREEN/RED also, which is missleading.
+
 ---
 
 REQUESTED
+
+- The red label "OFFLINE time" should display time extended to days. Currently it stops at 99 minutes then displays >99. It would be great to keep the timer on for days.
+
+
+- The Lock Screen timer, before it locks should start from detecting inactivity from the user on the device. (e.g. if the mouse moves, the timer starts when the mouse or any other action occurring stops.)
+
+- Let's add 2 user setting for the disabled stations to toggle displaying the offline stations on/off
+	- setting 1: if the screen is large enough to show all of the stations without scrolling after resizing, but before rearranging the layouts, show/hide disabled stations
+	- setting 2: if the screen is too small to show all of the stations without scrolling after resizing, show/hide disabled stations
+
+
+---
+
+
 
 
 ---
 
 NEXT
 
-- the "rappel" banner, the reminder chirp condition should be true in the following condition:
-	- the buzzer switch must be OFF and NO vacuum ALARM is true. The same should go for the Main Controller. When ever these condition become true, the first chirp should be heard.
-
-- The burglar alert on the app should look different from the vacuum alert.
-
-- is the Burglar settings on the AminPanel of the app persistent on the Main Controller?
-
-- When settings are saved on the App while the Main Controller is offline. How do we know when the settings are saved to the Main Controller or not?
-
-- On the App, the Buzzer sound interval is ON even after turning the buzzer switch OFF. In order for the alarm sound interval to be true, the following contidions need to be met:
-	- A vacuum alarm needs be active and the Buzzer switch needs to be ON.
-
-- the alarms should be based on the last read of a station. If a station triggers an alarm or alert, if a station gets disconnected, Main Controller and App consider the last state the station was in when it got disconnected and the alert, reminder and alarm conditions are taken using these last reads.
-
-- The Lock Screen timer should before it locks should start from the last mouse or any activity on the device. (e.g. if the mouse moves, the timer starts when the mouse or any other action occurring stops.)
-
+conditions are taken using these last reads.
 
 
 
@@ -531,35 +553,15 @@ NEED TO VERIFY WITH BUZZER
 		(You forgot to include the ```#if BUZZER_REMINDER else if (!alert && !switchOn)``` section. I'm worried you may have forgotten other things now.)
 		- None of the enabled station's vacuum light is flashing RED ( everything is ok and there is no ALARM or Alert) AND the buzzer switch is OFF. This is a reminder to turn the buzzer switch ON when all is working fine.
 
+---
 
 
+- On the App, the Buzzer sound interval is ON even after turning the buzzer switch OFF. In order for the alarm sound interval to be true, the following contidions need to be met:
+	- A vacuum alarm needs be active and the Buzzer switch needs to be ON.
+
+- the alarms should be based on the last read of a station. If a station triggers an alarm or alert, if a station gets disconnected, Main Controller and App consider the last state the station was in when it got disconnected and the alert, reminder and alarm 
 	
 
----
-
-NEXT
-
-- On the Main Controller ( Arduino ) When a station with burglar alarm enabled goes from undetected ( GREEN / RED blinking ) to detected while the burglar alarm is active, the lepPairs should go from blinking GREEN/RED to blinking RED only. Currently when the burglar alarm is active, it is blinking GREEN/RED also, which is missleading.
-
-- The Six OFFLINE should display time 
-
-
-
-
-
-
-
-
-
----
-
-
-
-
-
-
-
------
 
 
 
@@ -614,9 +616,7 @@ SERVER
 UX
 - Is it possible for the app to be detect when the screen start to re-arrange the layout when the screen becomes too small to fit as intended. Before re-arranging the layout, reduce the size of the cards and elements to a certain point, then only after reducing the size of the components, then re-organize the layout, but before re-organizing the layout, hide the disabled stations to reduce clutter.
 
-- Let's add 2 user setting for the disabled stations to toggle displaying the offline stations on/off
-	- setting 1: if the screen is large enough to show all of the stations without scrolling after resizing, but before rearranging the layouts, show/hide disabled stations
-	- setting 2: if the screen is too small to show all of the stations without scrolling after resizing, show/hide disabled stations
+
 
 
 

@@ -13,15 +13,20 @@ const state = {
     stationOnline: new Array(6).fill(false),
     stationLastSeen: new Array(6).fill(0),
     globalVacuumAlarm: false,
-    burglarAlarm: false, // ✅ Added
+    burglarAlarm: false,
     buzzerEnabled: false,
     buzzerStatus: 'OFF',
     timezone: 'UTC',
     disabledStations: []
 };
 
-// Internal Config Tracker
-let cfgBurglarStation = 0; // ✅ Added
+// ✅ NEW: Cache Config to sync on reconnect
+let cachedConfig = {
+    onSec: 5,
+    offSec: 10,
+    remMin: 2,
+    burgSt: 0
+};
 
 // State Diffing
 let lastPushedStateStr = "";
@@ -78,8 +83,11 @@ function init(io) {
                 if (row.key === 'disabled_stations') {
                     try { state.disabledStations = JSON.parse(row.value); } catch (e) { }
                 }
-                // ✅ Load Burglar Config
-                if (row.key === 'burglar_station') cfgBurglarStation = parseInt(row.value) || 0;
+                // ✅ Load Initial Config into Cache
+                if (row.key === 'buzzer_alarm_on') cachedConfig.onSec = parseInt(row.value) || 5;
+                if (row.key === 'buzzer_alarm_off') cachedConfig.offSec = parseInt(row.value) || 10;
+                if (row.key === 'buzzer_reminder_min') cachedConfig.remMin = parseInt(row.value) || 2;
+                if (row.key === 'burglar_station') cachedConfig.burgSt = parseInt(row.value) || 0;
             });
         }
     });
@@ -93,10 +101,12 @@ function updateDisabled(jsonStr) {
     try { state.disabledStations = JSON.parse(jsonStr); pushUpdate(); } catch (e) { }
 }
 
-// ✅ Updated to capture Burglar Config
 function updateConfig(onSec, offSec, remMin, burgSt) {
     if (onSec > 0 && offSec > 0 && remMin > 0) {
-        cfgBurglarStation = burgSt;
+        // ✅ Update Cache
+        cachedConfig = { onSec, offSec, remMin, burgSt };
+
+        // Send immediately (Best effort)
         udpService.sendConfigPacket(onSec, offSec, remMin, burgSt);
         console.log(`[LOGIC] Sent Config: On=${onSec}s, Off=${offSec}s, Rem=${remMin}m, Burg=${burgSt}`);
         pushUpdate();
@@ -124,10 +134,15 @@ function applyThermostatOverrides() {
 function updatePhysicalState(switchBytes, isOverrideActive) {
     state.lastMainHeartbeat = Date.now();
 
+    // 1. Detect Reconnection (Offline -> Online)
     if (!state.mainControllerOnline) {
         state.mainControllerOnline = true;
         console.log("[SYNC] 🟢 Main Controller RECONNECTED. Forcing CABANE Mode.");
         logSystemEvent('SYSTEM', "Main Controller Online. Restoring Physical Control.");
+
+        // ✅ SYNC CONFIGURATION TO MAIN CONTROLLER
+        console.log("[SYNC] Pushing cached config to Main Controller...");
+        udpService.sendConfigPacket(cachedConfig.onSec, cachedConfig.offSec, cachedConfig.remMin, cachedConfig.burgSt);
 
         state.controller = 'CABANE';
         state.currentUser = null;
@@ -252,11 +267,11 @@ function controlLoop() {
         stateChanged = true; alarmCycleStart = now;
     }
 
-    // ✅ BURGLAR CHECK
+    // Burglar Check (Local state)
     let burgDetected = false;
-    if (cfgBurglarStation === 2 && state.stationOnline[2]) {
+    if (cachedConfig.burgSt === 2 && state.stationOnline[2]) {
         if ((state.stationFeedback[2] >> 4) & 1) burgDetected = true;
-    } else if (cfgBurglarStation === 3 && state.stationOnline[3]) {
+    } else if (cachedConfig.burgSt === 3 && state.stationOnline[3]) {
         if ((state.stationFeedback[3] >> 4) & 1) burgDetected = true;
     }
 

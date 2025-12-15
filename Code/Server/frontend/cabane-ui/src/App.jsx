@@ -17,7 +17,7 @@ import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
 
-console.log("🚀 CABANE UI VERSION: 4.5 - FINAL AUDIO & LAYOUT");
+console.log("🚀 CABANE UI VERSION: 4.6 - REMINDER LOGIC FIX");
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const BUZZER_SWITCH_IDX = 21;
@@ -66,14 +66,15 @@ function Dashboard() {
     }
   }, [user]);
 
+  // --- 2. LOCAL ALARM & RUNNING LOGIC ---
   // --- 2. LOCAL ALARM LOGIC ---
-  const { isAlarmActive, isChirpActive, alarmSources } = useMemo(() => {
+  const { isAlarmActive, isChirpActive, alarmSources, alarmType } = useMemo(() => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
     const activeSwitches = controller === 'CABANE' ? physicalSwitches : virtualSwitches;
 
-    let alarm = false;
+    let vacuumAlarm = false;
+    let burglarAlarm = false;
     let sources = [];
-    let systemRunning = false;
 
     // A. Check Vacuum Pumps
     PANEL_LAYOUT.forEach(row => {
@@ -86,13 +87,9 @@ function Dashboard() {
               const isOn = !!activeSwitches[ctrl.idx];
               const isFeedbackOff = ((stationFeedback[st] >> bit) & 1) === 1;
 
-              if (isOn) {
-                if (isFeedbackOff) {
-                  alarm = true;
-                  sources.push(`${card.name} - ${ctrl.label}`);
-                } else {
-                  systemRunning = true;
-                }
+              if (isOn && isFeedbackOff) {
+                vacuumAlarm = true;
+                sources.push(`${card.name} - ${ctrl.label}`);
               }
             }
           }
@@ -103,28 +100,43 @@ function Dashboard() {
     // B. Check Burglar Alarm
     const burgSt = parseInt(siteSettings.burglar_station) || 0;
     if (burgSt === 2 && stationOnline[2] && ((stationFeedback[2] >> 4) & 1)) {
-      alarm = true;
-      sources.push("ST2 - BURGLAR ALARM");
+      burglarAlarm = true;
+      sources.push("INTRUSION DETECTED: STATION 2");
     }
     if (burgSt === 3 && stationOnline[3] && ((stationFeedback[3] >> 4) & 1)) {
-      alarm = true;
-      sources.push("ST3 - BURGLAR ALARM");
+      burglarAlarm = true;
+      sources.push("INTRUSION DETECTED: STATION 3");
     }
+
+    const overallAlarm = vacuumAlarm || burglarAlarm;
 
     // C. Check Buzzer/Chirp
     const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
-    const chirp = !alarm && systemRunning && !buzzerOn;
 
-    return { isAlarmActive: alarm, isChirpActive: chirp, alarmSources: sources };
+    // ✅ CHANGED: Chirp if No Alarm AND Buzzer Muted.
+    // This covers:
+    // 1. System Running + Muted
+    // 2. System Stopped + Muted (Reminder to re-arm)
+    const chirp = !overallAlarm && !buzzerOn;
+
+    // Determine type for Banner
+    let type = 'INFO';
+    if (burglarAlarm) type = 'BURGLAR';
+    else if (vacuumAlarm) type = 'ALARM';
+
+    return {
+      isAlarmActive: overallAlarm,
+      isChirpActive: chirp,
+      alarmSources: sources,
+      alarmType: type
+    };
   }, [systemState, siteSettings.burglar_station]);
 
-  // --- AUDIO HELPER ---
+  // --- AUDIO LOGIC ---
   const playTone = (type) => {
     const saved = localStorage.getItem('cabane_settings');
     const s = saved ? JSON.parse(saved) : { soundEnabled: true, vibrationEnabled: true };
     if (s.vibrationEnabled && navigator.vibrate) navigator.vibrate(type === 'SIREN' ? [500, 200, 500] : 100);
-
-    // Global User Switch
     if (user?.settings?.soundEnabled === false) return;
 
     if (!audioCtx.current) audioCtx.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -186,59 +198,50 @@ function Dashboard() {
     };
   }, [socket, user]);
 
-  // --- 🔊 SOUND LOOP (Configurable) ---
+  // --- SOUND LOOP ---
   useEffect(() => {
     if (chirpTimerRef.current) clearInterval(chirpTimerRef.current);
-
-    // Siren: 1s Sound + Xs Silence. Default 5s silence.
-    const silenceSec = user?.settings?.appSirenSilence || 5;
-    const sirenLoopMs = 1000 + (silenceSec * 1000);
-
-    // Chirp: Default 2 mins
+    const sirenMs = (user?.settings?.appSirenSilence || 5) * 1000 + 1000;
     const chirpMs = (user?.settings?.appChirpInterval || 2) * 60 * 1000;
 
     let intervalId = null;
-
     if (isAlarmActive) {
       playTone('SIREN');
-      intervalId = setInterval(() => playTone('SIREN'), sirenLoopMs);
+      intervalId = setInterval(() => playTone('SIREN'), sirenMs);
     } else if (isChirpActive) {
       playTone('CHIRP');
       intervalId = setInterval(() => playTone('CHIRP'), chirpMs);
     }
-
     chirpTimerRef.current = intervalId;
     return () => { if (intervalId) clearInterval(intervalId); };
   }, [isAlarmActive, isChirpActive, user?.settings]);
 
   // --- 🔔 NOTIFICATION LOGIC ---
   useEffect(() => {
-    // 1. ALARM (Red)
     if (isAlarmActive) {
       if (!alarmDismissed) {
-        setNotification({ type: 'ALARM', message: alarmSources.length ? `ALARM:\n${alarmSources.join('\n')}` : "SYSTEM ALARM" });
+        setNotification({
+          type: alarmType,
+          message: alarmSources.length ? alarmSources.join('\n') : "SYSTEM ALARM"
+        });
       } else {
         setNotification(null);
       }
     }
-    // 2. CHIRP (Blue)
     else if (isChirpActive) {
-      // Logic reset: If alarm clears, red dismiss is reset for next time
-      setAlarmDismissed(false);
-
+      setAlarmDismissed(false); // Clear alarm dismiss when alarm clears
       if (!reminderDismissed) {
         setNotification({ type: 'INFO', message: "System Active but Buzzer MUTED." });
       } else {
         setNotification(null);
       }
     }
-    // 3. CLEAN
     else {
       setAlarmDismissed(false);
       setReminderDismissed(false);
       setNotification(null);
     }
-  }, [isAlarmActive, isChirpActive, alarmSources, alarmDismissed, reminderDismissed]);
+  }, [isAlarmActive, isChirpActive, alarmSources, alarmDismissed, reminderDismissed, alarmType]);
 
   const handleUnreadChange = (unread, notes) => { setUnreadCount(unread); if (notes !== null) setHasNotes(notes > 0); };
 
@@ -246,20 +249,18 @@ function Dashboard() {
   return (
     <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20" onClick={wakeAudio} onTouchStart={wakeAudio}>
 
-      {/* NOTIFICATION BANNER */}
       {notification && (
         <NotificationBanner
           type={notification.type}
           message={notification.message}
           onDismiss={() => {
-            if (notification.type === 'ALARM') setAlarmDismissed(true);
+            if (notification.type === 'ALARM' || notification.type === 'BURGLAR') setAlarmDismissed(true);
             if (notification.type === 'INFO') setReminderDismissed(true);
             setNotification(null);
           }}
         />
       )}
 
-      {/* FLASH VIEWER */}
       {flashMessages.length > 0 && (
         <FlashViewer
           messages={flashMessages}
@@ -269,7 +270,6 @@ function Dashboard() {
         />
       )}
 
-      {/* SHARE MODAL */}
       {shareModalOpen && shareTargetNote && (
         <ShareModal
           note={shareTargetNote}
@@ -282,7 +282,7 @@ function Dashboard() {
 
       {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
-
+        {/* ... (Header Content Same as Before) ... */}
         {/* Left Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
@@ -305,7 +305,7 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Center Clock/Weather */}
+        {/* Center */}
         <div className="flex-grow flex flex-col items-center justify-center gap-2">
           <Clock />
           <Weather />
@@ -313,8 +313,6 @@ function Dashboard() {
 
         {/* Right Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
-
-          {/* 1. CONTROLS (Left of Messages) */}
           {systemState.currentUser !== user?.username && (
             user?.can_control ?
               <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">Take Control</button>
@@ -323,44 +321,18 @@ function Dashboard() {
 
           {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2 shrink-0">
-              <button
-                onClick={releaseToServer}
-                className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"
-              >
-                <Cloud size={16} /> ➜ SERVER
-              </button>
-
-              {systemState.mainControllerOnline && (
-                <button
-                  onClick={releaseToCabane}
-                  className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"
-                >
-                  <Cloud size={16} /> ➜ CABANE
-                </button>
-              )}
+              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
+              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
             </div>
           )}
 
-          {/* 2. MESSAGES */}
-          <button
-            onClick={() => setShowMessageDrawer(true)}
-            className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
-            title="Messages"
-          >
-            <Mail size={20} />
-            {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}
-          </button>
-
+          <button onClick={() => setShowMessageDrawer(true)} className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`} title="Messages"><Mail size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}</button>
           {hasNotes && <div className="text-yellow-400 animate-pulse shrink-0" title="You have reminders"><StickyNote size={20} /></div>}
 
-          {/* 3. SETTINGS/LOGOUT */}
           <div className="flex items-center gap-0 bg-gray-800 rounded-lg border border-gray-700 ml-2 overflow-hidden group hover:border-gray-500 shrink-0">
-            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings">
-              <Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
+            <button onClick={() => setShowSettings(true)} className="px-4 py-3 text-xs text-gray-300 font-bold border-r border-gray-700 flex items-center gap-2 hover:bg-gray-700 hover:text-white transition-colors" title="Settings"><Settings size={16} className="text-blue-400" /> {user?.username || "GUEST"}
             </button>
-            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title="Logout">
-              <LogOut size={18} />
-            </button>
+            <button onClick={logout} className="p-3 hover:bg-red-900/50 text-gray-400 hover:text-red-400 transition-colors" title="Logout"><LogOut size={18} /></button>
           </div>
         </div>
       </div>
@@ -374,7 +346,6 @@ function Dashboard() {
         ))}
       </div>
 
-      {/* MODALS */}
       <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} />
       <MessageDrawer isOpen={showMessageDrawer} onClose={() => setShowMessageDrawer(false)} onUnreadChange={handleUnreadChange} />
     </div>
