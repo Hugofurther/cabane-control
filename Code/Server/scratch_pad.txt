@@ -521,11 +521,13 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ When resizing the StationCard and the card's title becomes 3 lines, the title gets stacked over the horizontal line. Can we fix this so the title doesn't get displayed over that horizontal line.
 
+√ I would like to give the user to select between 2 languages ( French / English) for the UI. How should we go about this. I would need to verify each translations. What is the standard procedure for this type of of implementation?
+
 ---
 
 REQUESTED
-
-- I would like to give the user to select between 2 languages ( French / English) for the UI. How should we go about this. I would need to verify each translations. What is the standard procedure for this type of of implementation?
+Verify with Station Controller & Main Controller
+- Station broadcast on different port.
 
 
 
@@ -533,6 +535,10 @@ REQUESTED
 ---
 
 NEXT
+
+- I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
+
+- Can we have the Disable / Enable station in AdminPanel propagate to the Main Controller's EEPROM like we did for the buzzer configuration?
 
 - The OFFLINE label on Station Cards is a bit too close vertically from "Station x" title. Can we add a tiny bit of bottom padding to it, or whatever is the best thing to do.
 
@@ -609,7 +615,7 @@ WEATHER
 -----------------------------------
 SERVER
 
-- I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
+
 
 - The admin should be able to update the Server and the React app from the app. Download the update first, then when verified, update the React app and / or the Server. Then reboot automatically.
 
@@ -648,6 +654,8 @@ CONNECTION
 
 -----------------------------------
 ARDUINO
+
+
 
 - Verify the stations behaviors when disconnecting the Main Controller while the server is UP
 
@@ -967,11 +975,19 @@ Can you please give me a detailed explanation of the work we did on this branch 
 
 ---
 
-In the next few messages, I will give you the code for the new files or updated files. Please update your knowledge with these updates and work with these updates from now on. No need to respond, I will let you know when I'm done sending you the code with the keyword "finished".
+Here is the detailed summary of the work completed in another branch. Please read carefully, understand and update your knowledge with the updated files.
 
 ---
 
+In the next few messages, I will give you the code for the new files or updated files. Please update your knowledge with these updates and work with these updates from now on. No need to respond, I will let you know when I'm done sending you the code with the keyword "finished".
 
+---
+<>
+````Code
+````
+</
+
+---
 
 ---
 

@@ -1,16 +1,15 @@
 /*
   ==============================================================
-  STATION CONTROLLER — FIRMWARE v3.4
+  STATION CONTROLLER — FIRMWARE v3.5-SplitPort
   Slave execution unit for Cabane Control System
 
   Updates:
-  - RETENTIVE STATE: Relays hold last state if Disabled or Offline
-  - Broadcast Feedback to x.x.x.255
-  - Fixed Display Logic
+  - SPLIT PORT: Listen on 8888, Send to 8889
+  - Traffic Optimization: Ignores feedback from other stations
   ==============================================================
 */
 
-#define FIRMWARE_VERSION "v3.4-Retentive"
+#define FIRMWARE_VERSION "v3.5-SplitPort"
 #define HAS_TM1637 1
 #define DEBUG_SERIAL 1
 
@@ -37,7 +36,11 @@ const uint8_t IN_PINS[5] = {A1, A2, A3, A4, A5};
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x02, 0x10};
 IPAddress ipBroadcast(192, 168, 1, 255);
 IPAddress ip(192, 168, 1, 211);
-const uint16_t UDP_PORT = 8888;
+
+// ✅ NEW: Split Ports
+const uint16_t PORT_CMD = 8888; // Listen here (Commands)
+const uint16_t PORT_FB = 8889;  // Send here (Feedback)
+
 EthernetUDP Udp;
 
 uint8_t STATION_ID = 0;
@@ -85,7 +88,9 @@ void initEthernet(bool fullReset)
   mac[5] = 0x10 + STATION_ID;
   Ethernet.init(ETH_CS);
   Ethernet.begin(mac, localIp);
-  Udp.begin(UDP_PORT);
+
+  // ✅ LISTEN ONLY ON COMMAND PORT
+  Udp.begin(PORT_CMD);
 }
 void reconfigureNetwork(bool fullReset)
 {
@@ -251,12 +256,9 @@ void loop()
         {
           uint8_t cmd = buf[3 + STATION_ID];
 
-          // ✅ RETENTIVE LOGIC:
-          // If Bit 7 (Disabled) is set, change Display Mode but DO NOT change relays.
           if (cmd & 0x80)
           {
             displayMode = DISP_DISABLED;
-            // applyRelays(0); // <--- REMOVED to hold state
           }
           else
           {
@@ -271,7 +273,6 @@ void loop()
     if (displayMode != DISP_DISABLED && (now - lastCmdMs > CMD_WATCHDOG_MS))
     {
       displayMode = DISP_ERROR;
-      // Note: We do NOT call applyRelays(0) here, so state holds during timeout
       if (now - lastCmdMs > 10000)
       {
         reconfigureNetwork(false);
@@ -289,7 +290,10 @@ void loop()
     uint8_t invBits = ~currentBits;
     uint8_t fb[5] = {0xAC, STATION_ID, invBits, 0x00, 0};
     fb[4] = xorChecksum(fb, 4);
-    Udp.beginPacket(ipBroadcast, UDP_PORT);
+
+    // ✅ NEW: Send Feedback to PORT_FB (8889)
+    // Other stations listen on 8888, so they won't see this.
+    Udp.beginPacket(ipBroadcast, PORT_FB);
     Udp.write(fb, 5);
     Udp.endPacket();
   }

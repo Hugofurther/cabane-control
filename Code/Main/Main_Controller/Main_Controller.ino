@@ -1,20 +1,17 @@
 /*
   ==========================================================================================
-  MAIN CONTROLLER — FIRMWARE v4.8
+  MAIN CONTROLLER — FIRMWARE v5.0-SplitPort
 
   UPDATES:
-  - Dynamic Burglar Alarm Configuration (Off, ST2, or ST3) via App
-  - Expanded Config Packet (0xCF) to 6 bytes
-  - Logic checks specific assigned station for intrusion
+  - DUAL SOCKETS: Listens on 8888 (Pi Commands) AND 8889 (Station Feedback)
   ==========================================================================================
 */
 
-#define FIRMWARE_VERSION "v4.8-DynBurglar"
+#define FIRMWARE_VERSION "v5.0-SplitPort"
 #define DEBUG_SERIAL 1
 #define DEBUG_LEVEL 3
 #define BUZZER_REMINDER 1
 #define ENABLE_VEGAS_MODE 1
-// Note: ENABLE_BURGLAR_ALARM removed in favor of dynamic cfgBurglarStation
 
 #include <SPI.h>
 #include <Ethernet.h>
@@ -32,38 +29,36 @@ Adafruit_MCP23X17 mcp;
 
 #define ETH_CS 48
 #define ETH_RESET 49
-const uint16_t UDP_PORT = 8888;
-EthernetUDP Udp;
+
+// ✅ NEW: Split Ports
+const uint16_t PORT_CMD = 8888;
+const uint16_t PORT_FB = 8889;
+
+EthernetUDP UdpCmd; // Handles 8888 (Recv from Pi, Send Global)
+EthernetUDP UdpFb;  // Handles 8889 (Recv from Stations)
+
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 IPAddress ipBroadcast(192, 168, 1, 255);
-IPAddress ipServer(192, 168, 1, 200);
 IPAddress ipMain(192, 168, 1, 220);
 
 // --- BUZZER CONFIGURATION ---
 #define PIN_BUZZER 2
 #define BUZZER_ALERT_MODE 1
 
-// Configurable Variables (Loaded from EEPROM)
 uint32_t cfgAlarmOnMs = 5000;
 uint32_t cfgAlarmOffMs = 10000;
 uint32_t cfgReminderPeriodMs = 120000;
 const uint32_t REMINDER_ON_MS = 500;
-
-// ✅ NEW: Burglar Config (0=Disabled, 2=ST2, 3=ST3)
 uint8_t cfgBurglarStation = 0;
 
-// EEPROM Addresses
-#define EEPROM_CFG_BASE 100
 #define EEPROM_ALARM_ON 100
 #define EEPROM_ALARM_OFF 101
 #define EEPROM_REMINDER 102
-#define EEPROM_BURGLAR_STATION 103 // ✅ NEW ADDRESS
+#define EEPROM_BURGLAR_STATION 103
 
-// Timers
 uint32_t buzzerAlarmStart = 0;
 uint32_t buzzerReminderStart = 0;
 
-// --- STATE & IO ---
 bool anyVacuumAlert = false;
 bool burglarAlarmActive = false;
 bool st2_intruder = false;
@@ -88,7 +83,6 @@ const uint8_t PHYS_SW_PINS[NUM_INPUTS] = {62, 63, 64, 65, 66, 67, 68, 69};
 const uint8_t LED_A[NUM_LED_PAIRS] = {4, 6, 8, 10, 12, 14, 16, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 54, 56, 58, 60};
 const uint8_t LED_B[NUM_LED_PAIRS] = {5, 7, 9, 11, 13, 15, 17, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 55, 57, 59, 61};
 
-// --- MAPPINGS ---
 struct InputMap
 {
   uint8_t index;
@@ -136,7 +130,6 @@ const LedMap LED_MAP[] = {
 };
 const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
 
-// --- MACROS ---
 #define LED_RED(idx, on) digitalWrite(LED_A[idx], (on))
 #define LED_GREEN(idx, on) digitalWrite(LED_B[idx], (on))
 #define LED_PAIR(idx, redOn, greenOn)    \
@@ -147,10 +140,8 @@ const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
   } while (0)
 
 #define VEGAS_DELAY_MS 60
-#define VEGAS_FLASHES 3
 const uint32_t LONGPRESS_MS = 5000;
 
-// --- GLOBALS ---
 bool stationEnabled[NUM_STATIONS] = {true};
 bool stationOffline[NUM_STATIONS] = {false};
 uint8_t stationFeedback[NUM_STATIONS] = {0};
@@ -159,7 +150,6 @@ bool pressActive[NUM_STATIONS] = {false};
 uint32_t pressStart[NUM_STATIONS] = {0};
 const uint8_t stationButtonIndex[NUM_STATIONS] = {0, 1, 8, 12, 16, 19};
 
-// Thermostat
 #define ENABLE_THERMOSTAT true
 const uint8_t TH_SWITCH_IDX[2] = {22, 23};
 const uint8_t TH_LED_PAIR[2] = {22, 23};
@@ -172,18 +162,14 @@ const uint8_t TH_OVERRIDE_COUNT[2] = {3, 1};
 bool thermostatEnabled[2] = {false, false};
 bool thermostatActive[2] = {false, false};
 
-// Buzzer Config
 const uint8_t BUZZER_SWITCH_IDX = 21;
 #define BUZZER_LED_PAIR 21
 
-// Runtime
 volatile bool mcpIntA_Flag = false;
 volatile bool mcpIntB_Flag = false;
 uint8_t mcpStateA = 0xFF;
 uint8_t mcpStateB = 0xFF;
 
-// Timing
-const uint16_t SEND_INTERVAL_MS = 50;
 const uint16_t LINK_CHECK_INTERVAL = 250;
 const uint16_t HEARTBEAT_TIMEOUT_MS = 2000;
 const uint16_t BLINK_INTERVAL_MS = 250;
@@ -193,9 +179,7 @@ uint32_t lastLinkCheck = 0;
 uint32_t tBlink = 0;
 bool blinkPhase = false;
 
-// ============================================================
-// 🧩 UTILS
-// ============================================================
+// ... [UTILS SAME] ...
 void readMcpA()
 {
   while (digitalRead(MCP_INTA_PIN) == LOW)
@@ -231,14 +215,8 @@ void digitalWriteAll(const uint8_t *pins, uint8_t count, bool state)
   for (uint8_t i = 0; i < count; i++)
     digitalWrite(pins[i], state);
 }
-
-// ============================================================
-// 🔍 HELPER: Check if System is Running
-// ============================================================
 bool isSystemRunning()
 {
-  if (((stationFeedback[1] >> 2) & 1) == 0 && stationEnabled[1])
-    return true;
   if (((stationFeedback[1] >> 2) & 1) == 0 && stationEnabled[1])
     return true;
   if (((stationFeedback[2] >> 1) & 1) == 0 && stationEnabled[2])
@@ -250,50 +228,26 @@ bool isSystemRunning()
   return false;
 }
 
-// ============================================================
-// 💾 CONFIGURATION LOAD/SAVE
-// ============================================================
 void loadConfig()
 {
   uint8_t aOn = EEPROM.read(EEPROM_ALARM_ON);
   uint8_t aOff = EEPROM.read(EEPROM_ALARM_OFF);
   uint8_t remMin = EEPROM.read(EEPROM_REMINDER);
-
-  // ✅ NEW: Burglar Source
   uint8_t burgSt = EEPROM.read(EEPROM_BURGLAR_STATION);
-
-  // Defaults
   cfgAlarmOnMs = (aOn == 0xFF) ? 5000 : (uint32_t)aOn * 1000;
   cfgAlarmOffMs = (aOff == 0xFF) ? 10000 : (uint32_t)aOff * 1000;
   cfgReminderPeriodMs = (remMin == 0xFF) ? 120000 : (uint32_t)remMin * 60000;
-  cfgBurglarStation = (burgSt == 0xFF) ? 0 : burgSt; // Default 0 (Disabled)
-
-  // Safety
+  cfgBurglarStation = (burgSt == 0xFF) ? 0 : burgSt;
   if (cfgAlarmOnMs < 1000)
     cfgAlarmOnMs = 1000;
   if (cfgAlarmOffMs < 1000)
     cfgAlarmOffMs = 1000;
   if (cfgReminderPeriodMs < 60000)
     cfgReminderPeriodMs = 60000;
-  // Burglar station must be 0, 2, or 3
   if (cfgBurglarStation != 0 && cfgBurglarStation != 2 && cfgBurglarStation != 3)
     cfgBurglarStation = 0;
-
-#if DEBUG_SERIAL
-  Serial.print(F("[CFG] On="));
-  Serial.print(cfgAlarmOnMs);
-  Serial.print(F(" Off="));
-  Serial.print(cfgAlarmOffMs);
-  Serial.print(F(" Rem="));
-  Serial.print(cfgReminderPeriodMs);
-  Serial.print(F(" BurgSt="));
-  Serial.println(cfgBurglarStation);
-#endif
 }
 
-// ============================================================
-// 🔔 BUZZER LOGIC
-// ============================================================
 void updateBuzzerLED(uint32_t now)
 {
   if (Ethernet.linkStatus() != LinkON)
@@ -301,15 +255,12 @@ void updateBuzzerLED(uint32_t now)
     digitalWrite(PIN_BUZZER, LOW);
     return;
   }
-
   bool switchOn = stableState[BUZZER_SWITCH_IDX];
   bool alert = anyVacuumAlert || burglarAlarmActive;
-
   if (alert)
   {
     buzzerReminderStart = 0;
     LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
-
     if (switchOn)
     {
       if (buzzerAlarmStart == 0)
@@ -330,11 +281,9 @@ void updateBuzzerLED(uint32_t now)
     }
     return;
   }
-
   buzzerAlarmStart = 0;
   digitalWrite(PIN_BUZZER, LOW);
   LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
-
 #if BUZZER_REMINDER
   if (!switchOn && isSystemRunning())
   {
@@ -362,9 +311,6 @@ void updateBuzzerLED(uint32_t now)
   buzzerReminderStart = 0;
 }
 
-// ============================================================
-// 🌐 LED & LINK LOGIC
-// ============================================================
 void updateEthernetAndLEDs(uint32_t now)
 {
   static bool linkDown = false;
@@ -379,33 +325,20 @@ void updateEthernetAndLEDs(uint32_t now)
     digitalWriteAll(LED_A, NUM_LED_PAIRS, blinkPhase);
     return;
   }
-
   anyVacuumAlert = false;
-
-  // ✅ DYNAMIC BURGLAR CHECK
   burglarAlarmActive = false;
   st2_intruder = false;
   st3_intruder = false;
-
-  if (cfgBurglarStation == 2)
+  if (cfgBurglarStation == 2 && stationEnabled[2] && ((stationFeedback[2] >> 4) & 1))
   {
-    // Check if ST2 Enabled and Bit 4 Active
-    if (stationEnabled[2] && ((stationFeedback[2] >> 4) & 1))
-    {
-      st2_intruder = true;
-      burglarAlarmActive = true;
-    }
+    st2_intruder = true;
+    burglarAlarmActive = true;
   }
-  else if (cfgBurglarStation == 3)
+  else if (cfgBurglarStation == 3 && stationEnabled[3] && ((stationFeedback[3] >> 4) & 1))
   {
-    // Check if ST3 Enabled and Bit 4 Active
-    if (stationEnabled[3] && ((stationFeedback[3] >> 4) & 1))
-    {
-      st3_intruder = true;
-      burglarAlarmActive = true;
-    }
+    st3_intruder = true;
+    burglarAlarmActive = true;
   }
-
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
   {
     const LedMap &m = LED_MAP[i];
@@ -419,16 +352,11 @@ void updateEthernetAndLEDs(uint32_t now)
       LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, blinkPhase ? LOW : HIGH);
       continue;
     }
-
-    // ✅ BURGLAR VISUALS (Priority)
-    // Only flash if this specific station is the one triggered
     if ((st2_intruder && m.station == 2) || (st3_intruder && m.station == 3))
     {
-      // ✅ CHANGED: Red Blink Only (Was Red/Green)
       LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, LOW);
       continue;
     }
-
     bool bitVal = (stationFeedback[m.station] >> m.bit) & 1;
     bool isCommandedOn = stableState[m.switchIndex];
 #if ENABLE_THERMOSTAT
@@ -457,7 +385,6 @@ void updateEthernetAndLEDs(uint32_t now)
   }
 }
 
-// ... [HELPERS SAME] ...
 void updateThermostatStatus()
 {
   if (!ENABLE_THERMOSTAT)
@@ -490,6 +417,7 @@ void updateThermostatStatus()
     }
   }
 }
+
 void runVegasMode()
 {
   if (!ENABLE_VEGAS_MODE)
@@ -520,6 +448,7 @@ void runVegasMode()
   for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
     LED_PAIR(i, LOW, LOW);
 }
+
 void initEthernet()
 {
   SPI.begin();
@@ -530,10 +459,15 @@ void initEthernet()
   delay(800);
   Ethernet.init(ETH_CS);
   Ethernet.begin(mac, ipMain);
-  Udp.begin(UDP_PORT);
+
+  // ✅ LISTEN ON BOTH PORTS
+  UdpCmd.begin(PORT_CMD); // 8888
+  UdpFb.begin(PORT_FB);   // 8889
+
   Ethernet.setRetransmissionCount(1);
   Ethernet.setRetransmissionTimeout(200);
 }
+
 inline uint8_t xorChecksum(const uint8_t *d, uint8_t l)
 {
   uint8_t c = 0;
@@ -549,7 +483,6 @@ inline uint8_t packBitsLSB(const bool *arr, uint8_t n)
   return v;
 }
 
-// ... [PACKET HANDLING] ...
 void sendGlobalCommands()
 {
   uint8_t packet[10];
@@ -603,9 +536,11 @@ void sendGlobalCommands()
     packet[3 + st] = packBitsLSB(bits, bitCount);
   }
   packet[9] = xorChecksum(packet, 9);
-  Udp.beginPacket(ipBroadcast, UDP_PORT);
-  Udp.write(packet, 10);
-  Udp.endPacket();
+
+  // ✅ SEND TO COMMAND PORT (8888)
+  UdpCmd.beginPacket(ipBroadcast, PORT_CMD);
+  UdpCmd.write(packet, 10);
+  UdpCmd.endPacket();
 }
 
 void sendPhysicalState()
@@ -618,43 +553,28 @@ void sendPhysicalState()
   }
   uint8_t packet[7] = {0xB1, 0x01, payload[0], payload[1], payload[2], (uint8_t)(remoteOverrideActive ? 1 : 0), 0};
   packet[6] = xorChecksum(packet, 6);
-  Udp.beginPacket(ipBroadcast, UDP_PORT);
-  Udp.write(packet, 7);
-  Udp.endPacket();
+
+  // ✅ SEND TO COMMAND PORT (8888)
+  UdpCmd.beginPacket(ipBroadcast, PORT_CMD);
+  UdpCmd.write(packet, 7);
+  UdpCmd.endPacket();
 }
 
 void processHeartbeatAndFeedback(uint32_t now)
 {
   int count = 0;
-  while (Udp.parsePacket() > 0 && count < 10)
+
+  // ✅ 1. CHECK COMMAND PORT (Pi -> Main)
+  while (UdpCmd.parsePacket() > 0 && count < 10)
   {
     count++;
     uint8_t buf[16];
-    int n = Udp.read(buf, sizeof(buf));
+    int n = UdpCmd.read(buf, sizeof(buf));
     if (n < 3)
       continue;
-    if (buf[0] == 0xAB && n >= 4)
-    {
-      uint8_t id = buf[1];
-      if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
-      {
-        lastHeartbeatMs[id] = now;
-        stationOffline[id] = false;
-        if (!firstHeartbeatSeen[id])
-          firstHeartbeatSeen[id] = true;
-      }
-    }
-    else if (buf[0] == 0xAC && n >= 5)
-    {
-      uint8_t id = buf[1];
-      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
-      {
-        stationFeedback[id] = buf[2];
-        lastHeartbeatMs[id] = now;
-        stationOffline[id] = false;
-      }
-    }
-    else if (buf[0] == 0xAF && n >= 3)
+
+    // Override Request (0xAF)
+    if (buf[0] == 0xAF && n >= 3)
     {
       if ((buf[0] ^ buf[1]) == buf[2])
       {
@@ -662,6 +582,7 @@ void processHeartbeatAndFeedback(uint32_t now)
         lastServerPacketMs = now;
       }
     }
+    // Remote Data (0xB0)
     else if (buf[0] == 0xB0 && n >= 5)
     {
       if ((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4] && remoteOverrideActive)
@@ -673,8 +594,7 @@ void processHeartbeatAndFeedback(uint32_t now)
         lastServerPacketMs = now;
       }
     }
-
-    // ✅ NEW: 6-BYTE CONFIG PACKET [0xCF] [On] [Off] [Rem] [BurgSt] [Cks]
+    // Config Packet (0xCF)
     else if (buf[0] == 0xCF && n >= 6)
     {
       uint8_t onSec = buf[1];
@@ -682,20 +602,54 @@ void processHeartbeatAndFeedback(uint32_t now)
       uint8_t remMin = buf[3];
       uint8_t burgSt = buf[4];
       uint8_t calcChecksum = buf[0] ^ buf[1] ^ buf[2] ^ buf[3] ^ buf[4];
-
       if (buf[5] == calcChecksum)
       {
         EEPROM.update(EEPROM_ALARM_ON, onSec);
         EEPROM.update(EEPROM_ALARM_OFF, offSec);
         EEPROM.update(EEPROM_REMINDER, remMin);
         EEPROM.update(EEPROM_BURGLAR_STATION, burgSt);
-        loadConfig(); // Reload
+        loadConfig();
+      }
+    }
+  }
+
+  // ✅ 2. CHECK FEEDBACK PORT (Stations -> Main)
+  count = 0;
+  while (UdpFb.parsePacket() > 0 && count < 10)
+  {
+    count++;
+    uint8_t buf[16];
+    int n = UdpFb.read(buf, sizeof(buf));
+    if (n < 3)
+      continue;
+
+    // Heartbeat (0xAB)
+    if (buf[0] == 0xAB && n >= 4)
+    {
+      uint8_t id = buf[1];
+      if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
+      {
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
+        if (!firstHeartbeatSeen[id])
+          firstHeartbeatSeen[id] = true;
+      }
+    }
+    // Feedback (0xAC)
+    else if (buf[0] == 0xAC && n >= 5)
+    {
+      uint8_t id = buf[1];
+      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
+      {
+        stationFeedback[id] = buf[2];
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
       }
     }
   }
 }
 
-// ... [EEPROM & LOOPS] ...
+// ... [EEPROM, LOOPS, SETUP same as before] ...
 void loadStationStatesFromEEPROM()
 {
   for (uint8_t i = 0; i < NUM_STATIONS; i++)
@@ -800,7 +754,9 @@ void loop()
     if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
       stableState[m.index] = rawState[m.index];
   }
+
   processHeartbeatAndFeedback(now);
+
   for (uint8_t id = 0; id < NUM_STATIONS; id++)
   {
     if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
