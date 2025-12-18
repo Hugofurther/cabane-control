@@ -20,7 +20,7 @@ const state = {
     disabledStations: []
 };
 
-// ✅ NEW: Cache Config to sync on reconnect
+// Cache Config
 let cachedConfig = {
     onSec: 5,
     offSec: 10,
@@ -28,9 +28,7 @@ let cachedConfig = {
     burgSt: 0
 };
 
-// State Diffing
 let lastPushedStateStr = "";
-
 let controlHandshakeConfirmed = false;
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
@@ -74,6 +72,18 @@ function logSystemEvent(type, message) {
     if (ioRef) ioRef.emit('NEW_LOG', { id: Date.now(), timestamp, user_id: null, username: 'SYSTEM', type, message });
 }
 
+// ✅ HELPER: Calculate Bitmask
+function getStationMask() {
+    let mask = 0;
+    for (let i = 0; i < 6; i++) {
+        // If ID is NOT in disabled list, it's ENABLED (1)
+        if (!state.disabledStations.includes(i)) {
+            mask |= (1 << i);
+        }
+    }
+    return mask;
+}
+
 function init(io) {
     ioRef = io;
     db.all("SELECT key, value FROM system_settings", (err, rows) => {
@@ -83,7 +93,6 @@ function init(io) {
                 if (row.key === 'disabled_stations') {
                     try { state.disabledStations = JSON.parse(row.value); } catch (e) { }
                 }
-                // ✅ Load Initial Config into Cache
                 if (row.key === 'buzzer_alarm_on') cachedConfig.onSec = parseInt(row.value) || 5;
                 if (row.key === 'buzzer_alarm_off') cachedConfig.offSec = parseInt(row.value) || 10;
                 if (row.key === 'buzzer_reminder_min') cachedConfig.remMin = parseInt(row.value) || 2;
@@ -97,20 +106,31 @@ function init(io) {
 
 function getFullState() { return state; }
 function updateTimezone(newTz) { state.timezone = newTz; pushUpdate(); }
+
+// ✅ UPDATED: Trigger Config Sync when Disabled list changes
 function updateDisabled(jsonStr) {
-    try { state.disabledStations = JSON.parse(jsonStr); pushUpdate(); } catch (e) { }
+    try {
+        state.disabledStations = JSON.parse(jsonStr);
+        // Sync to Arduino immediately
+        pushConfigToArduino();
+        pushUpdate();
+    } catch (e) { console.error("Update Disabled Failed:", e); }
 }
 
+// ✅ UPDATED: Unified Config Push
 function updateConfig(onSec, offSec, remMin, burgSt) {
     if (onSec > 0 && offSec > 0 && remMin > 0) {
-        // ✅ Update Cache
         cachedConfig = { onSec, offSec, remMin, burgSt };
-
-        // Send immediately (Best effort)
-        udpService.sendConfigPacket(onSec, offSec, remMin, burgSt);
-        console.log(`[LOGIC] Sent Config: On=${onSec}s, Off=${offSec}s, Rem=${remMin}m, Burg=${burgSt}`);
+        pushConfigToArduino();
         pushUpdate();
     }
+}
+
+// ✅ NEW: Helper to send full config (Buzzer + Station Mask)
+function pushConfigToArduino() {
+    const mask = getStationMask();
+    udpService.sendConfigPacket(cachedConfig.onSec, cachedConfig.offSec, cachedConfig.remMin, cachedConfig.burgSt, mask);
+    console.log(`[LOGIC] Sent Config: On=${cachedConfig.onSec}s, Off=${cachedConfig.offSec}s, Mask=${mask.toString(2).padStart(6, '0')}`);
 }
 
 function applyThermostatOverrides() {
@@ -134,15 +154,14 @@ function applyThermostatOverrides() {
 function updatePhysicalState(switchBytes, isOverrideActive) {
     state.lastMainHeartbeat = Date.now();
 
-    // 1. Detect Reconnection (Offline -> Online)
     if (!state.mainControllerOnline) {
         state.mainControllerOnline = true;
         console.log("[SYNC] 🟢 Main Controller RECONNECTED. Forcing CABANE Mode.");
         logSystemEvent('SYSTEM', "Main Controller Online. Restoring Physical Control.");
 
-        // ✅ SYNC CONFIGURATION TO MAIN CONTROLLER
-        console.log("[SYNC] Pushing cached config to Main Controller...");
-        udpService.sendConfigPacket(cachedConfig.onSec, cachedConfig.offSec, cachedConfig.remMin, cachedConfig.burgSt);
+        // ✅ SYNC ON RECONNECT
+        console.log("[SYNC] Pushing settings to Main Controller...");
+        pushConfigToArduino();
 
         state.controller = 'CABANE';
         state.currentUser = null;
@@ -216,6 +235,10 @@ function takeControl(username) {
 }
 
 function releaseToServer() {
+    if (!state.mainControllerOnline) {
+        takeControl('SYSTEM_FAILSAFE');
+        return;
+    }
     state.controller = 'SERVER';
     state.currentUser = null;
     lastControlTakeTime = Date.now();
@@ -225,8 +248,7 @@ function releaseToServer() {
 
 function releaseToCabane() {
     if (!state.mainControllerOnline) {
-        console.warn("[CONTROL] Cannot release to Cabane (Offline). Defaulting to SERVER.");
-        releaseToServer();
+        takeControl('SYSTEM_FAILSAFE');
         return;
     }
     state.controller = 'CABANE';
@@ -252,7 +274,6 @@ function controlLoop() {
 
     if (applyThermostatOverrides()) stateChanged = true;
 
-    // Vacuum Alarms
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
         if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) return;
@@ -267,7 +288,6 @@ function controlLoop() {
         stateChanged = true; alarmCycleStart = now;
     }
 
-    // Burglar Check (Local state)
     let burgDetected = false;
     if (cachedConfig.burgSt === 2 && state.stationOnline[2]) {
         if ((state.stationFeedback[2] >> 4) & 1) burgDetected = true;
@@ -281,7 +301,6 @@ function controlLoop() {
         stateChanged = true;
     }
 
-    // Audio Logic
     const isSirenCondition = (state.globalVacuumAlarm || state.burglarAlarm) && state.buzzerEnabled;
     const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
     const isChirpCondition = !state.globalVacuumAlarm && !state.burglarAlarm && !state.buzzerEnabled && anyVacuumRunning;
@@ -331,9 +350,7 @@ function checkHeartbeats() {
         console.log("[FAILSAFE] Main Controller Timed Out. Marking OFFLINE.");
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
         state.mainControllerOnline = false;
-
         if (state.controller === 'CABANE') {
-            console.log("[FAILSAFE] Auto-switching to SERVER.");
             state.controller = 'SERVER';
             state.currentUser = null;
             udpService.sendOverrideCommand(1);

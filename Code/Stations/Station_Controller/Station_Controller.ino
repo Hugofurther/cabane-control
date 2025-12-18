@@ -1,15 +1,15 @@
 /*
   ==============================================================
-  STATION CONTROLLER — FIRMWARE v3.5-SplitPort
-  Slave execution unit for Cabane Control System
+  STATION CONTROLLER — FIRMWARE v5.2-ConflictCheck
 
-  Updates:
-  - SPLIT PORT: Listen on 8888, Send to 8889
-  - Traffic Optimization: Ignores feedback from other stations
+  UPDATES:
+  - Auto-Increment ID on conflict (Arbiter Logic)
+  - Uses Port 8888 for Handshake (Command Port)
+  - Uses Port 8889 for Feedback
   ==============================================================
 */
 
-#define FIRMWARE_VERSION "v3.5-SplitPort"
+#define FIRMWARE_VERSION "v5.2-ConflictCheck"
 #define HAS_TM1637 1
 #define DEBUG_SERIAL 1
 
@@ -35,11 +35,10 @@ const uint8_t IN_PINS[5] = {A1, A2, A3, A4, A5};
 #define ETH_RST A0
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x02, 0x10};
 IPAddress ipBroadcast(192, 168, 1, 255);
-IPAddress ip(192, 168, 1, 211);
 
-// ✅ NEW: Split Ports
-const uint16_t PORT_CMD = 8888; // Listen here (Commands)
-const uint16_t PORT_FB = 8889;  // Send here (Feedback)
+// ✅ PORTS
+const uint16_t PORT_CMD = 8888; // Listen here, Send Handshake here
+const uint16_t PORT_FB = 8889;  // Send Feedback here
 
 EthernetUDP Udp;
 
@@ -58,7 +57,7 @@ enum DisplayMode
   DISP_ERROR,
   DISP_LINK,
   DISP_DISABLED,
-  DISP_NETCFG
+  DISP_CHECKING
 };
 DisplayMode displayMode = DISP_NORMAL;
 bool displayFlash = false;
@@ -71,7 +70,8 @@ uint8_t xorChecksum(const uint8_t *data, uint8_t len)
     c ^= data[i];
   return c;
 }
-void initEthernet(bool fullReset)
+
+void initEthernet(bool fullReset, uint8_t tempId)
 {
   if (fullReset)
   {
@@ -84,19 +84,78 @@ void initEthernet(bool fullReset)
     digitalWrite(ETH_RST, HIGH);
     delay(800);
   }
-  IPAddress localIp(192, 168, 1, 210 + STATION_ID);
-  mac[5] = 0x10 + STATION_ID;
+  // IP depends on ID
+  IPAddress localIp(192, 168, 1, 210 + tempId);
+  mac[5] = 0x10 + tempId;
   Ethernet.init(ETH_CS);
   Ethernet.begin(mac, localIp);
+  Udp.begin(PORT_CMD); // Listen on 8888 for Commands & Conflict Responses
+}
 
-  // ✅ LISTEN ONLY ON COMMAND PORT
-  Udp.begin(PORT_CMD);
-}
-void reconfigureNetwork(bool fullReset)
+// ✅ NEW: Conflict Check Logic
+// Returns TRUE if ID is taken (Conflict)
+bool isIdTaken(uint8_t candidate)
 {
-  initEthernet(fullReset);
-  lastCmdMs = millis();
+#if HAS_TM1637
+  display.clear();
+  uint8_t seg[] = {0x50, 0x50, 0x50, 0x50}; // "r r r r" (Scanning)
+  display.setSegments(seg);
+#endif
+
+  // 1. Send Check Request [0xAD, ID, Cks]
+  uint8_t req[3] = {0xAD, candidate, (uint8_t)(0xAD ^ candidate)};
+  Udp.beginPacket(ipBroadcast, PORT_CMD); // Send to 8888
+  Udp.write(req, 3);
+  Udp.endPacket();
+
+  // 2. Wait for Denial (200ms window)
+  uint32_t tStart = millis();
+  while (millis() - tStart < 200)
+  {
+    if (Udp.parsePacket())
+    {
+      uint8_t buf[10];
+      int n = Udp.read(buf, 10);
+      // Expect Denial: [0xAE, ID, ..., Cks]
+      if (n >= 2 && buf[0] == 0xAE && buf[1] == candidate)
+      {
+        return true; // Conflict Confirmed!
+      }
+    }
+  }
+  return false; // No denial = Safe
 }
+
+// ✅ WRAPPER: Find Next Free ID
+void findAndApplyID(uint8_t startId)
+{
+  uint8_t current = startId;
+  bool found = false;
+  int attempts = 0;
+
+  while (!found && attempts < 6)
+  {
+    initEthernet(false, current); // Init with candidate IP
+    delay(50);                    // Let link settle
+
+    if (!isIdTaken(current))
+    {
+      found = true;
+    }
+    else
+    {
+      current++;
+      if (current > 5)
+        current = 0;
+      attempts++;
+    }
+  }
+
+  STATION_ID = current;
+  pendingID = STATION_ID;
+  saveStationID(STATION_ID);
+}
+
 void loadStationID()
 {
   uint8_t id = EEPROM.read(0);
@@ -149,7 +208,6 @@ void updateDisplay(uint32_t now)
     return;
   }
 
-  // LINK DOWN
   if (displayMode == DISP_LINK)
   {
     if (displayFlash)
@@ -161,7 +219,6 @@ void updateDisplay(uint32_t now)
       display.clear();
     return;
   }
-  // DISABLED
   if (displayMode == DISP_DISABLED)
   {
     if (displayFlash)
@@ -174,13 +231,11 @@ void updateDisplay(uint32_t now)
       display.clear();
     return;
   }
-  // NORMAL
   if (displayMode == DISP_NORMAL)
   {
     display.clear();
     display.showNumberDec(STATION_ID, false, 1, 3);
   }
-  // ERROR
   else if (displayMode == DISP_ERROR)
   {
     if (displayFlash)
@@ -204,13 +259,17 @@ void setup()
   for (uint8_t p : IN_PINS)
     pinMode(p, INPUT_PULLUP);
   loadStationID();
-  pendingID = STATION_ID;
+
 #if HAS_TM1637
   display.setBrightness(0x0F);
-  display.clear();
   display.showNumberDec(STATION_ID, false, 1, 3);
 #endif
-  reconfigureNetwork(true);
+
+  // ✅ INITIAL CONFLICT CHECK (Full Reset)
+  initEthernet(true, STATION_ID);
+  delay(100);
+  findAndApplyID(STATION_ID);
+
   wdt_enable(WDTO_4S);
 }
 
@@ -232,10 +291,9 @@ void loop()
   }
   else if (reconfigPending && (now - lastButtonTime > 1500))
   {
-    STATION_ID = pendingID;
-    saveStationID(STATION_ID);
+    // ✅ MANUAL CHANGE CONFLICT CHECK
+    findAndApplyID(pendingID);
     reconfigPending = false;
-    reconfigureNetwork(false);
   }
 
   if (Ethernet.linkStatus() == LinkOFF)
@@ -250,12 +308,13 @@ void loop()
       packets++;
       uint8_t buf[32];
       int n = Udp.read(buf, sizeof(buf));
+
+      // Global Command (0xBB)
       if (n >= 10 && buf[0] == 0xBB && xorChecksum(buf, n - 1) == buf[n - 1])
       {
         if ((3 + STATION_ID) < (n - 1))
         {
           uint8_t cmd = buf[3 + STATION_ID];
-
           if (cmd & 0x80)
           {
             displayMode = DISP_DISABLED;
@@ -275,7 +334,7 @@ void loop()
       displayMode = DISP_ERROR;
       if (now - lastCmdMs > 10000)
       {
-        reconfigureNetwork(false);
+        initEthernet(false, STATION_ID);
         lastCmdMs = now;
       }
     }
@@ -291,8 +350,7 @@ void loop()
     uint8_t fb[5] = {0xAC, STATION_ID, invBits, 0x00, 0};
     fb[4] = xorChecksum(fb, 4);
 
-    // ✅ NEW: Send Feedback to PORT_FB (8889)
-    // Other stations listen on 8888, so they won't see this.
+    // ✅ SEND TO FEEDBACK PORT (8889)
     Udp.beginPacket(ipBroadcast, PORT_FB);
     Udp.write(fb, 5);
     Udp.endPacket();

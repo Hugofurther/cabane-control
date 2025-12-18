@@ -1,13 +1,13 @@
 /*
   ==========================================================================================
-  MAIN CONTROLLER — FIRMWARE v5.0-SplitPort
+  MAIN CONTROLLER — FIRMWARE v5.2-ConflictCheck
 
   UPDATES:
-  - DUAL SOCKETS: Listens on 8888 (Pi Commands) AND 8889 (Station Feedback)
+  - Added Conflict Arbiter Logic (0xAD Request -> 0xAE Denial)
   ==========================================================================================
 */
 
-#define FIRMWARE_VERSION "v5.0-SplitPort"
+#define FIRMWARE_VERSION "v5.2-ConflictCheck"
 #define DEBUG_SERIAL 1
 #define DEBUG_LEVEL 3
 #define BUZZER_REMINDER 1
@@ -30,18 +30,18 @@ Adafruit_MCP23X17 mcp;
 #define ETH_CS 48
 #define ETH_RESET 49
 
-// ✅ NEW: Split Ports
+// ✅ SPLIT PORTS
 const uint16_t PORT_CMD = 8888;
 const uint16_t PORT_FB = 8889;
 
-EthernetUDP UdpCmd; // Handles 8888 (Recv from Pi, Send Global)
-EthernetUDP UdpFb;  // Handles 8889 (Recv from Stations)
+EthernetUDP UdpCmd;
+EthernetUDP UdpFb;
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 IPAddress ipBroadcast(192, 168, 1, 255);
 IPAddress ipMain(192, 168, 1, 220);
 
-// --- BUZZER CONFIGURATION ---
+// --- BUZZER ---
 #define PIN_BUZZER 2
 #define BUZZER_ALERT_MODE 1
 
@@ -238,14 +238,20 @@ void loadConfig()
   cfgAlarmOffMs = (aOff == 0xFF) ? 10000 : (uint32_t)aOff * 1000;
   cfgReminderPeriodMs = (remMin == 0xFF) ? 120000 : (uint32_t)remMin * 60000;
   cfgBurglarStation = (burgSt == 0xFF) ? 0 : burgSt;
-  if (cfgAlarmOnMs < 1000)
-    cfgAlarmOnMs = 1000;
-  if (cfgAlarmOffMs < 1000)
-    cfgAlarmOffMs = 1000;
-  if (cfgReminderPeriodMs < 60000)
-    cfgReminderPeriodMs = 60000;
-  if (cfgBurglarStation != 0 && cfgBurglarStation != 2 && cfgBurglarStation != 3)
-    cfgBurglarStation = 0;
+}
+
+void loadStationStatesFromEEPROM()
+{
+  for (uint8_t i = 0; i < NUM_STATIONS; i++)
+  {
+    uint8_t val = EEPROM.read(i);
+    stationEnabled[i] = (val != 0xFF && val <= 1) ? val : true;
+  }
+}
+void saveStationStateToEEPROM(uint8_t id)
+{
+  if (id < NUM_STATIONS)
+    EEPROM.update(id, stationEnabled[id]);
 }
 
 void updateBuzzerLED(uint32_t now)
@@ -387,13 +393,7 @@ void updateEthernetAndLEDs(uint32_t now)
 
 void updateThermostatStatus()
 {
-  if (!ENABLE_THERMOSTAT)
-  {
-    LED_PAIR(TH_LED_PAIR[0], LOW, LOW);
-    LED_PAIR(TH_LED_PAIR[1], LOW, LOW);
-    return;
-  }
-  if (Ethernet.linkStatus() != LinkON)
+  if (!ENABLE_THERMOSTAT || Ethernet.linkStatus() != LinkON)
     return;
   for (uint8_t i = 0; i < 2; i++)
   {
@@ -459,11 +459,8 @@ void initEthernet()
   delay(800);
   Ethernet.init(ETH_CS);
   Ethernet.begin(mac, ipMain);
-
-  // ✅ LISTEN ON BOTH PORTS
   UdpCmd.begin(PORT_CMD); // 8888
   UdpFb.begin(PORT_FB);   // 8889
-
   Ethernet.setRetransmissionCount(1);
   Ethernet.setRetransmissionTimeout(200);
 }
@@ -483,12 +480,10 @@ inline uint8_t packBitsLSB(const bool *arr, uint8_t n)
   return v;
 }
 
+// 📡 PACKET PROCESSING
 void sendGlobalCommands()
 {
-  uint8_t packet[10];
-  packet[0] = 0xBB;
-  packet[1] = 0x00;
-  packet[2] = 0x01;
+  uint8_t packet[10] = {0xBB, 0x00, 0x01};
   for (uint8_t st = 0; st < NUM_STATIONS; st++)
   {
     bool bits[8] = {0};
@@ -536,8 +531,7 @@ void sendGlobalCommands()
     packet[3 + st] = packBitsLSB(bits, bitCount);
   }
   packet[9] = xorChecksum(packet, 9);
-
-  // ✅ SEND TO COMMAND PORT (8888)
+  // Send to 8888 (Command Port)
   UdpCmd.beginPacket(ipBroadcast, PORT_CMD);
   UdpCmd.write(packet, 10);
   UdpCmd.endPacket();
@@ -553,8 +547,7 @@ void sendPhysicalState()
   }
   uint8_t packet[7] = {0xB1, 0x01, payload[0], payload[1], payload[2], (uint8_t)(remoteOverrideActive ? 1 : 0), 0};
   packet[6] = xorChecksum(packet, 6);
-
-  // ✅ SEND TO COMMAND PORT (8888)
+  // Send to 8888 (Command Port)
   UdpCmd.beginPacket(ipBroadcast, PORT_CMD);
   UdpCmd.write(packet, 7);
   UdpCmd.endPacket();
@@ -563,8 +556,7 @@ void sendPhysicalState()
 void processHeartbeatAndFeedback(uint32_t now)
 {
   int count = 0;
-
-  // ✅ 1. CHECK COMMAND PORT (Pi -> Main)
+  // 1. COMMAND PORT (8888) - Receive Override/Config
   while (UdpCmd.parsePacket() > 0 && count < 10)
   {
     count++;
@@ -573,18 +565,16 @@ void processHeartbeatAndFeedback(uint32_t now)
     if (n < 3)
       continue;
 
-    // Override Request (0xAF)
     if (buf[0] == 0xAF && n >= 3)
-    {
+    { // Override
       if ((buf[0] ^ buf[1]) == buf[2])
       {
         remoteOverrideActive = (buf[1] == 0x01);
         lastServerPacketMs = now;
       }
     }
-    // Remote Data (0xB0)
     else if (buf[0] == 0xB0 && n >= 5)
-    {
+    { // Remote Data
       if ((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4] && remoteOverrideActive)
       {
         remoteSwitchBytes[0] = buf[1];
@@ -594,26 +584,54 @@ void processHeartbeatAndFeedback(uint32_t now)
         lastServerPacketMs = now;
       }
     }
-    // Config Packet (0xCF)
-    else if (buf[0] == 0xCF && n >= 6)
+    // ✅ 0xCF CONFIG PACKET [CF] [On] [Off] [Rem] [Burg] [Mask] [Cks]
+    else if (buf[0] == 0xCF && n >= 7)
     {
       uint8_t onSec = buf[1];
       uint8_t offSec = buf[2];
       uint8_t remMin = buf[3];
       uint8_t burgSt = buf[4];
-      uint8_t calcChecksum = buf[0] ^ buf[1] ^ buf[2] ^ buf[3] ^ buf[4];
-      if (buf[5] == calcChecksum)
+      uint8_t stMask = buf[5]; // Station Enable Mask
+      uint8_t calcChecksum = buf[0] ^ buf[1] ^ buf[2] ^ buf[3] ^ buf[4] ^ buf[5];
+
+      if (buf[6] == calcChecksum)
       {
         EEPROM.update(EEPROM_ALARM_ON, onSec);
         EEPROM.update(EEPROM_ALARM_OFF, offSec);
         EEPROM.update(EEPROM_REMINDER, remMin);
         EEPROM.update(EEPROM_BURGLAR_STATION, burgSt);
+        for (uint8_t i = 0; i < NUM_STATIONS; i++)
+        {
+          bool enabled = (stMask >> i) & 1;
+          stationEnabled[i] = enabled;
+          EEPROM.update(i, enabled);
+        }
         loadConfig();
+        // Respond to ARBITER Logic here
+        uint8_t ack[3] = {0xCF, 0xFF, 0x30}; // Optional Ack
+        UdpCmd.beginPacket(UdpCmd.remoteIP(), PORT_CMD);
+        UdpCmd.write(ack, 3);
+        UdpCmd.endPacket();
+      }
+    }
+    // ✅ ARBITER LOGIC (Check Request from Station)
+    // 0xAD: Conflict Check [AD] [ID] [Cks]
+    else if (buf[0] == 0xAD && n >= 3)
+    {
+      uint8_t id = buf[1];
+      // Only deny if we actually have seen this station recently AND it is enabled
+      // If disabled, we might want to let them claim it? No, ID conflict is ID conflict.
+      if (!stationOffline[id])
+      {
+        uint8_t deny[3] = {0xAE, id, (uint8_t)(0xAE ^ id)};
+        UdpCmd.beginPacket(ipBroadcast, PORT_CMD); // Broadcast denial on 8888
+        UdpCmd.write(deny, 3);
+        UdpCmd.endPacket();
       }
     }
   }
 
-  // ✅ 2. CHECK FEEDBACK PORT (Stations -> Main)
+  // 2. FEEDBACK PORT (8889) - Receive Station Data
   count = 0;
   while (UdpFb.parsePacket() > 0 && count < 10)
   {
@@ -623,9 +641,8 @@ void processHeartbeatAndFeedback(uint32_t now)
     if (n < 3)
       continue;
 
-    // Heartbeat (0xAB)
     if (buf[0] == 0xAB && n >= 4)
-    {
+    { // Heartbeat
       uint8_t id = buf[1];
       if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
       {
@@ -635,9 +652,8 @@ void processHeartbeatAndFeedback(uint32_t now)
           firstHeartbeatSeen[id] = true;
       }
     }
-    // Feedback (0xAC)
     else if (buf[0] == 0xAC && n >= 5)
-    {
+    { // Feedback
       uint8_t id = buf[1];
       if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
       {
@@ -649,20 +665,6 @@ void processHeartbeatAndFeedback(uint32_t now)
   }
 }
 
-// ... [EEPROM, LOOPS, SETUP same as before] ...
-void loadStationStatesFromEEPROM()
-{
-  for (uint8_t i = 0; i < NUM_STATIONS; i++)
-  {
-    uint8_t val = EEPROM.read(i);
-    stationEnabled[i] = (val != 0xFF && val <= 1) ? val : true;
-  }
-}
-void saveStationStateToEEPROM(uint8_t id)
-{
-  if (id < NUM_STATIONS)
-    EEPROM.update(id, stationEnabled[id]);
-}
 void handleStationEnableLongPress(uint32_t now)
 {
   for (uint8_t id = 0; id < NUM_STATIONS; id++)
@@ -754,9 +756,7 @@ void loop()
     if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
       stableState[m.index] = rawState[m.index];
   }
-
   processHeartbeatAndFeedback(now);
-
   for (uint8_t id = 0; id < NUM_STATIONS; id++)
   {
     if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)

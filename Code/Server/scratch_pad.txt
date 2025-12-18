@@ -520,14 +520,20 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
 
 √ When resizing the StationCard and the card's title becomes 3 lines, the title gets stacked over the horizontal line. Can we fix this so the title doesn't get displayed over that horizontal line.
+f
+√ I would like to give the user to select between 2 languages ( French / English) for the UI. How should we go about this. I would need to verify each translations. What is the standard procedure for this type o implementation?
 
-√ I would like to give the user to select between 2 languages ( French / English) for the UI. How should we go about this. I would need to verify each translations. What is the standard procedure for this type of of implementation?
+√ Station broadcast on different port.
+
+√ Can we have the Disable / Enable station in AdminPanel propagate to the Main Controller's EEPROM like we did for the buzzer configuration?
+
+√ On the Station Controllers, when changing stations with button on A7, we use to have a function that would automatically skip to the next station if another Station Controller on the network with the same station number was already present.
 
 ---
 
 REQUESTED
 Verify with Station Controller & Main Controller
-- Station broadcast on different port.
+
 
 
 
@@ -538,11 +544,13 @@ NEXT
 
 - I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
 
-- Can we have the Disable / Enable station in AdminPanel propagate to the Main Controller's EEPROM like we did for the buzzer configuration?
+
 
 - The OFFLINE label on Station Cards is a bit too close vertically from "Station x" title. Can we add a tiny bit of bottom padding to it, or whatever is the best thing to do.
 
 - ??? Fix the prompt ??? When toggling OFF the disabled station visibility, how can we bring Station Card up one row when possible?
+
+
 
 
 
