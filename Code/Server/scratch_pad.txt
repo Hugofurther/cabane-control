@@ -549,6 +549,10 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 REQUESTED
 
+- We need the Shutdown Timer to be displayed while running.
+
+---
+
 - Starting a Hardware simulation should take the user account into isolation, not taking control of the system. When starting a simulation while in control, the actual control gets released to the server. When Starting a hardware simulation, the user interface behaves like it has control, but the on the network, the system doesn't see the user as having control.
 
 ---

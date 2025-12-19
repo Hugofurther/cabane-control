@@ -60,7 +60,8 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         buzzer_alarm_off: '10',
         buzzer_reminder_min: '2',
         burglar_station: '0',
-        drain_timer_min: '15' // ✅ NEW DEFAULT
+        drain_timer_min: '15',
+        shutdown_timer_min: '60' // ✅ NEW
     });
 
     const [locations, setLocations] = useState([]);
@@ -360,20 +361,15 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> {t('admin.station_config')}</h3>
 
-                            {/* ✅ NEW: AUTOMATION SETTINGS */}
-                            <div className="mb-6 border-b border-gray-700 pb-6">
-                                <label className="text-xs font-bold text-gray-500 mb-1 block">DRAIN TIMER (MIN)</label>
-                                <div className="flex items-center gap-2">
-                                    <Clock size={16} className="text-purple-400" />
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        max="60"
-                                        value={sysSettings.drain_timer_min || '15'}
-                                        onChange={e => setSysSettings({ ...sysSettings, drain_timer_min: e.target.value })}
-                                        className="w-24 bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500"
-                                    />
-                                    <span className="text-xs text-gray-400">Duration for Step 4 drain logic.</span>
+                            {/* Automation Settings */}
+                            <div className="mb-6 border-b border-gray-700 pb-6 flex gap-6">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 mb-1 block">DRAIN TIMER (MIN)</label>
+                                    <input type="number" value={sysSettings.drain_timer_min} onChange={e => setSysSettings({ ...sysSettings, drain_timer_min: e.target.value })} className="w-24 bg-gray-900 border border-gray-600 rounded p-2 text-white" />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 mb-1 block">SHUTDOWN DEFAULT (MIN)</label>
+                                    <input type="number" value={sysSettings.shutdown_timer_min} onChange={e => setSysSettings({ ...sysSettings, shutdown_timer_min: e.target.value })} className="w-24 bg-gray-900 border border-gray-600 rounded p-2 text-white" />
                                 </div>
                             </div>
 

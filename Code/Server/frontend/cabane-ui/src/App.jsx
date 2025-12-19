@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock } from 'lucide-react';
+import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock, Power } from 'lucide-react'; // ✅ Power Icon
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
@@ -11,15 +11,15 @@ import { MessageDrawer } from './components/MessageDrawer/index';
 import { ShareModal } from './components/MessageDrawer/ShareModal';
 import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer';
-import { AutomationModal } from './components/AutomationModal'; // ✅ NEW
+import { AutomationModal } from './components/AutomationModal';
+import { AutomationBanner } from './components/AutomationBanner'; // ✅ Import
+import { ShutdownModal } from './components/ShutdownModal'; // ✅ Import
 import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
 import { Clock as DigitalClock } from './components/Clock';
-import { AutomationBanner } from './components/AutomationBanner'; // ✅ NEW
-
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const BUZZER_SWITCH_IDX = 21;
@@ -36,22 +36,11 @@ function Dashboard() {
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
-  const [showAutomation, setShowAutomation] = useState(false); // ✅ NEW
-  const [showAutomationModal, setShowAutomationModal] = useState(false);
-  const [isAutoRunning, setIsAutoRunning] = useState(false);
 
-  useEffect(() => {
-    if (!socket) return;
-    const handleAuto = (status) => {
-      setIsAutoRunning(status.active);
-      // If active, close launch modal automatically
-      if (status.active) setShowAutomationModal(false);
-    };
-    socket.on('AUTO_UPDATE', handleAuto);
-    return () => socket.off('AUTO_UPDATE', handleAuto);
-  }, [socket]);
-
-
+  // Automation & Shutdown
+  const [showAutomation, setShowAutomation] = useState(false);
+  const [showShutdown, setShowShutdown] = useState(false); // ✅ New
+  const [isAutoRunning, setIsAutoRunning] = useState(false); // ✅ Track running state
 
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
@@ -93,6 +82,20 @@ function Dashboard() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // --- AUTOMATION LISTENER ---
+  useEffect(() => {
+    if (!socket) return;
+    const handleAuto = (status) => {
+      setIsAutoRunning(status.active);
+      if (status.active) {
+        setShowAutomation(false);
+        setShowShutdown(false);
+      }
+    };
+    socket.on('AUTO_UPDATE', handleAuto);
+    return () => socket.off('AUTO_UPDATE', handleAuto);
+  }, [socket]);
+
   // --- 2. LOCAL ALARM LOGIC ---
   const { isAlarmActive, isChirpActive, alarmSources, alarmType } = useMemo(() => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
@@ -103,7 +106,6 @@ function Dashboard() {
     let sources = [];
     let systemRunning = false;
 
-    // A. Check Vacuum Pumps
     PANEL_LAYOUT.forEach(row => {
       row.cards.forEach(card => {
         card.controls.forEach(ctrl => {
@@ -128,7 +130,6 @@ function Dashboard() {
       });
     });
 
-    // B. Check Burglar Alarm
     const burgSt = parseInt(siteSettings.burglar_station) || 0;
     if (burgSt === 2 && stationOnline[2] && ((stationFeedback[2] >> 4) & 1)) {
       burglarAlarm = true;
@@ -140,8 +141,6 @@ function Dashboard() {
     }
 
     const overallAlarm = vacuumAlarm || burglarAlarm;
-
-    // C. Check Buzzer/Chirp
     const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
     const chirp = !overallAlarm && systemRunning && !buzzerOn;
 
@@ -149,12 +148,7 @@ function Dashboard() {
     if (burglarAlarm) type = 'BURGLAR';
     else if (vacuumAlarm) type = 'ALARM';
 
-    return {
-      isAlarmActive: overallAlarm,
-      isChirpActive: chirp,
-      alarmSources: sources,
-      alarmType: type
-    };
+    return { isAlarmActive: overallAlarm, isChirpActive: chirp, alarmSources: sources, alarmType: type };
   }, [systemState, siteSettings.burglar_station, t]);
 
   // --- AUDIO HELPER ---
@@ -314,11 +308,11 @@ function Dashboard() {
         />
       )}
 
+      {/* ✅ AUTOMATION & SHUTDOWN MODALS */}
+      <AutomationModal isOpen={showAutomation} onClose={() => setShowAutomation(false)} />
+      <ShutdownModal isOpen={showShutdown} onClose={() => setShowShutdown(false)} />
 
-
-      {/* ✅ AUTOMATION MODAL */}
-      <AutomationModal isOpen={showAutomationModal} onClose={() => setShowAutomationModal(false)} />
-      <AutomationBanner /> {/* ✅ Always rendered, handles its own visibility */}
+      <AutomationBanner />
 
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
 
@@ -363,12 +357,16 @@ function Dashboard() {
               <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
               {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
 
-              {/* ✅ DRAINAGE BUTTON */}
-              {/* Only show Launch button if NOT running */}
+              {/* ✅ AUTOMATION BUTTONS (Hidden if running) */}
               {!isAutoRunning && (
-                <button onClick={() => setShowAutomationModal(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation">
-                  <Clock size={20} />
-                </button>
+                <>
+                  <button onClick={() => setShowAutomation(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation">
+                    <Clock size={20} />
+                  </button>
+                  <button onClick={() => setShowShutdown(true)} className="p-3 rounded bg-red-900/30 border border-red-500/50 text-red-300 hover:bg-red-900/50 transition-colors shadow-lg ml-2" title="Schedule Shutdown">
+                    <Power size={20} />
+                  </button>
+                </>
               )}
             </div>
           )}
