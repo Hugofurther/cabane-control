@@ -59,7 +59,8 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         buzzer_alarm_on: '5',
         buzzer_alarm_off: '10',
         buzzer_reminder_min: '2',
-        burglar_station: '0'
+        burglar_station: '0',
+        drain_timer_min: '15' // ✅ NEW DEFAULT
     });
 
     const [locations, setLocations] = useState([]);
@@ -358,6 +359,24 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                         {/* Station Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> {t('admin.station_config')}</h3>
+
+                            {/* ✅ NEW: AUTOMATION SETTINGS */}
+                            <div className="mb-6 border-b border-gray-700 pb-6">
+                                <label className="text-xs font-bold text-gray-500 mb-1 block">DRAIN TIMER (MIN)</label>
+                                <div className="flex items-center gap-2">
+                                    <Clock size={16} className="text-purple-400" />
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="60"
+                                        value={sysSettings.drain_timer_min || '15'}
+                                        onChange={e => setSysSettings({ ...sysSettings, drain_timer_min: e.target.value })}
+                                        className="w-24 bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500"
+                                    />
+                                    <span className="text-xs text-gray-400">Duration for Step 4 drain logic.</span>
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
                                 {[0, 1, 2, 3, 4, 5].map(id => {
                                     const isDisabled = disabledStations.includes(id);

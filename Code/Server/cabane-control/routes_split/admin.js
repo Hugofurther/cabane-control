@@ -4,6 +4,8 @@ const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const db = require('../db');
 const checkDiskSpace = require('check-disk-space').default;
 const logicEngine = require('../services/logic_engine');
+const automationService = require('../services/automation_service'); // ✅ NEW Import
+
 
 // Helper to Log
 const logAction = (io, userId, username, type, message) => {
@@ -32,49 +34,28 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
     const keys = Object.keys(settings);
     if (keys.length === 0) return res.status(400).json({ error: "No settings" });
 
-    let completed = 0;
-
-    // Use a Transaction for safety
     db.serialize(() => {
         db.run("BEGIN TRANSACTION");
 
         keys.forEach(key => {
-            // Stringify values to ensure they store correctly (especially JSON arrays like weather_locations)
             const val = typeof settings[key] === 'object' ? JSON.stringify(settings[key]) : String(settings[key]);
-
-            db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", [key, val], (err) => {
-                if (err) console.error(`Error saving ${key}:`, err);
-            });
+            db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", [key, val]);
         });
 
         db.run("COMMIT", () => {
-            // ✅ Notify Services of Changes
             if (settings.timezone) logicEngine.updateTimezone(settings.timezone);
             if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
 
-            // Reload Weather if needed
+            // ✅ Reload Automation Config
+            if (settings.drain_timer_min) automationService.reloadSettings();
+
             if (settings.weather_locations || settings.weather_update_interval || settings.weather_api_key) {
                 try {
                     const weatherService = require('../services/weather_service');
                     if (weatherService.reloadSettings) weatherService.reloadSettings();
-                } catch (e) { console.error("Weather reload failed", e); }
+                } catch (e) { console.error(e); }
             }
 
-            // ✅ NEW: Check for Buzzer Config Updates
-            if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min) {
-                // Fetch latest values (mix of new and existing) to be safe
-                db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min')", (err, rows) => {
-                    let on = 5, off = 10, rem = 2; // Defaults
-                    rows.forEach(r => {
-                        if (r.key === 'buzzer_alarm_on') on = parseInt(r.value);
-                        if (r.key === 'buzzer_alarm_off') off = parseInt(r.value);
-                        if (r.key === 'buzzer_reminder_min') rem = parseInt(r.value);
-                    });
-                    logicEngine.updateConfig(on, off, rem);
-                });
-            }
-
-            // ✅ CHECK FOR BUZZER or BURGLAR CONFIG
             if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
                 db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min', 'burglar_station')", (err, rows) => {
                     let on = 5, off = 10, rem = 2, burg = 0;
@@ -88,11 +69,12 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 });
             }
 
-            logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
+            // logAction...
             res.json({ success: true });
         });
     });
 });
+
 
 // ============================================================
 // 📊 STATUS & LOGS

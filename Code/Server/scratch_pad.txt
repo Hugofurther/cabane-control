@@ -539,6 +539,10 @@ The Main Controller did not change anything in its sketch, so the issue is on th
      √ x ( Relay number 1 to 6 ) - Name of the device controled by the relay --- Input Feedback STx - input x ( Start at 1 to 7) --- Link icon --- switch if not linked.
 
 √ Why is my session locking after a minute. I have the user setting "Session Timeout" set to 12 hours. Shouldn't it make the screen lock after 12 hours instead of a minute?
+
+√ We need a setting in the user settings for automation timer. We should be able to set the duration of the timers used in the automations.
+
+√ In Hardware Simulation, when starting a simulation, the StationCards should read the settings from the hardware simulation automatically at start, so that the unlinked feedback that are on are read as ON by the StationCards. Currently, for the Hardware simulator feedback switches that are ON, when starting the simulation, we have the turn them OFF, then back to ON for the StationCards to actually read them as ON.
 ---
 
 REQUESTED
@@ -547,15 +551,11 @@ REQUESTED
 
 ---
 
-- We need a setting in the user settings for automation timer. We should be able to set the duration of the timers used in the automations.
-
-- In Hardware Simulation, when starting a simulation, the StationCards should read the settings from the hardware simulation automatically at start, so that the unlinked feedback that are on are read as ON by the StationCards. Currently, for the Hardware simulator feedback switches that are ON, when starting the simulation, we have the turn them OFF, then back to ON for the StationCards to actually read them as ON.
+NEXT
 
 - Starting a Hardware simulation should take the user account into isolation, not taking control of the system. When starting a simulation while in control, the actual control gets released to the server. When Starting a hardware simulation, the user interface behaves like it has control, but the on the network, the system doesn't see the user as having control.
 
----
-
-NEXT
+- We need to add the OFF Switches for the automations
 
 - Can you verify the hardware simulator did not affect any of the regular operations when the Simulation is stopped.
 
