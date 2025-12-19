@@ -4,7 +4,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
 import axios from 'axios';
-import { useTranslation } from 'react-i18next'; // ✅ Import i18n
+import { useTranslation } from 'react-i18next';
 
 // Import Embedded Components
 import { AdminPanel } from './AdminPanel';
@@ -15,7 +15,7 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 export const UserSettings = ({ isOpen, onClose }) => {
     const { user, updateSettings, logout } = useSocket();
     const { showAlert } = useModal();
-    const { t, i18n } = useTranslation(); // ✅ Init Hook
+    const { t, i18n } = useTranslation();
 
     const [activeTab, setActiveTab] = useState('GENERAL');
 
@@ -27,9 +27,12 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const [sessionVal, setSessionVal] = useState(60);
     const [sessionUnit, setSessionUnit] = useState('d');
 
-    // Audio Interval State
     const [appSirenSilence, setAppSirenSilence] = useState(5);
     const [appChirpInterval, setAppChirpInterval] = useState(2);
+
+    // ✅ AUTO LOCK STATES
+    const [lockMethod, setLockMethod] = useState('DISABLED');
+    const [lockTimeout, setLockTimeout] = useState(5);
 
     const canAdmin = user?.role === 'ADMIN';
     const canLogs = canAdmin || user?.can_view_logs;
@@ -45,6 +48,10 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 }
                 setAppSirenSilence(user.settings.appSirenSilence || 5);
                 setAppChirpInterval(user.settings.appChirpInterval || 2);
+
+                // ✅ RESTORED AUTO LOCK VALUES
+                setLockMethod(user.settings.lockMethod || 'DISABLED');
+                setLockTimeout(user.settings.lockTimeout || 5);
             }
             setProfile({ username: user.username || '', email: user.email || '' });
         }
@@ -52,16 +59,13 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     if (!isOpen || !user) return null;
 
-    // --- LOGIC ---
-
     const toggleSetting = (key) => setLocalSettings(prev => ({ ...prev, [key]: !prev[key] }));
     const setSetting = (key, value) => setLocalSettings(prev => ({ ...prev, [key]: value }));
 
-    // ✅ Change Language & Persist
     const changeLanguage = (lang) => {
         i18n.changeLanguage(lang);
         const finalSettings = { ...localSettings, language: lang };
-        setLocalSettings(finalSettings); // Update local state so it saves on "Save All"
+        setLocalSettings(finalSettings);
     };
 
     const handleSaveAll = async () => {
@@ -74,11 +78,13 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
             const finalSettings = {
                 ...localSettings,
-                // Ensure language is captured if changed but toggleSetting wasn't used
                 language: i18n.language,
                 tokenExpiration: `${val}${sessionUnit}`,
                 appSirenSilence: parseFloat(appSirenSilence) || 5,
-                appChirpInterval: parseFloat(appChirpInterval) || 2
+                appChirpInterval: parseFloat(appChirpInterval) || 2,
+                // ✅ SAVE AUTO LOCK SETTINGS
+                lockMethod,
+                lockTimeout: parseInt(lockTimeout) || 5
             };
 
             await updateSettings(finalSettings);
@@ -99,22 +105,13 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     return (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={onClose}>
-            <div
-                className={clsx(
-                    "bg-gray-900 border border-gray-700 w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300",
-                    isWide ? "max-w-6xl h-[85vh]" : "max-w-md max-h-[90vh]"
-                )}
-                onClick={e => e.stopPropagation()}
-            >
+            <div className={clsx("bg-gray-900 border border-gray-700 w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300", isWide ? "max-w-6xl h-[85vh]" : "max-w-md max-h-[90vh]")} onClick={e => e.stopPropagation()}>
 
                 {/* HEADER */}
                 <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-800 shrink-0">
                     <h2 className="text-xl font-black text-white tracking-wide uppercase flex items-center gap-2">
-                        {activeTab === 'ADMIN' ? <Shield size={20} className="text-blue-500" /> :
-                            activeTab === 'LOGS' ? <ScrollText size={20} className="text-yellow-500" /> :
-                                <Users size={20} className="text-blue-500" />}
-                        {activeTab === 'ADMIN' ? t('admin.title') :
-                            activeTab === 'LOGS' ? t('logs.title') : t('settings.title')}
+                        {activeTab === 'ADMIN' ? <Shield size={20} className="text-blue-500" /> : activeTab === 'LOGS' ? <ScrollText size={20} className="text-yellow-500" /> : <Users size={20} className="text-blue-500" />}
+                        {activeTab === 'ADMIN' ? t('admin.title') : activeTab === 'LOGS' ? t('logs.title') : t('settings.title')}
                     </h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors"><X size={24} /></button>
                 </div>
@@ -132,36 +129,40 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
                     {activeTab === 'GENERAL' && (
                         <div className="p-6 space-y-8">
-
-                            {/* LANGUAGE SELECTION */}
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.language')}</h3>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-                                    <div className="flex items-center gap-3 mb-2">
-                                        <Globe size={18} className="text-blue-400" />
-                                        <span className="text-sm font-medium text-gray-200">Select Language / Langue</span>
-                                    </div>
+                                    <div className="flex items-center gap-3 mb-2"><Globe size={18} className="text-blue-400" /><span className="text-sm font-medium text-gray-200">Select Language / Langue</span></div>
                                     <div className="flex bg-gray-900 rounded p-1">
-                                        <button
-                                            onClick={() => changeLanguage('en')}
-                                            // ✅ FIXED: Use startsWith to handle 'en-US', 'en-GB' etc.
-                                            className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('en') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}
-                                        >
-                                            ENGLISH
-                                        </button>
-                                        <button
-                                            onClick={() => changeLanguage('fr')}
-                                            // ✅ FIXED: Use startsWith to handle 'fr-CA', 'fr-FR' etc.
-                                            className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('fr') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}
-                                        >
-                                            FRANÇAIS
-                                        </button>
+                                        <button onClick={() => changeLanguage('en')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('en') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>ENGLISH</button>
+                                        <button onClick={() => changeLanguage('fr')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('fr') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>FRANÇAIS</button>
                                     </div>
                                 </div>
                             </section>
 
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.interface_audio')}</h3>
+
+                                {/* ✅ RESTORED AUTO LOCK SETTINGS */}
+                                <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-3"><Lock size={18} className="text-orange-400" /><span className="text-sm font-medium text-gray-200">{t('settings.auto_lock')}</span></div>
+                                        <select value={lockMethod} onChange={(e) => setLockMethod(e.target.value)} className="bg-gray-900 border border-gray-600 rounded text-xs text-white p-1 outline-none">
+                                            <option value="DISABLED">{t('common.disabled')}</option>
+                                            <option value="SIMPLE">Simple (Button)</option>
+                                            <option value="PASSWORD">Password</option>
+                                        </select>
+                                    </div>
+                                    {lockMethod !== 'DISABLED' && (
+                                        <div className="flex items-center justify-between border-t border-gray-700 pt-2">
+                                            <span className="text-xs text-gray-400">{t('settings.timeout_min')}</span>
+                                            <div className="flex items-center gap-2">
+                                                <input type="range" min="1" max="60" value={lockTimeout} onChange={(e) => setLockTimeout(e.target.value)} className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-orange-500" />
+                                                <span className="text-xs font-bold text-white w-6 text-right">{lockTimeout}m</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
 
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3">{localSettings.soundEnabled ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-gray-500" />}<span className="text-sm font-medium text-gray-200">{t('settings.master_sound')}</span></div>
@@ -171,10 +172,7 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                     <div className="flex items-center gap-3"><Zap size={18} className={localSettings.flashSoundEnabled !== false ? "text-yellow-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">{t('settings.flash_alert')}</span></div>
                                     <Toggle checked={localSettings.flashSoundEnabled !== false} onChange={() => toggleSetting('flashSoundEnabled')} />
                                 </div>
-
-                                {/* APP AUDIO CONFIG */}
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-4">
-                                    {/* Siren Silence */}
                                     <div>
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="flex items-center gap-3"><Sliders size={18} className="text-red-400" /><span className="text-sm font-medium text-gray-200">{t('settings.siren_silence')}</span></div>
@@ -183,8 +181,6 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                         <input type="range" min="1" max="30" step="1" value={appSirenSilence} onChange={(e) => setAppSirenSilence(e.target.value)} className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-500" />
                                         <p className="text-[10px] text-gray-500 mt-1 text-right">{t('settings.siren_desc')}</p>
                                     </div>
-
-                                    {/* Chirp Interval */}
                                     <div>
                                         <div className="flex items-center justify-between mb-2">
                                             <div className="flex items-center gap-3"><Bell size={18} className="text-yellow-400" /><span className="text-sm font-medium text-gray-200">{t('settings.chirp_interval')}</span></div>
@@ -194,8 +190,6 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                         <p className="text-[10px] text-gray-500 mt-1 text-right">{t('settings.chirp_desc')}</p>
                                     </div>
                                 </div>
-
-                                {/* Other settings */}
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Smartphone size={18} className={localSettings.vibrationEnabled ? "text-purple-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">{t('settings.haptic')}</span></div>
                                     <Toggle checked={localSettings.vibrationEnabled ?? true} onChange={() => toggleSetting('vibrationEnabled')} />
@@ -204,14 +198,12 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                     <div className="flex items-center gap-3"><Cloud size={18} className="text-cyan-400" /><span className="text-sm font-medium text-gray-200">{t('settings.weather_widget')}</span></div>
                                     <Toggle checked={localSettings.showWeather ?? true} onChange={() => toggleSetting('showWeather')} />
                                 </div>
-
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Clock size={18} className="text-blue-400" /><span className="text-sm font-medium text-gray-200">{t('settings.clock_format')}</span></div>
                                     <div className="flex bg-gray-900 rounded p-1">
                                         {['12h', '24h'].map(fmt => (<button key={fmt} onClick={() => setSetting('clockFormat', fmt)} className={clsx("px-3 py-1 rounded text-xs font-bold transition-colors", (localSettings.clockFormat || '24h') === fmt ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>{fmt.toUpperCase()}</button>))}
                                     </div>
                                 </div>
-
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Layout size={18} className="text-yellow-400" /><span className="text-sm font-medium text-gray-200">{t('settings.cabane_status')}</span></div>
                                     <Toggle checked={localSettings.showMainStatus ?? true} onChange={() => toggleSetting('showMainStatus')} />
@@ -231,20 +223,13 @@ export const UserSettings = ({ isOpen, onClose }) => {
                             <section className="space-y-3 pt-4 border-t border-gray-800">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.disabled_stations_vis')}</h3>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-3">
-                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700">
-                                        <span className="text-xs font-bold text-gray-300">{t('settings.desktop')}</span>
-                                        <Toggle checked={localSettings.showDisabledLarge !== false} onChange={() => toggleSetting('showDisabledLarge')} />
-                                    </div>
-                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700">
-                                        <span className="text-xs font-bold text-gray-300">{t('settings.mobile')}</span>
-                                        <Toggle checked={localSettings.showDisabledSmall !== false} onChange={() => toggleSetting('showDisabledSmall')} />
-                                    </div>
+                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700"><span className="text-xs font-bold text-gray-300">{t('settings.desktop')}</span><Toggle checked={localSettings.showDisabledLarge !== false} onChange={() => toggleSetting('showDisabledLarge')} /></div>
+                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700"><span className="text-xs font-bold text-gray-300">{t('settings.mobile')}</span><Toggle checked={localSettings.showDisabledSmall !== false} onChange={() => toggleSetting('showDisabledSmall')} /></div>
                                 </div>
                             </section>
                         </div>
                     )}
 
-                    {/* PROFILE TAB */}
                     {activeTab === 'PROFILE' && (
                         <div className="p-6 space-y-8">
                             <section className="space-y-3">
@@ -272,11 +257,11 @@ export const UserSettings = ({ isOpen, onClose }) => {
                             </section>
                         </div>
                     )}
+
                     {activeTab === 'ADMIN' && <AdminPanel embedded={true} />}
                     {activeTab === 'LOGS' && <LogViewer embedded={true} />}
                 </div>
 
-                {/* FOOTER */}
                 {(activeTab === 'GENERAL' || activeTab === 'PROFILE') && (
                     <div className="p-4 bg-gray-900 border-t border-gray-800 flex gap-3 shrink-0">
                         <button onClick={() => { logout(); onClose(); }} className="flex-1 py-3 bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded font-bold uppercase tracking-widest transition-all text-xs flex items-center justify-center gap-2"><LogOut size={16} /> {t('settings.sign_out')}</button>

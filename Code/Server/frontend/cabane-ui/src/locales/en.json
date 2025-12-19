@@ -18,6 +18,15 @@
     "ok": "OK",
     "server": "SERVER"
   },
+  "automation": {
+    "start_title": "Start Pipeline Drainage?",
+    "start_desc": "This will take control of pumps and valves to execute the 3 drainage sequences simultaneously. Ensure the system is ready.",
+    "active": "DRAINAGE ACTIVE",
+    "paused": "PAUSED",
+    "stop": "STOP",
+    "resume": "RESUME",
+    "idle": "Idle"
+  },
   "auth": {
     "title": "Control System Access",
     "login": "Login",

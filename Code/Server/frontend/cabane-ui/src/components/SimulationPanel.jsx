@@ -13,7 +13,7 @@ const SimToggle = ({ checked, onChange, disabled }) => (
 );
 
 export const SimulationPanel = ({ isOpen, onClose }) => {
-    const { socket } = useSocket();
+    const { socket, takeControl } = useSocket(); // ✅ Get takeControl
     const [simData, setSimData] = useState(null);
     const [tempName, setTempName] = useState("");
     const [editing, setEditing] = useState(null);
@@ -45,7 +45,15 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
     const token = localStorage.getItem('cabane_token');
     const { active, config, state } = simData;
 
-    const toggleGlobal = async () => { await axios.post(`${API_URL}/api/simulation/toggle`, { active: !active }, { headers: { Authorization: `Bearer ${token}` } }); };
+    const toggleGlobal = async () => {
+        // ✅ NEW: Automatically take control if starting simulation
+        if (!active) {
+            takeControl();
+        }
+
+        await axios.post(`${API_URL}/api/simulation/toggle`, { active: !active }, { headers: { Authorization: `Bearer ${token}` } });
+    };
+
     const toggleConnection = async (id) => { await axios.post(`${API_URL}/api/simulation/station/connection`, { id }, { headers: { Authorization: `Bearer ${token}` } }); };
 
     const updateRelay = async (stId, rIdx, updates) => {
@@ -92,19 +100,14 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                                                 const inputOff = (targetInputState.inputMask >> r.targetBit) & 1;
                                                 const inputActive = !inputOff;
                                                 const isEditing = editing?.stId === stIdx && editing?.rIdx === rIdx;
-                                                const isEn = r.enabled !== false; // Default true
+                                                const isEn = r.enabled !== false;
 
                                                 return (
                                                     <tr key={rIdx} className={`transition-colors ${!isEn ? 'opacity-30' : (relayOn ? 'bg-blue-900/10' : 'hover:bg-gray-700/30')}`}>
                                                         <td className="p-2 font-mono text-gray-500 flex items-center gap-1">{rIdx + 1}<div className={`w-2 h-2 rounded-full ${relayOn ? 'bg-green-400 shadow-[0_0_5px_lime]' : 'bg-gray-700'}`} /></td>
-
-                                                        {/* ✅ ENABLE TOGGLE */}
                                                         <td className="p-2">
-                                                            <button onClick={() => updateRelay(stIdx, rIdx, { enabled: !isEn })} className={isEn ? "text-green-400" : "text-gray-600"}>
-                                                                {isEn ? <Eye size={14} /> : <EyeOff size={14} />}
-                                                            </button>
+                                                            <button onClick={() => updateRelay(stIdx, rIdx, { enabled: !isEn })} className={isEn ? "text-green-400" : "text-gray-600"}>{isEn ? <Eye size={14} /> : <EyeOff size={14} />}</button>
                                                         </td>
-
                                                         <td className="p-2" onClick={() => isEn && (setEditing({ stId: stIdx, rIdx }), setTempName(r.name))}>
                                                             {isEditing ? (
                                                                 <input autoFocus className="bg-black text-white w-full border border-blue-500 rounded px-1" value={tempName} onChange={e => setTempName(e.target.value)} onBlur={() => saveName(stIdx, rIdx)} onKeyDown={e => e.key === 'Enter' && saveName(stIdx, rIdx)} />

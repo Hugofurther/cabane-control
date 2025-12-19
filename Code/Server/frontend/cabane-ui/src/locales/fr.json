@@ -18,6 +18,15 @@
     "ok": "OK",
     "server": "SERVER"
   },
+  "automation": {
+    "start_title": "Démarrer le Drainage?",
+    "start_desc": "Ceci prendra le contrôle des pompes et valves pour exécuter les 3 séquences simultanément. Assurez-vous que le système est prêt.",
+    "active": "DRAINAGE ACTIF",
+    "paused": "EN PAUSE",
+    "stop": "ARRÊTER",
+    "resume": "REPRENDRE",
+    "idle": "Inactif"
+  },
   "auth": {
     "title": "Accès Système de Contrôle",
     "login": "Connexion",

@@ -1,5 +1,5 @@
 // ============================================================
-// 🤖 AUTOMATION SERVICE - PARALLEL BRANCHING (v3)
+// 🤖 AUTOMATION SERVICE - PARALLEL BRANCHING (v4.1 - Step 2 Fixes)
 // ============================================================
 const db = require('../db');
 
@@ -9,7 +9,6 @@ let ioRef = null;
 let config = { drain_timer_min: 15 };
 
 // --- RUNTIME STATE ---
-// We now track 3 independent branches
 let status = {
     active: false,
     paused: false,
@@ -47,23 +46,29 @@ function loadSettings() {
 }
 
 // --- UTILS ---
-const pulseSwitch = (idx) => { logicEngine.toggleSwitch(idx, 1, 'AUTO'); setTimeout(() => logicEngine.toggleSwitch(idx, 0, 'AUTO'), 1000); };
-const setSwitch = (idx, val) => logicEngine.toggleSwitch(idx, val ? 1 : 0, 'AUTO');
+const pulseSwitch = (idx) => {
+    console.log(`[AUTO] Pulsing Switch ${idx}`);
+    logicEngine.toggleSwitch(idx, 1, 'AUTO');
+    setTimeout(() => logicEngine.toggleSwitch(idx, 0, 'AUTO'), 1000);
+};
 
-// Returns TRUE if pumps are STOPPED (Feedback = 1)
+const setSwitch = (idx, val) => {
+    console.log(`[AUTO] Set Switch ${idx} to ${val}`);
+    logicEngine.toggleSwitch(idx, val ? 1 : 0, 'AUTO');
+};
+
 const arePumpsStopped = (stationId, bits) => {
     const state = logicEngine.getFullState();
     const fb = state.stationFeedback[stationId];
-    for (let bit of bits) { if (((fb >> bit) & 1) === 0) return false; } // 0=Running
+    // Active Low Feedback: 0=Running, 1=Stopped
+    // We want ALL bits to be 1
+    for (let bit of bits) { if (((fb >> bit) & 1) === 0) return false; }
     return true;
 };
 
-// Check if a specific station is disabled/offline
 const isStationAvailable = (id) => {
     const state = logicEngine.getFullState();
     if (state.disabledStations.includes(id)) return false;
-    // Note: We might want to allow offline if we just want to run logic, but safest is to require online.
-    // However, user said "if disabled... branch becomes disabled".
     return true;
 };
 
@@ -72,7 +77,12 @@ function loop() {
     if (!status.active || status.paused) return;
 
     const state = logicEngine.getFullState();
-    if (!state.mainControllerOnline) { abortAll("Main Controller Offline"); return; }
+
+    // Bypass safety check if in simulation mode
+    if (!state.simulationMode && !state.mainControllerOnline) {
+        abortAll("Main Controller Offline");
+        return;
+    }
 
     // Run each branch logic
     if (status.branches[1].active) loopBranch1();
@@ -81,7 +91,6 @@ function loop() {
 
     // Check Global Completion
     if (!status.branches[1].active && !status.branches[2].active && !status.branches[3].active) {
-        // If all inactive but main status is active, we are done.
         console.log("[AUTO] All branches finished.");
         status.active = false;
         emitUpdate();
@@ -115,17 +124,22 @@ function loopBranch1() {
 
 function execB1_Step1() {
     console.log("[AUTO] B1 Step 1");
-    // Check Dependencies (ST1, ST2, ST3)
     if (!isStationAvailable(1) || !isStationAvailable(2) || !isStationAvailable(3)) {
         failBranch(1, "Stations Disabled"); return;
     }
 
     const b = status.branches[1]; b.step = 1; b.status = 'RUNNING'; b.stepStart = Date.now();
 
-    // Actions
-    [0, 1, 8, 12, 13].forEach(i => pulseSwitch(i)); // Pulse ST1, ST2, ST3 pumps
-    setSwitch(5, false); // Close T2
+    // 1. Ensure Vacuum ON: ST0 (2,3), ST2 (9), ST3 (14)
+    [2, 3, 9, 14].forEach(i => setSwitch(i, true));
+
+    // 2. Pulse Transport Pumps: ST1 (0,1), ST2 (8), ST3 (12,13)
+    [0, 1, 8, 12, 13].forEach(i => pulseSwitch(i));
+
+    // 3. Valves
+    setSwitch(5, false); // Close T2 (ST1-Cabane)
     setSwitch(6, true);  // Open Drain T2->ST1
+
     emitUpdate();
 }
 
@@ -133,9 +147,17 @@ function execB1_Step2() {
     console.log("[AUTO] B1 Step 2");
     const b = status.branches[1]; b.step = 2; b.stepStart = Date.now();
 
-    if (arePumpsStopped(2, [0])) pulseSwitch(8); // Pulse ST2 if stopped
-    setSwitch(15, true); // Drain ST2>ST3
-    setSwitch(11, true); // Drain ST3>ST2
+    // ✅ 1. Ensure Vacuum ON: ST0 (2,3), ST2 (9), ST3 (14)
+    [2, 3, 9, 14].forEach(i => setSwitch(i, true));
+
+    // ✅ 2. Pulse Transport Pumps: ST1 (0,1), ST2 (8)
+    // Pulse only if they are stopped (to avoid interrupting running pumps if they are latching)
+    if (arePumpsStopped(1, [0, 1])) { pulseSwitch(0); pulseSwitch(1); }
+    if (arePumpsStopped(2, [0])) pulseSwitch(8);
+
+    // 3. Valves
+    setSwitch(15, true); // Drain ST2 > ST3
+    setSwitch(11, true); // Drain ST3 > ST2
     emitUpdate();
 }
 
@@ -143,11 +165,13 @@ function execB1_Step3() {
     console.log("[AUTO] B1 Step 3");
     const b = status.branches[1]; b.step = 3; b.stepStart = Date.now();
 
-    if (arePumpsStopped(1, [0, 1])) { pulseSwitch(0); pulseSwitch(1); } // Pulse ST1
+    // Check ST1 Pumps. If Stopped, Pulse.
+    if (arePumpsStopped(1, [0, 1])) { pulseSwitch(0); pulseSwitch(1); }
+
     setSwitch(10, true); // ST1 > ST2
     setSwitch(7, true);  // ST2 > ST1
-    setSwitch(15, false); // Close ST2>ST3
-    setSwitch(6, false);  // Close T2->ST1
+    setSwitch(15, false); // Close ST2 > ST3
+    setSwitch(6, false);  // Close T2 > ST1
     emitUpdate();
 }
 
@@ -198,7 +222,13 @@ function execB2_Step1() {
     if (!isStationAvailable(4)) { failBranch(2, "ST4 Disabled"); return; }
 
     const b = status.branches[2]; b.step = 1; b.status = 'RUNNING'; b.stepStart = Date.now();
-    pulseSwitch(16); // Pulse ST4 Pump
+
+    // 1. Ensure Vacuum ON: ST4 (17)
+    setSwitch(17, true);
+
+    // 2. Pulse Pump: ST4 (16)
+    pulseSwitch(16);
+
     emitUpdate();
 }
 
@@ -206,6 +236,9 @@ function execB2_Step2() {
     console.log("[AUTO] B2 Step 2");
     const b = status.branches[2]; b.step = 2; b.stepStart = Date.now();
     b.timerEnd = Date.now() + (config.drain_timer_min * 60 * 1000);
+
+    // ✅ Ensure Vacuum ON: ST4 (17)
+    setSwitch(17, true);
 
     setSwitch(18, true); // Open Cabane->ST4
     emitUpdate();
@@ -245,7 +278,13 @@ function execB3_Step1() {
     if (!isStationAvailable(5)) { failBranch(3, "ST5 Disabled"); return; }
 
     const b = status.branches[3]; b.step = 1; b.status = 'RUNNING'; b.stepStart = Date.now();
-    pulseSwitch(19); // Pulse ST5 Pump
+
+    // 1. Ensure Vacuum ON: ST4 (17) - ST5 uses ST4 Vacuum
+    setSwitch(17, true);
+
+    // 2. Pulse Pump: ST5 (19)
+    pulseSwitch(19);
+
     emitUpdate();
 }
 
@@ -253,6 +292,9 @@ function execB3_Step2() {
     console.log("[AUTO] B3 Step 2");
     const b = status.branches[3]; b.step = 2; b.stepStart = Date.now();
     b.timerEnd = Date.now() + (config.drain_timer_min * 60 * 1000);
+
+    // ✅ Ensure Vacuum ON: ST4 (17) - ST5 uses ST4 Vacuum
+    setSwitch(17, true);
 
     setSwitch(20, true); // Open ST5->Cabane
     emitUpdate();
@@ -275,7 +317,10 @@ function startSequence(username) {
     if (status.active) return;
 
     const state = logicEngine.getFullState();
-    if (!state.mainControllerOnline) throw new Error("Main Controller Offline");
+
+    if (!state.simulationMode && !state.mainControllerOnline) {
+        throw new Error("Main Controller Offline");
+    }
 
     status.active = true;
     status.paused = false;

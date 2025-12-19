@@ -1,5 +1,5 @@
 // ============================================================
-// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v5 - Stable)
+// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v5.1 - Persistence Fix)
 // ============================================================
 const dgram = require('dgram');
 const db = require('../db');
@@ -9,16 +9,16 @@ const TARGET_PORT = 8889;
 const TARGET_IP = '127.0.0.1';
 
 let ioRef = null;
-let active = false; // Master simulation switch
-let heartbeatInterval = null; // ✅ Loop handle
+let active = false;
+let heartbeatInterval = null;
 
-// CONFIG
+// CONFIG (Persisted)
 let config = Array(6).fill(null).map((_, i) => ({
     id: i,
     relays: Array(6).fill(null).map((__, r) => ({
         name: `Device ${r + 1}`,
         linked: true,
-        enabled: true, // ✅ NEW: Default Enabled
+        enabled: true,
         targetSt: i,
         targetBit: r < 7 ? r : 0
     })),
@@ -27,22 +27,20 @@ let config = Array(6).fill(null).map((_, i) => ({
     }))
 }));
 
-// RUNTIME STATE (Not Persisted)
+// RUNTIME STATE
 let state = Array(6).fill(null).map((_, i) => ({
     id: i,
-    connected: true, // Virtual cable connection
+    connected: true,
     relayMask: 0,
-    inputMask: 0x7F // Start all 1 (OFF/Idle)
+    manualInputs: 0x7F, // ✅ NEW: Tracks manual toggles separately (1=OFF, 0=ON)
+    inputMask: 0x7F     // Final calculated state
 }));
 
 function init(io) {
     ioRef = io;
     loadConfig();
-    // ✅ NOTE: We do NOT start the interval here anymore.
-    // It starts only when setSimulationActive(true) is called.
 }
 
-// --- PERSISTENCE ---
 function loadConfig() {
     db.get("SELECT value FROM system_settings WHERE key = 'simulation_config'", (err, row) => {
         if (row && row.value) {
@@ -59,48 +57,31 @@ function saveConfig() {
     db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", ['simulation_config', json]);
 }
 
-// --- API CONTROL ---
 function setSimulationActive(isActive) {
     active = isActive;
     console.log(`[SIM] Simulation Mode: ${isActive ? 'ON' : 'OFF'}`);
 
-    // Notify Logic Engine to block real traffic
     try {
         const logicEngine = require('./logic_engine');
         logicEngine.setSimulationMode(isActive);
-    } catch (e) {
-        console.error("[SIM] Failed to notify Logic Engine", e);
-    }
+    } catch (e) { console.error(e); }
 
     if (active) {
-        // ✅ START LOOP
         if (!heartbeatInterval) heartbeatInterval = setInterval(heartbeatLoop, 1000);
-        // Force initial calculation
         calculatePhysics();
     } else {
-        // ✅ STOP LOOP (Cleanup)
-        if (heartbeatInterval) {
-            clearInterval(heartbeatInterval);
-            heartbeatInterval = null;
-        }
+        if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     }
 
-    // ✅ CRITICAL FIX: Emit FULL STATUS (getStatus) so frontend receives 'config'
     if (ioRef) ioRef.emit('SIM_STATUS', getStatus());
 }
 
-function getStatus() {
-    return { active, config, state };
-}
+function getStatus() { return { active, config, state }; }
 
 function toggleStationConnection(id) {
     if (!state[id]) return;
     state[id].connected = !state[id].connected;
-
-    // Emit update immediately
     if (ioRef) ioRef.emit('SIM_UPDATE', { id, ...state[id] });
-
-    // ✅ FIX: Send heartbeat immediately on connect to refresh UI status
     if (state[id].connected) sendHeartbeat(id);
 }
 
@@ -111,60 +92,53 @@ function updateRelayConfig(stId, relayIdx, updates) {
     if (active) calculatePhysics();
 }
 
+// ✅ UPDATED: Toggle the MANUAL state, then recalc physics
 function toggleManualInput(stId, inputIdx) {
     if (!active || !state[stId].connected) return;
 
-    // Toggle bit
-    const current = (state[stId].inputMask >> inputIdx) & 1;
-    const newVal = current === 1 ? 0 : 1; // Flip
+    // Toggle the bit in manualInputs (Active Low: 1=OFF, 0=ON)
+    const current = (state[stId].manualInputs >> inputIdx) & 1;
+    const newVal = current === 1 ? 0 : 1;
 
-    if (newVal === 1) state[stId].inputMask |= (1 << inputIdx);
-    else state[stId].inputMask &= ~(1 << inputIdx);
+    if (newVal === 1) state[stId].manualInputs |= (1 << inputIdx); // Set to 1 (OFF)
+    else state[stId].manualInputs &= ~(1 << inputIdx);             // Set to 0 (ON)
 
-    sendFeedback(stId);
+    // Trigger physics to merge Manual + Relay states
+    calculatePhysics();
 }
 
-// --- CORE LOGIC ---
-
-// Hook called by LogicEngine
 function onCommandReceived(stationBytes) {
     if (!active) return;
-
     let changed = false;
     for (let i = 0; i < 6; i++) {
-        if (!state[i].connected) continue;
-
         const cmd = stationBytes[i] || 0;
-        const maskedCmd = cmd & 0x3F; // Relays D2-D7
-
+        const maskedCmd = cmd & 0x3F;
         if (state[i].relayMask !== maskedCmd) {
             state[i].relayMask = maskedCmd;
             changed = true;
         }
     }
-
     if (changed) {
-        // Broadcast update to UI immediately so switches animate in Sim Panel
-        // ✅ FIX: Send full status to keep UI synced
         if (ioRef) ioRef.emit('SIM_STATUS', getStatus());
-        // Simulate relay mechanics delay
         setTimeout(calculatePhysics, 100);
     }
 }
 
+// ✅ UPDATED: Merge Manual + Relay Logic
 function calculatePhysics() {
     if (!active) return;
 
-    let nextInputs = Array(6).fill(0x7F);
+    // 1. Start with the Manual State (Preserves unlinked switches)
+    let nextInputs = state.map(s => s.manualInputs);
 
+    // 2. Apply Relay Links (Active Relays pull inputs LOW/ON)
     config.forEach((stConfig, sourceStId) => {
         if (!state[sourceStId].connected) return;
 
         const sourceRelays = state[sourceStId].relayMask;
 
         stConfig.relays.forEach((rConfig, rIdx) => {
-            // ✅ CHECK ENABLED
-            if (!rConfig.enabled) return;
+            if (rConfig.enabled === false) return;
 
             const isRelayOn = (sourceRelays >> rIdx) & 1;
 
@@ -172,14 +146,18 @@ function calculatePhysics() {
                 const tSt = rConfig.targetSt;
                 const tBit = rConfig.targetBit;
                 if (tSt >= 0 && tSt < 6 && tBit >= 0 && tBit < 7) {
+                    // Logic: Relay ON -> Input Active (0)
+                    // We use Bitwise AND with ~Mask to clear the bit
                     nextInputs[tSt] &= ~(1 << tBit);
                 }
             }
         });
     });
 
+    // 3. Apply changes and Send Feedback
     for (let i = 0; i < 6; i++) {
         if (!state[i].connected) continue;
+
         if (state[i].inputMask !== nextInputs[i]) {
             state[i].inputMask = nextInputs[i];
             sendFeedback(i);
@@ -187,11 +165,8 @@ function calculatePhysics() {
     }
 }
 
-// --- UDP SENDERS ---
-
 function sendFeedback(id) {
     if (!state[id].connected) return;
-
     const s = state[id];
     const packet = Buffer.alloc(5);
     packet[0] = 0xAC;
@@ -199,35 +174,23 @@ function sendFeedback(id) {
     packet[2] = s.inputMask;
     packet[3] = 0x00;
     packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
-
-    client.send(packet, TARGET_PORT, TARGET_IP);
-
-    // Emit to UI so Sim Panel inputs update
-    if (ioRef) ioRef.emit('SIM_UPDATE', { id, ...state[id] });
-
-
-
-
+    client.send(packet, TARGET_PORT, TARGET_IP, (err) => { if (err) console.error(`[SIM] UDP Error:`, err); });
+    if (ioRef) ioRef.emit('SIM_UPDATE', { id, ...s });
 }
 
 function sendHeartbeat(id) {
     if (!state[id].connected) return;
-
     const packet = Buffer.alloc(4);
-    packet[0] = 0xAB; // Heartbeat Header
+    packet[0] = 0xAB;
     packet[1] = id;
     packet[2] = 0x00;
     packet[3] = packet[0] ^ packet[1] ^ packet[2];
-
     client.send(packet, TARGET_PORT, TARGET_IP);
 }
 
-
 function heartbeatLoop() {
     if (!active) return;
-    for (let i = 0; i < 6; i++) {
-        sendHeartbeat(i);
-    }
+    for (let i = 0; i < 6; i++) sendHeartbeat(i);
 }
 
 module.exports = {
