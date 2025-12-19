@@ -1,5 +1,7 @@
 const udpService = require('./udp_service');
 const automationService = require('./automation_service'); // ✅ NEW IMPORT
+const simulationService = require('./simulation_service'); // ✅ NEW IMPORT
+
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./cabane.db');
 
@@ -347,6 +349,10 @@ function controlLoop() {
             if (state.disabledStations.includes(m.st)) return;
             if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit);
         });
+
+        // ✅ HOOK SIMULATOR
+        simulationService.onCommandReceived(stationBytes);
+
         udpService.sendGlobalBroadcast(stationBytes);
 
         const virtualBytes = [0, 0, 0];

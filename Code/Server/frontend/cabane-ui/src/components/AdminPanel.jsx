@@ -3,12 +3,15 @@ import axios from 'axios';
 import {
     X, Check, Trash2, Shield, Globe, MapPin, Search, Save,
     HardDrive, Power, Clock, RefreshCw, Calculator, User,
-    Lock, Crown, Volume2
+    Lock, Crown, Volume2, Cpu
 } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
 import { useSocket } from '../contexts/SocketContext';
-import { useTranslation } from 'react-i18next'; // ✅ Import
+import { useTranslation } from 'react-i18next';
+
+// ✅ NEW IMPORT
+import { SimulationPanel } from './SimulationPanel';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -32,14 +35,16 @@ const Toggle = ({ checked, onChange, disabled }) => (
 );
 
 export const AdminPanel = ({ embedded, isOpen, onClose }) => {
-    const { t } = useTranslation(); // ✅ Hook
+    const { t } = useTranslation();
     const { user: currentUser } = useSocket();
     const { showConfirm, showAlert } = useModal();
 
     const [activeTab, setActiveTab] = useState('USERS');
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+
+    // ✅ SIMULATION STATE
+    const [showSim, setShowSim] = useState(false);
 
     // System Settings State
     const [sysSettings, setSysSettings] = useState({
@@ -101,8 +106,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                 used: (resStatus.data.size || 0) - (resStatus.data.free || 0)
             });
 
-            setError('');
-        } catch (e) { setError("Failed to load data."); }
+        } catch (e) { console.error("Admin Load Error", e); }
         finally { setLoading(false); }
     };
 
@@ -310,25 +314,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
-                        {/* Buzzer Config */}
-                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Volume2 size={20} className="text-yellow-500" /> {t('admin.buzzer_config')}</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div>
-                                    <label htmlFor="buzzer_on" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_on')}</label>
-                                    <input id="buzzer_on" name="buzzer_on" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_on || '5'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_on: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
-                                </div>
-                                <div>
-                                    <label htmlFor="buzzer_off" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_off')}</label>
-                                    <input id="buzzer_off" name="buzzer_off" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_off || '10'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_off: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
-                                </div>
-                                <div>
-                                    <label htmlFor="buzzer_rem" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.reminder_int')}</label>
-                                    <input id="buzzer_rem" name="buzzer_rem" type="number" min="1" max="240" autoComplete="off" value={sysSettings.buzzer_reminder_min || '2'} onChange={e => setSysSettings({ ...sysSettings, buzzer_reminder_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
-                                </div>
-                            </div>
-                        </div>
-
                         {/* Weather Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
                             <div className="flex justify-between items-center"><h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> {t('admin.weather_services')}</h3></div>
@@ -385,6 +370,19 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                 })}
                             </div>
                         </div>
+
+                        {/* ✅ NEW: LAB SIMULATION */}
+                        <div className="md:col-span-2 pt-6 border-t border-gray-700 flex justify-between items-center">
+                            <div className="flex flex-col">
+                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Cpu size={20} className="text-purple-500" /> Lab Simulation
+                                </h3>
+                                <p className="text-xs text-gray-400">Virtualize station hardware for testing.</p>
+                            </div>
+                            <button onClick={() => setShowSim(true)} className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold shadow-lg">
+                                OPEN SIMULATOR
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
@@ -396,6 +394,9 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                     </button>
                 </div>
             )}
+
+            {/* ✅ RENDER SIMULATION PANEL */}
+            <SimulationPanel isOpen={showSim} onClose={() => setShowSim(false)} />
         </div>
     );
 
