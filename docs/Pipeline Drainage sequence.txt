@@ -1,0 +1,246 @@
+
+💧 Pipeline Drainage Sequence
+
+# Branch 1
+
+## STEP 1
+
+### ST0
+
+- Vacuum Pump 1 [idx 2] -> ON
+- Vacuum Pump 2 [idx 3] -> ON
+- TH1 -> N/A
+
+
+### ST1
+
+- Transport Pump 1 [idx 0] -> Pulse ON 1 sec
+- Transport Pump 2 [idx 1] -> Pulse ON 1 sec
+- Empty (Drain) Valve T1 [idx 4] -> OFF
+- Open Valve T2 [idx 5] -> OFF
+- Empty (Drain) Valve T2 [idx 6] -> ON
+- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> OFF
+
+
+### ST2
+
+- Transport Pump [idx 8] -> Pulse ON 1 sec
+- Vacuum Pump [idx 9] -> ON
+- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> OFF
+- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> OFF
+
+
+### ST3
+
+- Transport Pump 1 [idx 12] -> Pulse ON 1 sec
+- Transport Pump 2 [idx 13] -> Pulse ON 1 sec
+- Vacuum Pump [idx 14] -> ON
+- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> OFF
+
+
+
+## STEP 2
+
+### ST0
+
+- Vacuum Pump 1 [idx 2] -> ON
+- Vacuum Pump 2 [idx 3] -> ON
+- TH1 -> N/A
+
+
+### ST1
+
+- Transport Pump 1 [idx 0] -> Pulse ON 1 sec
+- Transport Pump 2 [idx 1] -> Pulse ON 1 sec
+- Empty (Drain) Valve T1 [idx 4] -> OFF
+- Open Valve T2 [idx 5] -> OFF
+- Empty (Drain) Valve T2 [idx 6] -> ON
+- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> OFF
+
+
+### ST2
+
+- Transport Pump [idx 8] -> Pulse ON 1 sec
+- Vacuum Pump [idx 9] -> ON
+- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> OFF
+- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> ON
+
+
+### ST3
+
+- Transport Pump 1 [idx 12] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 13] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 14] -> ON
+- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> ON
+
+
+
+## STEP 3
+
+### ST0
+
+- Vacuum Pump 1 [idx 2] -> ON
+- Vacuum Pump 2 [idx 3] -> ON
+- TH1 -> N/A
+
+
+### ST1
+
+- Transport Pump 1 [idx 0] -> Pulse ON 1 sec
+- Transport Pump 2 [idx 1] -> Pulse ON 1 sec
+- Empty (Drain) Valve T1 [idx 4] -> OFF
+- Open Valve T2 [idx 5] -> OFF
+- Empty (Drain) Valve T2 [idx 6] -> OFF
+- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> ON
+
+
+### ST2
+
+- Transport Pump [idx 8] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 9] -> ON
+- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> ON
+- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> ON
+
+
+### ST3
+
+- Transport Pump 1 [idx 12] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 13] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 14] -> ON
+- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> OFF
+
+
+
+## STEP 4 ( Timer )
+
+### ST0
+
+- Vacuum Pump 1 [idx 2] -> ON
+- Vacuum Pump 2 [idx 3] -> ON
+- TH1 -> N/A
+
+
+### ST1
+
+- Transport Pump 1 [idx 0] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 1] -> NO Pulse ( Stay OFF )
+- Empty (Drain) Valve T1 [idx 4] -> ON
+- Open Valve T2 [idx 5] -> OFF
+- Empty (Drain) Valve T2 [idx 6] -> OFF
+- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> ON
+
+
+### ST2
+
+- Transport Pump [idx 8] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 9] -> ON
+- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> ON
+- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> OFF
+
+
+### ST3
+
+- Transport Pump 1 [idx 12] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 13] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 14] -> ON
+- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> OFF
+
+
+
+## STEP 5 ( Finish )
+
+### ST0
+
+- Vacuum Pump 1 [idx 2] -> ON
+- Vacuum Pump 2 [idx 3] -> ON
+- TH1 -> ON
+
+
+### ST1
+
+- Transport Pump 1 [idx 0] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 1] -> NO Pulse ( Stay OFF )
+- Empty (Drain) Valve T1 [idx 4] -> OFF
+- Open Valve T2 [idx 5] -> OFF
+- Empty (Drain) Valve T2 [idx 6] -> OFF
+- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> OFF
+
+
+### ST2
+
+- Transport Pump [idx 8] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 9] -> ON
+- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> OFF
+- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> OFF
+
+
+### ST3
+
+- Transport Pump 1 [idx 12] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 13] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 14] -> ON
+- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> OFF
+
+---
+
+# Branch 2
+
+## STEP 1
+
+### ST4
+
+- Transport Pump [idx 16] -> Pulse ON 1 sec
+- Vacuum Pump [idx 17] -> ON
+- Empty (Drain) Valve ST4 [idx 18] -> OFF
+
+
+
+## STEP 2 ( Timer )
+
+### ST4
+
+- Transport Pump [idx 16] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 17] -> ON
+- Empty (Drain) Valve ST4 [idx 18] -> ON
+
+
+
+## STEP 3 ( Finish )
+
+### ST4
+
+- Transport Pump [idx 16] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 17] -> ON
+- Empty (Drain) Valve ST4 [idx 18] -> OFF
+
+---
+
+# Branch 3 ( Station 5 is using the vacuum pump from Station 4 )
+
+## STEP 1
+
+### ST5
+
+- Transport Pump [idx 19] -> Pulse ON 1 sec
+- Vacuum Pump (ST4) [idx 17] -> ON
+- Empty (Drain) Valve ST4 [idx 20] -> OFF
+
+
+
+## STEP 2 ( Timer )
+
+### ST5
+
+- Transport Pump [idx 19] -> NO Pulse ( Stay OFF )
+- Vacuum Pump (ST4) [idx 17] -> ON
+- Empty (Drain) Valve ST4 [idx 20] -> ON
+
+
+
+## STEP 3 ( Finish )
+
+### ST5
+
+- Transport Pump [idx 19] -> NO Pulse ( Stay OFF )
+- Vacuum Pump (ST4) [idx 17] -> ON
+- Empty (Drain) Valve ST4 [idx 20] -> OFF

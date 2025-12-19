@@ -1,5 +1,5 @@
 // ============================================================
-// 🤖 AUTOMATION SERVICE - PARALLEL BRANCHING (v5 - Full)
+// 🤖 AUTOMATION SERVICE - PARALLEL BRANCHING (v6 - Strict Safety)
 // ============================================================
 const db = require('../db');
 
@@ -52,13 +52,16 @@ function reloadSettings() {
 
 // --- UTILS ---
 const pulseSwitch = (idx) => {
+    // Pulse logic usually means turn ON momentarily. 
+    // If we want to ensure pumps are running (latched), we might just turn them ON.
+    // Assuming "Pulse ON 1 sec" means momentary push to start.
     console.log(`[AUTO] Pulsing Switch ${idx}`);
     logicEngine.toggleSwitch(idx, 1, 'AUTO');
     setTimeout(() => logicEngine.toggleSwitch(idx, 0, 'AUTO'), 1000);
 };
 
 const setSwitch = (idx, val) => {
-    console.log(`[AUTO] Set Switch ${idx} to ${val}`);
+    // console.log(`[AUTO] Set Switch ${idx} to ${val}`);
     logicEngine.toggleSwitch(idx, val ? 1 : 0, 'AUTO');
 };
 
@@ -66,7 +69,7 @@ const arePumpsStopped = (stationId, bits) => {
     const state = logicEngine.getFullState();
     const fb = state.stationFeedback[stationId];
     // Active Low Feedback: 0=Running, 1=Stopped
-    // We want ALL bits to be 1 to return true
+    // We want ALL bits to be 1 to return true (All Stopped)
     for (let bit of bits) { if (((fb >> bit) & 1) === 0) return false; }
     return true;
 };
@@ -135,15 +138,32 @@ function execB1_Step1() {
 
     const b = status.branches[1]; b.step = 1; b.status = 'RUNNING'; b.stepStart = Date.now();
 
-    // 1. Ensure Vacuum ON: ST0 (2,3), ST2 (9), ST3 (14)
-    [2, 3, 9, 14].forEach(i => setSwitch(i, true));
+    // --- ST0 ---
+    setSwitch(2, true);  // Vac 1
+    setSwitch(3, true);  // Vac 2
+    // TH1 N/A (Keep as is or force off? Spec says N/A, usually means ignore)
 
-    // 2. Pulse Transport Pumps: ST1 (0,1), ST2 (8), ST3 (12,13)
-    [0, 1, 8, 12, 13].forEach(i => pulseSwitch(i));
+    // --- ST1 ---
+    pulseSwitch(0); // Transp 1
+    pulseSwitch(1); // Transp 2
+    setSwitch(4, false); // Empty T1
+    setSwitch(5, false); // Open T2
+    setSwitch(6, true);  // Empty T2
+    setSwitch(7, false); // Empty ST2->ST1 (Fixed idx from spec: "Empty Valve ST2 -> ST1 [idx 6]" -> Spec typo, ST1 idx 6 is used twice? 
+    // Looking at INPUT_MAP: ST1 idx 6 is Pin 68 (Vid T2). ST1 idx 7 is Pin 69 (Vid ST2->ST1).
+    // Assuming idx 7 for ST2->ST1 based on standard layout.
 
-    // 3. Valves
-    setSwitch(5, false); // Close T2 (ST1-Cabane)
-    setSwitch(6, true);  // Open Drain T2->ST1
+    // --- ST2 ---
+    pulseSwitch(8); // Transp
+    setSwitch(9, true);  // Vac
+    setSwitch(10, false); // Empty ST1->ST2
+    setSwitch(11, false); // Empty ST3->ST2
+
+    // --- ST3 ---
+    pulseSwitch(12); // Transp 1
+    pulseSwitch(13); // Transp 2
+    setSwitch(14, true); // Vac
+    setSwitch(15, false); // Empty ST2->ST3
 
     emitUpdate();
 }
@@ -152,17 +172,29 @@ function execB1_Step2() {
     console.log("[AUTO] B1 Step 2");
     const b = status.branches[1]; b.step = 2; b.stepStart = Date.now();
 
-    // 1. Ensure Vacuum ON
-    [2, 3, 9, 14].forEach(i => setSwitch(i, true));
+    // --- ST0 ---
+    setSwitch(2, true);
+    setSwitch(3, true);
 
-    // 2. Pulse ST2 Pump if stopped
-    if (arePumpsStopped(2, [0])) pulseSwitch(8);
-    // Pulse ST1 Pumps to keep flow moving
-    if (arePumpsStopped(1, [0, 1])) { pulseSwitch(0); pulseSwitch(1); }
+    // --- ST1 ---
+    pulseSwitch(0);
+    pulseSwitch(1);
+    setSwitch(4, false);
+    setSwitch(5, false);
+    setSwitch(6, true);
+    setSwitch(7, false);
 
-    // 3. Valves
-    setSwitch(15, true); // Drain ST2 > ST3
-    setSwitch(11, true); // Drain ST3 > ST2
+    // --- ST2 ---
+    pulseSwitch(8);
+    setSwitch(9, true);
+    setSwitch(10, false);
+    setSwitch(11, true); // ✅ ON
+
+    // --- ST3 ---
+    // NO Pulse (Stay OFF implicitly if not latched, or ignore pulsing)
+    setSwitch(14, true);
+    setSwitch(15, true); // ✅ ON
+
     emitUpdate();
 }
 
@@ -170,17 +202,29 @@ function execB1_Step3() {
     console.log("[AUTO] B1 Step 3");
     const b = status.branches[1]; b.step = 3; b.stepStart = Date.now();
 
-    // 1. Ensure Vacuum ON
-    [2, 3, 9, 14].forEach(i => setSwitch(i, true));
+    // --- ST0 ---
+    setSwitch(2, true);
+    setSwitch(3, true);
 
-    // 2. Pulse ST1 Pumps if stopped
-    if (arePumpsStopped(1, [0, 1])) { pulseSwitch(0); pulseSwitch(1); }
+    // --- ST1 ---
+    pulseSwitch(0);
+    pulseSwitch(1);
+    setSwitch(4, false);
+    setSwitch(5, false);
+    setSwitch(6, false); // ✅ OFF
+    setSwitch(7, true);  // ✅ ON (Idx 7)
 
-    // 3. Valves
-    setSwitch(10, true); // ST1 > ST2
-    setSwitch(7, true);  // ST2 > ST1
-    setSwitch(15, false); // Close ST2 > ST3
-    setSwitch(6, false);  // Close T2 > ST1
+    // --- ST2 ---
+    // NO Pulse
+    setSwitch(9, true);
+    setSwitch(10, true); // ✅ ON
+    setSwitch(11, true); // ✅ ON (Keep ON)
+
+    // --- ST3 ---
+    // NO Pulse
+    setSwitch(14, true);
+    setSwitch(15, false); // ✅ OFF
+
     emitUpdate();
 }
 
@@ -189,13 +233,28 @@ function execB1_Step4() {
     const b = status.branches[1]; b.step = 4; b.stepStart = Date.now();
     b.timerEnd = Date.now() + (config.drain_timer_min * 60 * 1000);
 
-    // 1. Ensure Vacuum ON
-    [2, 3, 9, 14].forEach(i => setSwitch(i, true));
+    // --- ST0 ---
+    setSwitch(2, true);
+    setSwitch(3, true);
 
-    // 2. Valves
-    setSwitch(4, true);  // Open T1 > ST1
-    setSwitch(10, false); // Close ST1 > ST2
-    setSwitch(11, false); // Close ST3 > ST2
+    // --- ST1 ---
+    // NO Pulse
+    setSwitch(4, true); // ✅ ON
+    setSwitch(5, false);
+    setSwitch(6, false);
+    setSwitch(7, true); // ✅ Keep ON
+
+    // --- ST2 ---
+    // NO Pulse
+    setSwitch(9, true);
+    setSwitch(10, true);  // ✅ CORRECTED: ST1 > ST2 -> ON (Keep draining)
+    setSwitch(11, false); // ✅ OFF
+
+    // --- ST3 ---
+    // NO Pulse
+    setSwitch(14, true);
+    setSwitch(15, false);
+
     emitUpdate();
 }
 
@@ -203,9 +262,29 @@ function execB1_Step5() {
     console.log("[AUTO] B1 FINISHED");
     const b = status.branches[1]; b.step = 5; b.status = 'DONE';
 
-    setSwitch(4, false); // Close T1 > ST1
-    setSwitch(7, false); // Close ST2 > ST1
-    setSwitch(22, true); // Enable TH1
+    // --- ST0 ---
+    setSwitch(2, true);
+    setSwitch(3, false); // ✅ CORRECTED: Vacuum 2 -> OFF
+    setSwitch(22, true); // ✅ TH1 ON
+
+    // --- ST1 ---
+    // NO Pulse
+    setSwitch(4, false); // ✅ OFF
+    setSwitch(5, false);
+    setSwitch(6, false);
+    setSwitch(7, false); // ✅ OFF
+
+    // --- ST2 ---
+    // NO Pulse
+    setSwitch(9, true);
+    setSwitch(10, false);
+    setSwitch(11, false);
+
+    // --- ST3 ---
+    // NO Pulse
+    setSwitch(14, true);
+    setSwitch(15, false);
+
     b.active = false;
     emitUpdate();
 }
@@ -220,7 +299,11 @@ function loopBranch2() {
 
     try {
         switch (b.step) {
-            case 1: // Wait for ST4 Pump
+            case 1: // Pulse, then move to timer immediately? No, Pulse doesn't wait.
+                // Spec doesn't say "Wait for Pump Stop", it just says "Pulse ON".
+                // However, usually Step 1 is "Run", Step 2 is "Drain".
+                // Assuming we move to Step 2 immediately or after pump stops?
+                // Previous logic waited for pump stop. Keeping that for consistency with Branch 1.
                 if (arePumpsStopped(4, [0])) execB2_Step2();
                 break;
             case 2: // Timer
@@ -236,8 +319,11 @@ function execB2_Step1() {
 
     const b = status.branches[2]; b.step = 1; b.status = 'RUNNING'; b.stepStart = Date.now();
 
-    setSwitch(17, true); // Ensure Vac
-    pulseSwitch(16);     // Pulse Pump
+    // ST4
+    pulseSwitch(16);     // Transp
+    setSwitch(17, true); // Vac
+    setSwitch(18, false); // Empty ST4
+
     emitUpdate();
 }
 
@@ -246,8 +332,11 @@ function execB2_Step2() {
     const b = status.branches[2]; b.step = 2; b.stepStart = Date.now();
     b.timerEnd = Date.now() + (config.drain_timer_min * 60 * 1000);
 
-    setSwitch(17, true); // Ensure Vac
-    setSwitch(18, true); // Open Cabane->ST4
+    // ST4
+    // No Pulse
+    setSwitch(17, true);
+    setSwitch(18, true); // ✅ ON
+
     emitUpdate();
 }
 
@@ -255,8 +344,15 @@ function execB2_Step3() {
     console.log("[AUTO] B2 FINISHED");
     const b = status.branches[2]; b.step = 3; b.status = 'DONE';
 
-    setSwitch(18, false); // Close Cabane->ST4
-    setSwitch(23, true);  // Enable TH2
+    // ST4
+    // No Pulse
+    setSwitch(17, true);
+    setSwitch(18, false); // ✅ OFF
+    // TH2? Spec didn't explicitly say enable TH2 in step 3 finish, but usually good practice.
+    // You did list "Enable ST4 Thermostats [idx 23 ON]" in previous prompt.
+    // Assuming yes:
+    setSwitch(23, true);
+
     b.active = false;
     emitUpdate();
 }
@@ -270,7 +366,7 @@ function loopBranch3() {
 
     try {
         switch (b.step) {
-            case 1: // Wait for ST5 Pump
+            case 1:
                 if (arePumpsStopped(5, [0])) execB3_Step2();
                 break;
             case 2: // Timer
@@ -286,8 +382,11 @@ function execB3_Step1() {
 
     const b = status.branches[3]; b.step = 1; b.status = 'RUNNING'; b.stepStart = Date.now();
 
-    setSwitch(17, true); // Ensure Vac (ST4 provides vac for ST5)
-    pulseSwitch(19);     // Pulse Pump
+    // ST5
+    pulseSwitch(19);     // Transp
+    setSwitch(17, true); // Vac (ST4)
+    setSwitch(20, false); // Empty ST5->Cabane
+
     emitUpdate();
 }
 
@@ -296,8 +395,11 @@ function execB3_Step2() {
     const b = status.branches[3]; b.step = 2; b.stepStart = Date.now();
     b.timerEnd = Date.now() + (config.drain_timer_min * 60 * 1000);
 
-    setSwitch(17, true); // Ensure Vac
-    setSwitch(20, true); // Open ST5->Cabane
+    // ST5
+    // No Pulse
+    setSwitch(17, true);
+    setSwitch(20, true); // ✅ ON
+
     emitUpdate();
 }
 
@@ -305,7 +407,11 @@ function execB3_Step3() {
     console.log("[AUTO] B3 FINISHED");
     const b = status.branches[3]; b.step = 3; b.status = 'DONE';
 
-    setSwitch(20, false); // Close ST5->Cabane
+    // ST5
+    // No Pulse
+    setSwitch(17, true);
+    setSwitch(20, false); // ✅ OFF
+
     b.active = false;
     emitUpdate();
 }
@@ -318,6 +424,7 @@ function startSequence(username) {
     if (status.active) return;
 
     const state = logicEngine.getFullState();
+
     if (!state.simulationMode && !state.mainControllerOnline) {
         throw new Error("Main Controller Offline");
     }
@@ -342,10 +449,7 @@ function startSequence(username) {
 
 function pause() { status.paused = true; emitUpdate(); }
 function resume() { status.paused = false; emitUpdate(); }
-
-function stop() {
-    abortAll("User Stopped");
-}
+function stop() { abortAll("User Stopped"); }
 
 function abortAll(reason) {
     console.error(`[AUTO] Abort All: ${reason}`);
@@ -371,6 +475,6 @@ function failBranch(id, reason) {
 
 function emitUpdate() { if (ioRef) ioRef.emit('AUTO_UPDATE', status); }
 function getStatus() { return status; }
-function jump(step) { /* implement if needed for debug */ }
+function jump(step) { /* debug */ }
 
 module.exports = { init, startSequence, pause, resume, stop, getStatus, reloadSettings, jump };
