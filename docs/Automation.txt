@@ -1,0 +1,183 @@
+
+💧 Pipeline Drainage Sequence
+Step 1: Initialization & Drain pipe T2 to station 1
+
+Goal: Apply vacuum to the system and begin draining ST1 line 2 (Station 1 Transport Line 2) back into Station 1.
+
+Actions:
+
+- Make sure ST1, ST2, ST3, ST4, ST5 are pushing maple sap to the Cabane. Pulse ON all Transport Pumps (ST1, ST2, ST3) [idx 0, 1, 8, 12, 13].
+
+- Make sure ST1, ST2, ST3, ST4 vacuum are active. Their switches [ST0 idx 2, 3, ST2 idx 9, ST3 idx 14] are on and their Vacuum feedback are GREEN.
+
+- Stop sending maple sap to the Cabane through ST1 line 2 (T2). Close Valve T2 (ST1 → Cabane) [ST1 idx 5 OFF]
+
+- Open Drain Valve T2 → ST1 [ST1 idx 6 ON] to let ST1 line 2 (T2) drain back into Station 1.
+
+Transition Trigger Branch 1: Wait until ST3 Transport Pumps [idx 12, 13 Both OFF] both stop automatically with level sensor (feedback lights turn RED).
+
+Meaning: ST3 or ST4 or ST5 has run dry.
+
+
+Step 1 Branch 2: Initialization ST4
+
+Goal: Apply vacuum to ST4 and ST5
+
+- Make sure ST4 is pushing maple sap to the Cabane. Pulse ON ST4 Transport Pumps [ST4 idx 16].
+
+- Make sure ST4 vacuum is active. Its switch [ST4 idx 17 ON] is on and their Vacuum feedback is GREEN.
+
+Transition Trigger Branch 2: Wait until ST4 Transport Pumps [idx 16 OFF] stops automatically with level sensor (feedback light turn RED).
+
+
+Step 1 Branch 3: Initialization ST5
+
+Goal: Apply vacuum to ST4 and ST5
+
+- Make sure ST5 is pushing maple sap to the Cabane. Pulse ON ST5 Transport Pumps [ST5 idx 19].
+
+- Make sure ST4 vacuum is active. Its switch [ST4 idx 17 ON] is on and its Vacuum feedback is GREEN.
+
+Transition Trigger Branch 3: Wait until ST5 Transport Pumps [idx 19 OFF] stops automatically with level sensor (feedback light turn RED).
+
+---
+
+Step 2 Branch 1: Drain ST2 ↔ ST3 ( triggered by Step 1 Branch 1 - Transition Trigger Branch 1 )
+
+Goal: Drain the line between Station 2 and Station 3.
+
+Actions:
+
+- Make sure ST1, ST2 are still pushing maple sap to the Cabane. Pulse ON Transport Pumps (ST1, ST2) [ST1 idx 0, 1, ST2 idx 8].
+
+- Make sure ST1, ST2, ST3 vacuum are still active. Their switches [ST0 idx 2, 3, ST2 idx 9, ST3 idx 14 ON] are on and their Vacuum feedback are GREEN.
+
+- Open Drain Valve ST2 → ST3 [ST3 idx 15 ON] drain back into Station 3.
+
+- Open Drain Valve ST3 → ST2 [ST2 idx 11 ON] drain back into Station 2.
+
+
+Transition Trigger Branch 1: Wait until ST2 Transport Pump [ST2 idx 8 OFF] stops automatically with level sensor (feedback lights turn RED).
+
+Meaning: ST2 has run dry.
+
+
+Step 2 Branch 2: Drain Cabane → ST4 ( triggered by Step 1 Branch 2 - Transition Trigger Branch 2 )
+
+Goal: Drain the line between Cabane and Station 4.
+
+Actions:
+
+- Make sure ST4 vacuum is still active. Its switche [ST4 idx 17 ON] is on and its Vacuum feedback are GREEN.
+
+- Open Drain Valve Cabane → ST4. [ST4 idx 18 ON] drain back into Station 4.
+
+Transition Trigger Branch 2: Wait for Timer (Default 15 minutes) to expire - Enough time to drain back into Station 4.
+
+
+Step 2 Branch 3: Drain Cabane → ST5 ( triggered by Step 1 Branch 3 - Transition Trigger Branch 3 )
+
+Goal: Drain the line between Cabane and Station 5.
+
+Actions:
+
+- Make sure ST4 vacuum is still active. Its switche [ST4 idx 17 ON] is on and its Vacuum feedback are GREEN.
+
+- Open Drain Valve ST5 → Cabane [ST5 idx 20 ON] drain back into Station 5.
+
+Transition Trigger Branch 3: Wait for Timer (Default 15 minutes) to expire - Enough time to drain back into Station 5.
+
+---
+
+Step 3 Branch 1: Drain ST1 ↔ ST2 (and Cleanup T2/ST3)
+
+Goal: Drain the line between Station 1 and Station 2, while closing the valves from previous steps that are now empty.
+
+Actions:
+
+- Make sure ST1, is still pushing maple sap to the Cabane. Pulse ON Transport Pumps (ST1) [ST1 idx 0, 1].
+
+- Make sure ST1, ST2, ST3 vacuum are active. Their switches [ST0 idx 2, 3, ST2 idx 9, ST3 idx 14 ON] are on and their Vacuum feedback are GREEN.
+
+- Open Drain Valve ST1 → ST2 [ST2 idx 10 ON] drain back into Station 2.
+
+- Open Drain Valve ST2 → ST1 [ST1 idx 7 ON] drain back into Station 1.
+
+- Close Drain Valve ST2 → ST3 [ST3 idx 15 OFF] (Step 2 Branch 1 Cleanup).
+
+- Close Drain Valve T2 → ST1 [ST1 idx 6 OFF] (Step 1 Branch 1 Cleanup).
+
+Transition Trigger: Wait until ST1 Transport Pumps (idx 0, 1) turn RED (Stopped).
+
+Meaning: ST1 has run dry.
+
+
+Step 3 Branch 2: Finish
+
+Goal: Close Station 4 open drain valve and enable thermostat to trigger vacuum pumps when the temperature is warm enough for trees to produce sap
+
+Actions:
+
+- Close Drain Valve Cabana → ST4 [ST4 idx 18 OFF] (Step 2 Branch 2 Cleanup).
+
+- Enable ST4 Thermostats [idx 23 ON] to trigger vacuum pump when the outside temperature is warm enough for the trees to produce sap.
+
+Result: Automation Branch 2 Complete.
+
+
+Step 3 Branch 3: Finish
+
+Goal: Close Station 5 open drain valve and finish branch automation.
+
+Actions:
+
+- Close Drain Valve Cabane → ST5 [ST5 idx 20 OFF] (Step 2 Branch 3 Cleanup).
+
+Result: Automation Branch 3 Complete.
+
+---
+
+Step 4 Branch 1: Drain Cabane ↔ ST1 (Timer Phase)
+
+Goal: Drain the final section between the Cabane and Station 1. Since ST1 is the last stop, we rely on a timer here rather than a pump stopping.
+
+Actions:
+
+- Make sure ST1, ST2, ST3 vacuum are active. Their switches [ST0 idx 2, 3, ST2 idx 9, ST3 idx 14 ON] are on and their Vacuum feedback are GREEN.
+
+- Open Drain Valve T1 → ST1 [ST1 idx 4 ON] drain back into Station 1.
+
+- Close Drain Valves at ST2 [ST2 idx 10 & 11 OFF] (Step 2/3 Branch 1 Cleanup).
+
+Transition Trigger: Wait for Timer (Default 15 minutes) to expire.
+
+
+
+Step 5 Branch 1: Finish
+
+Goal: Close all remaining open valves and enable thermostat to trigger vacuum pumps when the temperature is warm enough for trees to produce sap
+
+Actions:
+
+- Close Drain Valve T1 → ST1 [ST1 idx 4 OFF] (Step 4 Branch 1 Cleanup).
+
+- Close Drain Valve ST2 → ST1 [ST1 idx 7 OFF]  (Step 3 Branch 1 Cleanup).
+
+- Enable ST0 Thermostats [idx 23 ON] to trigger vacuum pump when the outside temperature is warm enough for the trees to produce sap.
+
+Result: Automation Branch 1 Complete.
+
+
+
+❓ Verification Questions
+
+Step 1 Trigger: Is waiting for ST3 pumps to stop the correct trigger to move to Step 2? (Or should we wait for ST4/ST5?)
+-> ST4 and ST5 are splitting into separate branches, so no we shouldn't wait for ST4/ST5 to mode to step 2 branch 1
+
+Step 2 Logic: We open drains both ways (ST2->ST3 and ST3->ST2). Is this correct? (Usually, you drain downhill or in one direction, but opening both is valid if there are low points).
+- The lines are downhill from the middle of the line towards the stations. There is a check valve in between the lines to let air in when there is vacuum. IF pressure, the check valves are closed.
+
+Step 3 Cleanup: We close ST3 idx 15 (Drain ST2->ST3). Should we also close ST2 idx 11 (Drain ST3->ST2) here, or is it correct to wait until Step 4 to close it? (Current logic waits until Step 4).
+-> Still correct to wait until Step 4 to close it.
+
+Please verify my corrections below and comeback with your understanding of the automation before proceeding. Let me know if you have other questions.

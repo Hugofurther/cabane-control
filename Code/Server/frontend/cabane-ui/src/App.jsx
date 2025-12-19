@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Settings, Mail, StickyNote, Activity, LogOut, Cloud } from 'lucide-react';
+import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock } from 'lucide-react';
 import axios from 'axios';
-import { useTranslation } from 'react-i18next'; // ✅ Import i18n
+import { useTranslation } from 'react-i18next';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
 import { StationCard } from './components/StationCard';
 import { UserSettings } from './components/UserSettings';
@@ -9,21 +9,24 @@ import { NotificationBanner } from './components/NotificationBanner';
 import { AuthPage } from './components/AuthPage';
 import { MessageDrawer } from './components/MessageDrawer/index';
 import { ShareModal } from './components/MessageDrawer/ShareModal';
-import { Clock } from './components/Clock';
 import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer';
+import { AutomationModal } from './components/AutomationModal'; // ✅ NEW
 import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
 import { AutoLockProvider } from './contexts/AutoLockContext';
 import { LockScreen } from './components/LockScreen';
+import { Clock as DigitalClock } from './components/Clock';
+import { AutomationBanner } from './components/AutomationBanner'; // ✅ NEW
+
 
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 const BUZZER_SWITCH_IDX = 21;
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 function Dashboard() {
-  const { t } = useTranslation(); // ✅ Hook
+  const { t } = useTranslation();
   const {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings
   } = useSocket();
@@ -33,6 +36,23 @@ function Dashboard() {
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
+  const [showAutomation, setShowAutomation] = useState(false); // ✅ NEW
+  const [showAutomationModal, setShowAutomationModal] = useState(false);
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleAuto = (status) => {
+      setIsAutoRunning(status.active);
+      // If active, close launch modal automatically
+      if (status.active) setShowAutomationModal(false);
+    };
+    socket.on('AUTO_UPDATE', handleAuto);
+    return () => socket.off('AUTO_UPDATE', handleAuto);
+  }, [socket]);
+
+
+
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
 
@@ -48,7 +68,6 @@ function Dashboard() {
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [hasNotes, setHasNotes] = useState(false);
-
   const [isLargeScreen, setIsLargeScreen] = useState(window.innerWidth >= 1024);
 
   const audioCtx = useRef(null);
@@ -98,7 +117,6 @@ function Dashboard() {
               if (isOn) {
                 if (isFeedbackOff) {
                   vacuumAlarm = true;
-                  // ✅ Translated source name
                   sources.push(`${t(card.name)} - ${t(ctrl.label)}`);
                 } else {
                   systemRunning = true;
@@ -239,7 +257,7 @@ function Dashboard() {
     else if (isChirpActive) {
       setAlarmDismissed(false);
       if (!reminderDismissed) {
-        setNotification({ type: 'INFO', message: t('notifications.muted_reminder') }); // ✅ Translated
+        setNotification({ type: 'INFO', message: t('notifications.muted_reminder') });
       } else {
         setNotification(null);
       }
@@ -296,6 +314,12 @@ function Dashboard() {
         />
       )}
 
+
+
+      {/* ✅ AUTOMATION MODAL */}
+      <AutomationModal isOpen={showAutomationModal} onClose={() => setShowAutomationModal(false)} />
+      <AutomationBanner /> {/* ✅ Always rendered, handles its own visibility */}
+
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
 
         {/* Left Status */}
@@ -322,7 +346,7 @@ function Dashboard() {
 
         {/* Center */}
         <div className="flex-grow flex flex-col items-center justify-center gap-2">
-          <Clock />
+          <DigitalClock />
           <Weather />
         </div>
 
@@ -338,6 +362,14 @@ function Dashboard() {
             <div className="flex gap-2 shrink-0">
               <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
               {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
+
+              {/* ✅ DRAINAGE BUTTON */}
+              {/* Only show Launch button if NOT running */}
+              {!isAutoRunning && (
+                <button onClick={() => setShowAutomationModal(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation">
+                  <Clock size={20} />
+                </button>
+              )}
             </div>
           )}
 

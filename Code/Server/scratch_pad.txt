@@ -542,6 +542,14 @@ Verify with Station Controller & Main Controller
 
 NEXT
 
+- AutomationModal.jsx background opacity and blur are not the standard for the app. Please set them to what we are using fo the other modals.
+
+- Automation confirmation modal ti
+
+
+
+
+
 - I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
 
 

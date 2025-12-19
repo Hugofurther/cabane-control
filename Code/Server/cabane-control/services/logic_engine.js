@@ -1,4 +1,5 @@
 const udpService = require('./udp_service');
+const automationService = require('./automation_service'); // ✅ NEW IMPORT
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./cabane.db');
 
@@ -20,7 +21,7 @@ const state = {
     disabledStations: []
 };
 
-// Cache Config
+// Cache Config to sync on reconnect
 let cachedConfig = {
     onSec: 5,
     offSec: 10,
@@ -28,7 +29,9 @@ let cachedConfig = {
     burgSt: 0
 };
 
+// State Diffing
 let lastPushedStateStr = "";
+
 let controlHandshakeConfirmed = false;
 let lastControlTakeTime = 0;
 let lastReleaseTime = 0;
@@ -72,7 +75,7 @@ function logSystemEvent(type, message) {
     if (ioRef) ioRef.emit('NEW_LOG', { id: Date.now(), timestamp, user_id: null, username: 'SYSTEM', type, message });
 }
 
-// ✅ HELPER: Calculate Bitmask
+// Helper: Calculate Bitmask for Station Enables
 function getStationMask() {
     let mask = 0;
     for (let i = 0; i < 6; i++) {
@@ -93,6 +96,7 @@ function init(io) {
                 if (row.key === 'disabled_stations') {
                     try { state.disabledStations = JSON.parse(row.value); } catch (e) { }
                 }
+                // Load Initial Config into Cache
                 if (row.key === 'buzzer_alarm_on') cachedConfig.onSec = parseInt(row.value) || 5;
                 if (row.key === 'buzzer_alarm_off') cachedConfig.offSec = parseInt(row.value) || 10;
                 if (row.key === 'buzzer_reminder_min') cachedConfig.remMin = parseInt(row.value) || 2;
@@ -100,6 +104,10 @@ function init(io) {
             });
         }
     });
+
+    // ✅ INIT AUTOMATION SERVICE (Pass exports so it can call toggleSwitch)
+    automationService.init(module.exports, io);
+
     setInterval(checkHeartbeats, 1000);
     setInterval(controlLoop, 100);
 }
@@ -107,17 +115,15 @@ function init(io) {
 function getFullState() { return state; }
 function updateTimezone(newTz) { state.timezone = newTz; pushUpdate(); }
 
-// ✅ UPDATED: Trigger Config Sync when Disabled list changes
 function updateDisabled(jsonStr) {
     try {
         state.disabledStations = JSON.parse(jsonStr);
         // Sync to Arduino immediately
         pushConfigToArduino();
         pushUpdate();
-    } catch (e) { console.error("Update Disabled Failed:", e); }
+    } catch (e) { }
 }
 
-// ✅ UPDATED: Unified Config Push
 function updateConfig(onSec, offSec, remMin, burgSt) {
     if (onSec > 0 && offSec > 0 && remMin > 0) {
         cachedConfig = { onSec, offSec, remMin, burgSt };
@@ -126,13 +132,14 @@ function updateConfig(onSec, offSec, remMin, burgSt) {
     }
 }
 
-// ✅ NEW: Helper to send full config (Buzzer + Station Mask)
+// Helper to send full config (Buzzer + Station Mask)
 function pushConfigToArduino() {
     const mask = getStationMask();
     udpService.sendConfigPacket(cachedConfig.onSec, cachedConfig.offSec, cachedConfig.remMin, cachedConfig.burgSt, mask);
     console.log(`[LOGIC] Sent Config: On=${cachedConfig.onSec}s, Off=${cachedConfig.offSec}s, Mask=${mask.toString(2).padStart(6, '0')}`);
 }
 
+// Centralized Override Logic
 function applyThermostatOverrides() {
     let changed = false;
     THERMOSTATS.forEach(th => {
@@ -154,12 +161,13 @@ function applyThermostatOverrides() {
 function updatePhysicalState(switchBytes, isOverrideActive) {
     state.lastMainHeartbeat = Date.now();
 
+    // 1. Detect Reconnection (Offline -> Online)
     if (!state.mainControllerOnline) {
         state.mainControllerOnline = true;
         console.log("[SYNC] 🟢 Main Controller RECONNECTED. Forcing CABANE Mode.");
         logSystemEvent('SYSTEM', "Main Controller Online. Restoring Physical Control.");
 
-        // ✅ SYNC ON RECONNECT
+        // SYNC CONFIG ON RECONNECT
         console.log("[SYNC] Pushing settings to Main Controller...");
         pushConfigToArduino();
 
@@ -173,6 +181,7 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         return;
     }
 
+    // Update Physical State
     for (let i = 0; i < 24; i++) {
         const byteIdx = Math.floor(i / 8);
         const bitIdx = i % 8;
@@ -189,6 +198,7 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
     }
 
     if (state.controller === 'CABANE') {
+        // Reset Virtual to match Physical
         state.virtualSwitches = [...state.physicalSwitches];
         applyThermostatOverrides();
 
@@ -262,7 +272,10 @@ function releaseToCabane() {
 
 function toggleSwitch(idx, value) {
     if (idx < 0 || idx > 23) return;
+
+    // Allow Automation to bypass user checks (controller just needs to be non-CABANE)
     if (state.controller === 'CABANE') return;
+
     state.virtualSwitches[idx] = value ? 1 : 0;
     pushUpdate();
 }
@@ -274,6 +287,7 @@ function controlLoop() {
 
     if (applyThermostatOverrides()) stateChanged = true;
 
+    // Vacuum Alarms
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
         if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) return;
@@ -288,6 +302,7 @@ function controlLoop() {
         stateChanged = true; alarmCycleStart = now;
     }
 
+    // Burglar Check
     let burgDetected = false;
     if (cachedConfig.burgSt === 2 && state.stationOnline[2]) {
         if ((state.stationFeedback[2] >> 4) & 1) burgDetected = true;
@@ -301,6 +316,7 @@ function controlLoop() {
         stateChanged = true;
     }
 
+    // Audio Logic
     const isSirenCondition = (state.globalVacuumAlarm || state.burglarAlarm) && state.buzzerEnabled;
     const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
     const isChirpCondition = !state.globalVacuumAlarm && !state.burglarAlarm && !state.buzzerEnabled && anyVacuumRunning;
@@ -351,6 +367,7 @@ function checkHeartbeats() {
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
         state.mainControllerOnline = false;
         if (state.controller === 'CABANE') {
+            console.log("[FAILSAFE] Auto-switching to SERVER.");
             state.controller = 'SERVER';
             state.currentUser = null;
             udpService.sendOverrideCommand(1);
