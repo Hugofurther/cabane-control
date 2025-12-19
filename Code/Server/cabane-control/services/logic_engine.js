@@ -20,7 +20,8 @@ const state = {
     buzzerEnabled: false,
     buzzerStatus: 'OFF',
     timezone: 'UTC',
-    disabledStations: []
+    disabledStations: [],
+    simulationMode: false // ✅ NEW
 };
 
 // Cache Config to sync on reconnect
@@ -109,9 +110,16 @@ function init(io) {
 
     // ✅ INIT AUTOMATION SERVICE (Pass exports so it can call toggleSwitch)
     automationService.init(module.exports, io);
+    simulationService.init(io); // ✅ Init Sim with IO
 
     setInterval(checkHeartbeats, 1000);
     setInterval(controlLoop, 100);
+}
+
+// ✅ NEW: Called by Simulation Service
+function setSimulationMode(isActive) {
+    state.simulationMode = isActive;
+    pushUpdate();
 }
 
 function getFullState() { return state; }
@@ -225,6 +233,16 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         }
     }
     pushUpdate();
+}
+
+// ✅ NEW: Heartbeat-only update
+function updateStationHeartbeat(id) {
+    if (id >= 0 && id < 6) {
+        state.stationOnline[id] = true;
+        state.stationLastSeen[id] = Date.now();
+        if (id === 1) { state.stationOnline[0] = true; state.stationLastSeen[0] = Date.now(); }
+        pushUpdate();
+    }
 }
 
 function updateStationFeedback(id, bits) {
@@ -353,6 +371,7 @@ function controlLoop() {
         // ✅ HOOK SIMULATOR
         simulationService.onCommandReceived(stationBytes);
 
+        // Always send UDP (Real hardware might be listening)
         udpService.sendGlobalBroadcast(stationBytes);
 
         const virtualBytes = [0, 0, 0];
@@ -398,6 +417,6 @@ function pushUpdate() {
 }
 
 module.exports = {
-    init, getFullState, updatePhysicalState, updateStationFeedback,
-    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig
+    init, getFullState, updatePhysicalState, updateStationFeedback, updateStationHeartbeat, // ✅ Exported
+    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig, setSimulationMode: (mode) => { state.simulationMode = mode; pushUpdate(); }
 };

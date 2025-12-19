@@ -13,15 +13,21 @@ router.post('/simulation/toggle', authenticateToken, requireAdmin, (req, res) =>
     res.json({ success: true });
 });
 
-router.post('/simulation/station/auto', authenticateToken, (req, res) => {
-    const { id, auto } = req.body;
-    simulationService.setAuto(id, auto);
+router.post('/simulation/station/connection', authenticateToken, (req, res) => {
+    const { id } = req.body;
+    simulationService.toggleStationConnection(id);
     res.json({ success: true });
 });
 
-router.post('/simulation/station/input', authenticateToken, (req, res) => {
-    const { id, bit, value } = req.body; // value: true=ON, false=OFF
-    simulationService.setInput(id, bit, value);
+router.post('/simulation/relay/config', authenticateToken, (req, res) => {
+    const { id, bit, updates } = req.body;
+    simulationService.updateRelayConfig(id, bit, updates);
+    res.json({ success: true });
+});
+
+router.post('/simulation/input/toggle', authenticateToken, (req, res) => {
+    const { id, bit } = req.body;
+    simulationService.toggleManualInput(id, bit);
     res.json({ success: true });
 });
 

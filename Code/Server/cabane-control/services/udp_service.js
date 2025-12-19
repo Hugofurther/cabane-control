@@ -56,26 +56,38 @@ function setupSocket(sock, port, label) {
 function parsePacket(msg, rinfo) {
     if (msg.length < 3) return;
 
+    // Isolation Logic
+    if (logicEngine) {
+        const state = logicEngine.getFullState();
+        if (state.simulationMode) {
+            if (rinfo.address !== '127.0.0.1' && rinfo.address !== '::1') return;
+        }
+    }
+
     const header = msg[0];
 
-    // 0xAC: STATION FEEDBACK (Now received via socketFb on 8889)
+    // 0xAC: STATION FEEDBACK
     if (header === 0xAC && msg.length >= 4) {
         const id = msg[1];
         const bits = msg[2];
         if (logicEngine) logicEngine.updateStationFeedback(id, bits);
     }
 
-    // 0xB1: MAIN CONTROLLER PHYSICAL STATE (Received via socketCmd on 8888)
+    // ✅ NEW: 0xAB HEARTBEAT HANDLER
+    else if (header === 0xAB && msg.length >= 2) {
+        const id = msg[1];
+        if (logicEngine) logicEngine.updateStationHeartbeat(id);
+    }
+
+    // 0xB1: MAIN CONTROLLER PHYSICAL STATE
     else if (header === 0xB1 && msg.length >= 7) {
         const switchBytes = [msg[2], msg[3], msg[4]];
         const isOverrideActive = (msg[5] === 0x01);
         if (logicEngine) logicEngine.updatePhysicalState(switchBytes, isOverrideActive);
     }
 
-    // 0xAD: CONFLICT CHECK (Received via socketFb on 8889 usually, but checking both is safe)
+    // 0xAD: CONFLICT CHECK
     else if (header === 0xAD && msg.length >= 3) {
-        // Import check function logic here or expose it from logic engine
-        // Since we defined checkAndDenyConflict locally previously:
         checkAndDenyConflict(msg[1]);
     }
 }

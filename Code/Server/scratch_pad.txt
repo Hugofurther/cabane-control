@@ -520,7 +520,7 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ Main Controller - Slave Mode blinking GREEN -> let's remove the BUZZER and just keep the 2 Thermostat for the Blinking.
 
 √ When resizing the StationCard and the card's title becomes 3 lines, the title gets stacked over the horizontal line. Can we fix this so the title doesn't get displayed over that horizontal line.
-f
+
 √ I would like to give the user to select between 2 languages ( French / English) for the UI. How should we go about this. I would need to verify each translations. What is the standard procedure for this type o implementation?
 
 √ Station broadcast on different port.
@@ -532,7 +532,32 @@ f
 ---
 
 REQUESTED
-Verify with Station Controller & Main Controller
+
+
+
+---
+
+- Where are the labels for the simulation saved? They don't seem to be saved currently. also clicking on return when the text input is in focus should automatically save the label for the relay.
+
+- Nothing happens when clicking on the link icon.  This link icon should enable automatic feedback or make them manual with the switches.
+
+- Each station have 6 relays and 7 feedbacks inputs.
+
+- To address the ST0 vacuum 1 & 2 relays having feedback from ST1, for each station relay, we should be able to assign a feedback from a selected station and an input number form 1 to 7
+
+---
+
+- In "Server/cabane-control/services/logic_engine.js", shouldn't the "simulationService.init(io) " initiated only when starting the Hardware Simulation and destroyed when stopping the hardware simulation?
+
+- In Hardware SImulator, When clicking on the "Start Simulation" the Hardware simulation doesn't refresh automatically. Currently you have to close the hardware simulatior and re-open it to see it started with the "Stop Simulation" button replacing the "Start SImulation" button. this should happen automatically.
+
+- In Hardware Simulator, with simulation started, the StationCard become "online" only after toggling a feedback switch on the simulator, then shortly after is seems like the virtual stations stop sending the heartbeat and they become OFFLINE on the Staion Card.
+
+- In Hardware Simulator, we should have the option to disconnect its virtual stations, which would make them disabled with the StationCard.
+
+- IN Hardware Simulator, the Stations should have a row for each relay:
+     - x ( Relay number 1 to 6 ) - Name of the device controled by the relay --- Input Feedback STx - input x ( Start at 1 to 7) --- Link icon --- switch if not linked.
+
 
 
 
@@ -541,6 +566,19 @@ Verify with Station Controller & Main Controller
 ---
 
 NEXT
+
+- Can you verify the hardware simulator did not affect any of the regular operations when the Simulation is stopped.
+
+- In "Server/cabane-control/services/logic_engine.js" "function init(io)", shouldn't the "simulationService.init(io) " initiated only when starting the Hardware Simulation and destroyed when stopping the hardware simulation?
+
+
+
+---
+
+
+- Why is my session locking after a minute. I have the user setting "Session Timeout" set to 12 hours. Shouldn't it make the screen lock after 12 hours instead of a minute?
+
+
 
 - AutomationModal.jsx background opacity and blur are not the standard for the app. Please set them to what we are using fo the other modals.
 
