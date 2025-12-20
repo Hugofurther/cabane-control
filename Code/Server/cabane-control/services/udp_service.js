@@ -1,13 +1,11 @@
 // ============================================================
-// 📡 UDP SERVICE (Network Bridge) - PRODUCTION v9 (Dual Port)
+// 📡 UDP SERVICE (Network Bridge) - PRODUCTION v11 (No Filter)
 // ============================================================
 const dgram = require('dgram');
 
-// Create TWO sockets
 const socketCmd = dgram.createSocket('udp4'); // 8888
 const socketFb = dgram.createSocket('udp4');  // 8889
 
-// --- Configuration ---
 const PORT_CMD = 8888;
 const PORT_FB = 8889;
 const MAIN_CONTROLLER_IP = '192.168.1.220';
@@ -17,11 +15,7 @@ let logicEngine = null;
 
 function init(engineRef) {
     logicEngine = engineRef;
-
-    // --- SETUP SOCKET 1 (COMMANDS - 8888) ---
     setupSocket(socketCmd, PORT_CMD, 'CMD');
-
-    // --- SETUP SOCKET 2 (FEEDBACK - 8889) ---
     setupSocket(socketFb, PORT_FB, 'FB');
 }
 
@@ -52,17 +46,12 @@ function setupSocket(sock, port, label) {
     }
 }
 
-// --- PACKET PARSER (Unified) ---
 function parsePacket(msg, rinfo) {
     if (msg.length < 3) return;
 
-    // Isolation Logic
-    if (logicEngine) {
-        const state = logicEngine.getFullState();
-        if (state.simulationMode) {
-            if (rinfo.address !== '127.0.0.1' && rinfo.address !== '::1') return;
-        }
-    }
+    // ✅ REMOVED: Source Filtering logic.
+    // The Backend ALWAYS needs to know the truth from the real hardware.
+    // The Frontend (via Derived State) decides whether to show Real or Sim.
 
     const header = msg[0];
 
@@ -73,7 +62,7 @@ function parsePacket(msg, rinfo) {
         if (logicEngine) logicEngine.updateStationFeedback(id, bits);
     }
 
-    // ✅ NEW: 0xAB HEARTBEAT HANDLER
+    // 0xAB: HEARTBEAT
     else if (header === 0xAB && msg.length >= 2) {
         const id = msg[1];
         if (logicEngine) logicEngine.updateStationHeartbeat(id);
@@ -92,95 +81,60 @@ function parsePacket(msg, rinfo) {
     }
 }
 
-// --- ARBITER LOGIC ---
 function checkAndDenyConflict(id) {
     if (!logicEngine) return;
     const state = logicEngine.getFullState();
-
     if (state.stationOnline[id]) {
-        // console.log(`[UDP] Conflict Detected for Station ${id}. Sending Denial.`);
         const packet = Buffer.alloc(3);
-        packet[0] = 0xAE;
-        packet[1] = id;
-        packet[2] = packet[0] ^ packet[1];
-
-        // Send denial on CMD port (Standard)
+        packet[0] = 0xAE; packet[1] = id; packet[2] = packet[0] ^ packet[1];
         safeSend(socketCmd, packet, BROADCAST_IP, PORT_CMD, "ConflictDeny");
     }
 }
 
-// --- SENDING METHODS (Outgoing) ---
-
 function xorChecksum(buf) {
-    let c = 0;
-    for (let i = 0; i < buf.length; i++) c ^= buf[i];
-    return c;
+    let c = 0; for (let i = 0; i < buf.length; i++) c ^= buf[i]; return c;
 }
 
 function safeSend(sock, packet, ip, port, label) {
     try {
         sock.send(packet, port, ip, (err) => {
-            if (err && err.code !== 'ENETUNREACH') {
-                console.error(`[UDP] ${label} Send Error:`, err.code);
-            }
+            if (err && err.code !== 'ENETUNREACH') console.error(`[UDP] ${label} Send Error:`, err.code);
         });
-    } catch (e) {
-        console.error(`[UDP] ${label} Sync Error:`, e.message);
-    }
+    } catch (e) { console.error(`[UDP] ${label} Sync Error:`, e.message); }
 }
 
 function sendGlobalBroadcast(stationBytesArray) {
     const packet = Buffer.alloc(10);
-    packet[0] = 0xBB;
-    packet[1] = 0x00;
-    packet[2] = 0x02;
-
-    for (let i = 0; i < 6; i++) {
-        packet[3 + i] = stationBytesArray[i] || 0;
-    }
-
+    packet[0] = 0xBB; packet[1] = 0x00; packet[2] = 0x02;
+    for (let i = 0; i < 6; i++) packet[3 + i] = stationBytesArray[i] || 0;
     packet[9] = xorChecksum(packet.slice(0, 9));
-    // Send on CMD port (8888)
     safeSend(socketCmd, packet, BROADCAST_IP, PORT_CMD, "Global");
 }
 
 function sendOverrideCommand(mode) {
     const packet = Buffer.alloc(3);
-    packet[0] = 0xAF;
-    packet[1] = mode ? 0x01 : 0x00;
-    packet[2] = packet[0] ^ packet[1];
-
+    packet[0] = 0xAF; packet[1] = mode ? 0x01 : 0x00; packet[2] = packet[0] ^ packet[1];
     safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "Override");
 }
 
 function sendRemoteData(switchBytes) {
     const packet = Buffer.alloc(5);
-    packet[0] = 0xB0;
-    packet[1] = switchBytes[0];
-    packet[2] = switchBytes[1];
-    packet[3] = switchBytes[2];
+    packet[0] = 0xB0; packet[1] = switchBytes[0]; packet[2] = switchBytes[1]; packet[3] = switchBytes[2];
     packet[4] = xorChecksum(packet.slice(0, 4));
-
     safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "RemoteData");
 }
 
 function sendConfigPacket(alarmOnSec, alarmOffSec, reminderMin, burglarStation, stationMask) {
     const packet = Buffer.alloc(7);
     packet[0] = 0xCF;
-    packet[1] = Math.min(255, alarmOnSec);
-    packet[2] = Math.min(255, alarmOffSec);
-    packet[3] = Math.min(255, reminderMin);
-    packet[4] = Math.min(255, burglarStation || 0);
+    packet[1] = Math.min(255, alarmOnSec); packet[2] = Math.min(255, alarmOffSec);
+    packet[3] = Math.min(255, reminderMin); packet[4] = Math.min(255, burglarStation || 0);
     packet[5] = Math.min(255, stationMask || 0x3F);
     packet[6] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3] ^ packet[4] ^ packet[5];
-
     safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "ConfigUpdate");
 }
 
 module.exports = {
-    init,
-    sendGlobalBroadcast,
-    sendOverrideCommand,
-    sendRemoteData,
-    sendConfigPacket
+    init, sendGlobalBroadcast, sendOverrideCommand, sendRemoteData, sendConfigPacket,
+    updateStationHeartbeat: (id) => logicEngine?.updateStationHeartbeat(id)
 };

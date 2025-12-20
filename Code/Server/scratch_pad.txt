@@ -545,15 +545,33 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ In Hardware Simulation, when starting a simulation, the StationCards should read the settings from the hardware simulation automatically at start, so that the unlinked feedback that are on are read as ON by the StationCards. Currently, for the Hardware simulator feedback switches that are ON, when starting the simulation, we have the turn them OFF, then back to ON for the StationCards to actually read them as ON.
 
 √ We need to add the OFF Switches for the automations
+
+√ We need the Shutdown Timer to be displayed while running.
+
+√ When starting a Hardware simulation, the input feedback are coming from the Hardware Simulator. The user should be able to enable / disable sending the output ( relays ) state to the physical hardware along with the Hardware Simulator. If enabling sending to the physical hardware, then the user takes control, otherwise, if the user disables sending output configuration to the physical hardware outputs ( relays ), the system doesn't see the user taking control in Hardware Simulation.
+
+√ If the user choose to enable the physical hardware outputs when starting Hardware Simulation, the user takes control. In this scenario, if another user or the Main Controller takes control, the user in Hardware Simulation losses control and the hardware simulation automatically disables sending output messages to the Physical hardware.
 ---
 
 REQUESTED
 
-- We need the Shutdown Timer to be displayed while running.
+
+
+- When in Hardware Simulation and the user disabled the "LIVE: Sending to Hardware, this users StationCard should behave as if the user had control. That said, no other account can see the user in Hardware Simulation having control as this user only controls the Hardware simulation. The user in Hardware Simulation will take actual control over the system if enabling the "Live: Sending To Harare" or stops Hardware Simulation and takes control.
+
+
 
 ---
 
-- Starting a Hardware simulation should take the user account into isolation, not taking control of the system. When starting a simulation while in control, the actual control gets released to the server. When Starting a hardware simulation, the user interface behaves like it has control, but the on the network, the system doesn't see the user as having control.
+- When a user is in Simulation Mode. The Hardware Simulator only propagated to other users if the "Live: Sending to Hardware" is enabled. Otherwise the feedback from the Hardware Simulator is only read by the user in Hardware Simulation and the other users are reading the feedback from the Physical hardware.
+
+- When a user is in Simulation Mode.
+
+- When a starting gets disconnected, the Main Page doesn't recognized it as being OFFLINE anymore. It used to, but this feature was broken on the last implementation.
+
+- Why is the Main Controller becoming OFFLINE when in Hardware Simulation?
+
+
 
 ---
 

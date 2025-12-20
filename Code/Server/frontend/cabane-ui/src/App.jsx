@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock, Power } from 'lucide-react'; // ✅ Power Icon
+import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock, Power, Cpu, Radio } from 'lucide-react';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
@@ -12,8 +12,9 @@ import { ShareModal } from './components/MessageDrawer/ShareModal';
 import { Weather } from './components/Weather';
 import { FlashViewer } from './components/FlashViewer';
 import { AutomationModal } from './components/AutomationModal';
-import { AutomationBanner } from './components/AutomationBanner'; // ✅ Import
-import { ShutdownModal } from './components/ShutdownModal'; // ✅ Import
+import { AutomationBanner } from './components/AutomationBanner';
+import { ShutdownModal } from './components/ShutdownModal';
+import { SimulationPanel } from './components/SimulationPanel';
 import { PANEL_LAYOUT } from './config/stations';
 import { ModalProvider } from './contexts/ModalContext';
 import { GlobalModal } from './components/GlobalModal';
@@ -28,19 +29,33 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 function Dashboard() {
   const { t } = useTranslation();
   const {
-    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings
+    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings, simState
   } = useSocket();
 
-  const canInteract = systemState.controller === 'USER' && systemState.currentUser === user?.username;
+  // --- CONTROL AUTHORITY LOGIC ---
+  // 1. Am I the active controller of the real system?
+  const isController = systemState.controller === 'USER' && systemState.currentUser === user?.username;
 
-  // UI State
+  // 2. Am I the owner of an active simulation?
+  const isSimOwner = simState?.active && simState?.owner === user?.username;
+
+  // 3. Is the simulation in "Isolated Mode" (Link OFF)?
+  const isSimIsolated = isSimOwner && !simState?.physicalLink;
+
+  // 4. Is the simulation in "Live Mode" (Link ON)?
+  const isSimLinked = isSimOwner && simState?.physicalLink;
+
+  // 5. Can I interact with switches? (Real Control OR Isolated Sim Control)
+  const canInteract = isController || isSimIsolated;
+
+  // --- UI STATE ---
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
 
-  // Automation & Shutdown
+  // Automation & Shutdown UI
   const [showAutomation, setShowAutomation] = useState(false);
-  const [showShutdown, setShowShutdown] = useState(false); // ✅ New
-  const [isAutoRunning, setIsAutoRunning] = useState(false); // ✅ Track running state
+  const [showShutdown, setShowShutdown] = useState(false);
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
 
   const [notification, setNotification] = useState(null);
   const [flashMessages, setFlashMessages] = useState([]);
@@ -96,6 +111,21 @@ function Dashboard() {
     return () => socket.off('AUTO_UPDATE', handleAuto);
   }, [socket]);
 
+  // --- SIMULATION CONTROL ---
+  const stopSimulation = async () => {
+    const token = localStorage.getItem('cabane_token');
+    try {
+      await axios.post(`${API_URL}/api/simulation/toggle`, { active: false }, { headers: { Authorization: `Bearer ${token}` } });
+    } catch (e) { console.error(e); }
+  };
+
+  const unlinkSim = async () => {
+    const token = localStorage.getItem('cabane_token');
+    try {
+      await axios.post(`${API_URL}/api/simulation/physical`, { linked: false }, { headers: { Authorization: `Bearer ${token}` } });
+    } catch (e) { console.error(e); }
+  };
+
   // --- 2. LOCAL ALARM LOGIC ---
   const { isAlarmActive, isChirpActive, alarmSources, alarmType } = useMemo(() => {
     const { virtualSwitches, physicalSwitches, stationFeedback, controller, stationOnline } = systemState;
@@ -106,6 +136,7 @@ function Dashboard() {
     let sources = [];
     let systemRunning = false;
 
+    // A. Check Vacuum Pumps
     PANEL_LAYOUT.forEach(row => {
       row.cards.forEach(card => {
         card.controls.forEach(ctrl => {
@@ -130,6 +161,7 @@ function Dashboard() {
       });
     });
 
+    // B. Check Burglar Alarm
     const burgSt = parseInt(siteSettings.burglar_station) || 0;
     if (burgSt === 2 && stationOnline[2] && ((stationFeedback[2] >> 4) & 1)) {
       burglarAlarm = true;
@@ -141,6 +173,8 @@ function Dashboard() {
     }
 
     const overallAlarm = vacuumAlarm || burglarAlarm;
+
+    // C. Check Buzzer/Chirp
     const buzzerOn = !!activeSwitches[BUZZER_SWITCH_IDX];
     const chirp = !overallAlarm && systemRunning && !buzzerOn;
 
@@ -148,7 +182,12 @@ function Dashboard() {
     if (burglarAlarm) type = 'BURGLAR';
     else if (vacuumAlarm) type = 'ALARM';
 
-    return { isAlarmActive: overallAlarm, isChirpActive: chirp, alarmSources: sources, alarmType: type };
+    return {
+      isAlarmActive: overallAlarm,
+      isChirpActive: chirp,
+      alarmSources: sources,
+      alarmType: type
+    };
   }, [systemState, siteSettings.burglar_station, t]);
 
   // --- AUDIO HELPER ---
@@ -308,34 +347,50 @@ function Dashboard() {
         />
       )}
 
-      {/* ✅ AUTOMATION & SHUTDOWN MODALS */}
+      {/* AUTOMATION & SHUTDOWN MODALS */}
       <AutomationModal isOpen={showAutomation} onClose={() => setShowAutomation(false)} />
       <ShutdownModal isOpen={showShutdown} onClose={() => setShowShutdown(false)} />
 
       <AutomationBanner />
 
+      {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
 
         {/* Left Status */}
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
-          <div className="flex items-center gap-3 text-xs font-bold tracking-wider uppercase">
-            {user?.settings?.showMainStatus && (
-              <>
-                <div className={`flex items-center gap-1 ${systemState.mainControllerOnline ? 'text-green-400' : 'text-red-500 animate-pulse'}`}>
-                  <Activity size={12} /> {systemState.mainControllerOnline ? t('nav.cabane_online') : t('nav.cabane_offline')}
-                </div>
-                <span className="text-gray-700">|</span>
-              </>
-            )}
-            <div className="flex items-center gap-2 text-gray-400">
-              <span className={`w-2 h-2 rounded-full shadow ${isConnected ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
-              <span>{isConnected ? t('nav.user_online') : t('nav.connecting')}</span>
+
+          {/* ✅ SIMULATION HEADER */}
+          {isSimIsolated ? (
+            <div className="flex items-center gap-2 text-purple-400 font-bold text-sm tracking-wider animate-pulse bg-purple-900/10 px-2 py-1 rounded border border-purple-500/30">
+              <Cpu size={16} /> SIMULATION (ISOLATED)
             </div>
-          </div>
-          <div className={`font-mono font-bold text-sm mt-1 ${systemState.controller === 'CABANE' ? 'text-yellow-500' : 'text-blue-400'}`}>
-            {t('nav.master')}: {systemState.controller === 'USER' ? (systemState.currentUser || 'USER') : systemState.controller}
-          </div>
+          ) : isSimLinked ? (
+            <div className="flex items-center gap-2 text-red-400 font-bold text-sm tracking-wider animate-pulse bg-red-900/10 px-2 py-1 rounded border border-red-500/30">
+              <Radio size={16} /> LIVE: SENDING TO HARDWARE
+            </div>
+          ) : (
+            <div className="flex items-center gap-3 text-xs font-bold tracking-wider uppercase">
+              {user?.settings?.showMainStatus && (
+                <>
+                  <div className={`flex items-center gap-1 ${systemState.mainControllerOnline ? 'text-green-400' : 'text-red-500 animate-pulse'}`}>
+                    <Activity size={12} /> {systemState.mainControllerOnline ? t('nav.cabane_online') : t('nav.cabane_offline')}
+                  </div>
+                  <span className="text-gray-700">|</span>
+                </>
+              )}
+              <div className="flex items-center gap-2 text-gray-400">
+                <span className={`w-2 h-2 rounded-full shadow ${isConnected ? 'bg-green-500 shadow-green-500/50' : 'bg-red-500 shadow-red-500/50'}`}></span>
+                <span>{isConnected ? t('nav.user_online') : t('nav.connecting')}</span>
+              </div>
+            </div>
+          )}
+
+          {!isSimIsolated && (
+            <div className={`font-mono font-bold text-sm mt-1 ${systemState.controller === 'CABANE' ? 'text-yellow-500' : 'text-blue-400'}`}>
+              {t('nav.master')}: {systemState.controller === 'USER' ? (systemState.currentUser || 'USER') : systemState.controller}
+            </div>
+          )}
         </div>
 
         {/* Center */}
@@ -346,29 +401,40 @@ function Dashboard() {
 
         {/* Right Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
-          {systemState.currentUser !== user?.username && (
-            user?.can_control ?
-              <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">{t('dashboard.take_control')}</button>
-              : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">{t('dashboard.view_only')}</div>
-          )}
 
-          {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
-            <div className="flex gap-2 shrink-0">
-              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
-              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
-
-              {/* ✅ AUTOMATION BUTTONS (Hidden if running) */}
-              {!isAutoRunning && (
-                <>
-                  <button onClick={() => setShowAutomation(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation">
-                    <Clock size={20} />
-                  </button>
-                  <button onClick={() => setShowShutdown(true)} className="p-3 rounded bg-red-900/30 border border-red-500/50 text-red-300 hover:bg-red-900/50 transition-colors shadow-lg ml-2" title="Schedule Shutdown">
-                    <Power size={20} />
-                  </button>
-                </>
+          {/* ✅ SIMULATION CONTROLS */}
+          {isSimIsolated ? (
+            <button onClick={stopSimulation} className="px-6 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg shadow-red-900/50 transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
+              <Power size={18} /> STOP SIMULATION
+            </button>
+          ) : isSimLinked ? (
+            // Button to downgrade from LIVE to ISOLATED
+            <button onClick={unlinkSim} className="px-6 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-black font-bold uppercase shadow-lg transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
+              <Cpu size={18} /> SIMULATION ONLY
+            </button>
+          ) : (
+            <>
+              {/* Standard Controls */}
+              {systemState.currentUser !== user?.username && (
+                user?.can_control ?
+                  <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">{t('dashboard.take_control')}</button>
+                  : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">{t('dashboard.view_only')}</div>
               )}
-            </div>
+
+              {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
+                  {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
+
+                  {!isAutoRunning && (
+                    <>
+                      <button onClick={() => setShowAutomation(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation"><Clock size={20} /></button>
+                      <button onClick={() => setShowShutdown(true)} className="p-3 rounded bg-red-900/30 border border-red-500/50 text-red-300 hover:bg-red-900/50 transition-colors shadow-lg ml-2" title="Schedule Shutdown"><Power size={20} /></button>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           <button onClick={() => setShowMessageDrawer(true)} className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`} title={t('nav.messages')}><Mail size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}</button>

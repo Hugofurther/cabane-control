@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Link, Unlink, X, Cpu, Power, Save, ToggleLeft, ToggleRight, Wifi, WifiOff, Eye, EyeOff } from 'lucide-react';
+import { Settings, Link, Unlink, X, Cpu, Power, Save, ToggleLeft, ToggleRight, Wifi, WifiOff, Eye, EyeOff, Radio } from 'lucide-react'; // ✅ Radio Icon
 import axios from 'axios';
 import { clsx } from 'clsx';
 import { useSocket } from '../contexts/SocketContext';
@@ -13,7 +13,7 @@ const SimToggle = ({ checked, onChange, disabled }) => (
 );
 
 export const SimulationPanel = ({ isOpen, onClose }) => {
-    const { socket, takeControl } = useSocket(); // ✅ Get takeControl
+    const { socket } = useSocket();
     const [simData, setSimData] = useState(null);
     const [tempName, setTempName] = useState("");
     const [editing, setEditing] = useState(null);
@@ -43,15 +43,13 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
 
     if (!isOpen || !simData) return null;
     const token = localStorage.getItem('cabane_token');
-    const { active, config, state } = simData;
+    const { active, config, state, physicalLink } = simData; // ✅ Get physicalLink
 
-    const toggleGlobal = async () => {
-        // ✅ NEW: Automatically take control if starting simulation
-        if (!active) {
-            takeControl();
-        }
+    const toggleGlobal = async () => { await axios.post(`${API_URL}/api/simulation/toggle`, { active: !active }, { headers: { Authorization: `Bearer ${token}` } }); };
 
-        await axios.post(`${API_URL}/api/simulation/toggle`, { active: !active }, { headers: { Authorization: `Bearer ${token}` } });
+    // ✅ NEW: Toggle Physical Link
+    const togglePhysical = async () => {
+        await axios.post(`${API_URL}/api/simulation/physical`, { linked: !physicalLink }, { headers: { Authorization: `Bearer ${token}` } });
     };
 
     const toggleConnection = async (id) => { await axios.post(`${API_URL}/api/simulation/station/connection`, { id }, { headers: { Authorization: `Bearer ${token}` } }); };
@@ -72,14 +70,36 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                 <div className="flex justify-between items-center border-b border-gray-700 pb-4 bg-gray-900 sticky top-0 z-20 p-4 rounded-lg shadow-xl">
                     <div className="flex items-center gap-4">
                         <Cpu size={32} className={active ? "text-green-500" : "text-gray-500"} />
-                        <div><h2 className="text-2xl font-black text-white tracking-widest">HARDWARE SIMULATOR</h2><div className="flex gap-2 text-xs"><span className="text-gray-400">Mode: {active ? <span className="text-green-400 font-bold">ACTIVE (Isolated)</span> : "DISABLED"}</span></div></div>
+                        <div>
+                            <h2 className="text-2xl font-black text-white tracking-widest">HARDWARE SIMULATOR</h2>
+                            <div className="flex gap-2 text-xs">
+                                <span className="text-gray-400">Mode: {active ? <span className="text-green-400 font-bold">ACTIVE (Isolated)</span> : "DISABLED"}</span>
+                            </div>
+                        </div>
                     </div>
+
                     <div className="flex items-center gap-4">
+                        {/* ✅ PHYSICAL LINK TOGGLE */}
+                        <div
+                            onClick={active ? togglePhysical : undefined}
+                            className={clsx("flex items-center gap-2 px-3 py-2 rounded border cursor-pointer transition-all",
+                                !active ? "opacity-30 cursor-not-allowed border-gray-700 text-gray-500" :
+                                    physicalLink ? "bg-red-900/30 border-red-500 text-red-300 shadow-[0_0_10px_rgba(220,38,38,0.3)]" : "bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700"
+                            )}
+                        >
+                            <Radio size={18} className={physicalLink ? "text-red-500 animate-pulse" : "text-gray-500"} />
+                            <span className="text-xs font-bold uppercase">{physicalLink ? "LIVE: SENDING TO HARDWARE" : "SIMULATION ONLY"}</span>
+                            <SimToggle checked={physicalLink} disabled={!active} onChange={() => { }} />
+                        </div>
+
+                        <div className="h-8 w-px bg-gray-700 mx-2"></div>
+
                         <button onClick={toggleGlobal} className={`px-6 py-2 rounded font-bold flex items-center gap-2 ${active ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`}><Power size={18} /> {active ? "STOP SIMULATION" : "START SIMULATION"}</button>
                         <button onClick={onClose} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full text-white"><X /></button>
                     </div>
                 </div>
 
+                {/* Stations Grid (Same as before) */}
                 <div className={`grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 ${!active ? 'opacity-40 pointer-events-none grayscale' : ''}`}>
                     {config.map((stConfig, stIdx) => {
                         const stState = state[stIdx];
@@ -105,9 +125,7 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                                                 return (
                                                     <tr key={rIdx} className={`transition-colors ${!isEn ? 'opacity-30' : (relayOn ? 'bg-blue-900/10' : 'hover:bg-gray-700/30')}`}>
                                                         <td className="p-2 font-mono text-gray-500 flex items-center gap-1">{rIdx + 1}<div className={`w-2 h-2 rounded-full ${relayOn ? 'bg-green-400 shadow-[0_0_5px_lime]' : 'bg-gray-700'}`} /></td>
-                                                        <td className="p-2">
-                                                            <button onClick={() => updateRelay(stIdx, rIdx, { enabled: !isEn })} className={isEn ? "text-green-400" : "text-gray-600"}>{isEn ? <Eye size={14} /> : <EyeOff size={14} />}</button>
-                                                        </td>
+                                                        <td className="p-2"><button onClick={() => updateRelay(stIdx, rIdx, { enabled: !isEn })} className={isEn ? "text-green-400" : "text-gray-600"}>{isEn ? <Eye size={14} /> : <EyeOff size={14} />}</button></td>
                                                         <td className="p-2" onClick={() => isEn && (setEditing({ stId: stIdx, rIdx }), setTempName(r.name))}>
                                                             {isEditing ? (
                                                                 <input autoFocus className="bg-black text-white w-full border border-blue-500 rounded px-1" value={tempName} onChange={e => setTempName(e.target.value)} onBlur={() => saveName(stIdx, rIdx)} onKeyDown={e => e.key === 'Enter' && saveName(stIdx, rIdx)} />
