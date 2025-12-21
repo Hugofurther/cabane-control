@@ -577,6 +577,9 @@ REQUESTED
 
 NEXT
 
+- Some files are getting too long and I'm getting a warning from Vite Server.
+
+- Make sure the Automation are available in Simulation Only AND in Live: Sending to Hardware.
 
 
 
@@ -1052,3 +1055,7 @@ In the next few messages, I will give you the code for the new files or updated 
 ---
 
 Please updated your knowledge. No need to reply. More files are coming.
+
+---
+
+I'm now finished giving you the file updates. Please let me know if you need to see any other files or if you have any questions. Do update your knowledge with the content of these files and let's carry on with these updates in mind.

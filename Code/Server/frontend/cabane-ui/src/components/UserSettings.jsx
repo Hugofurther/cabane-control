@@ -18,7 +18,6 @@ export const UserSettings = ({ isOpen, onClose }) => {
     const { t, i18n } = useTranslation();
 
     const [activeTab, setActiveTab] = useState('GENERAL');
-
     const [localSettings, setLocalSettings] = useState({});
     const [profile, setProfile] = useState({ username: '', email: '' });
     const [passwordData, setPasswordData] = useState({ current: '', new: '', confirm: '' });
@@ -29,10 +28,6 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     const [appSirenSilence, setAppSirenSilence] = useState(5);
     const [appChirpInterval, setAppChirpInterval] = useState(2);
-
-    // ✅ AUTO LOCK STATES
-    const [lockMethod, setLockMethod] = useState('DISABLED');
-    const [lockTimeout, setLockTimeout] = useState(5);
 
     const canAdmin = user?.role === 'ADMIN';
     const canLogs = canAdmin || user?.can_view_logs;
@@ -48,10 +43,6 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 }
                 setAppSirenSilence(user.settings.appSirenSilence || 5);
                 setAppChirpInterval(user.settings.appChirpInterval || 2);
-
-                // ✅ RESTORED AUTO LOCK VALUES
-                setLockMethod(user.settings.lockMethod || 'DISABLED');
-                setLockTimeout(user.settings.lockTimeout || 5);
             }
             setProfile({ username: user.username || '', email: user.email || '' });
         }
@@ -81,10 +72,7 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 language: i18n.language,
                 tokenExpiration: `${val}${sessionUnit}`,
                 appSirenSilence: parseFloat(appSirenSilence) || 5,
-                appChirpInterval: parseFloat(appChirpInterval) || 2,
-                // ✅ SAVE AUTO LOCK SETTINGS
-                lockMethod,
-                lockTimeout: parseInt(lockTimeout) || 5
+                appChirpInterval: parseFloat(appChirpInterval) || 2
             };
 
             await updateSettings(finalSettings);
@@ -103,6 +91,9 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
     const isWide = activeTab === 'ADMIN' || activeTab === 'LOGS';
 
+    // ✅ SAFE CHECK for Language State
+    const currentLang = i18n.language || 'en';
+
     return (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-[1px] z-[60] flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={onClose}>
             <div className={clsx("bg-gray-900 border border-gray-700 w-full rounded-2xl shadow-2xl overflow-hidden flex flex-col transition-all duration-300", isWide ? "max-w-6xl h-[85vh]" : "max-w-md max-h-[90vh]")} onClick={e => e.stopPropagation()}>
@@ -110,8 +101,11 @@ export const UserSettings = ({ isOpen, onClose }) => {
                 {/* HEADER */}
                 <div className="flex justify-between items-center p-6 border-b border-gray-700 bg-gray-800 shrink-0">
                     <h2 className="text-xl font-black text-white tracking-wide uppercase flex items-center gap-2">
-                        {activeTab === 'ADMIN' ? <Shield size={20} className="text-blue-500" /> : activeTab === 'LOGS' ? <ScrollText size={20} className="text-yellow-500" /> : <Users size={20} className="text-blue-500" />}
-                        {activeTab === 'ADMIN' ? t('admin.title') : activeTab === 'LOGS' ? t('logs.title') : t('settings.title')}
+                        {activeTab === 'ADMIN' ? <Shield size={20} className="text-blue-500" /> :
+                            activeTab === 'LOGS' ? <ScrollText size={20} className="text-yellow-500" /> :
+                                <Users size={20} className="text-blue-500" />}
+                        {activeTab === 'ADMIN' ? t('admin.title') :
+                            activeTab === 'LOGS' ? t('logs.title') : t('settings.title')}
                     </h2>
                     <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors"><X size={24} /></button>
                 </div>
@@ -129,40 +123,24 @@ export const UserSettings = ({ isOpen, onClose }) => {
 
                     {activeTab === 'GENERAL' && (
                         <div className="p-6 space-y-8">
+
+                            {/* LANGUAGE */}
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.language')}</h3>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700">
-                                    <div className="flex items-center gap-3 mb-2"><Globe size={18} className="text-blue-400" /><span className="text-sm font-medium text-gray-200">Select Language / Langue</span></div>
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <Globe size={18} className="text-blue-400" />
+                                        <span className="text-sm font-medium text-gray-200">Select Language / Langue</span>
+                                    </div>
                                     <div className="flex bg-gray-900 rounded p-1">
-                                        <button onClick={() => changeLanguage('en')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('en') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>ENGLISH</button>
-                                        <button onClick={() => changeLanguage('fr')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", i18n.language.startsWith('fr') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>FRANÇAIS</button>
+                                        <button onClick={() => changeLanguage('en')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", currentLang.startsWith('en') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>ENGLISH</button>
+                                        <button onClick={() => changeLanguage('fr')} className={clsx("flex-1 py-1 rounded text-xs font-bold transition-colors", currentLang.startsWith('fr') ? 'bg-blue-600 text-white shadow' : 'text-gray-500 hover:text-gray-300')}>FRANÇAIS</button>
                                     </div>
                                 </div>
                             </section>
 
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.interface_audio')}</h3>
-
-                                {/* ✅ RESTORED AUTO LOCK SETTINGS */}
-                                <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-3"><Lock size={18} className="text-orange-400" /><span className="text-sm font-medium text-gray-200">{t('settings.auto_lock')}</span></div>
-                                        <select value={lockMethod} onChange={(e) => setLockMethod(e.target.value)} className="bg-gray-900 border border-gray-600 rounded text-xs text-white p-1 outline-none">
-                                            <option value="DISABLED">{t('common.disabled')}</option>
-                                            <option value="SIMPLE">Simple (Button)</option>
-                                            <option value="PASSWORD">Password</option>
-                                        </select>
-                                    </div>
-                                    {lockMethod !== 'DISABLED' && (
-                                        <div className="flex items-center justify-between border-t border-gray-700 pt-2">
-                                            <span className="text-xs text-gray-400">{t('settings.timeout_min')}</span>
-                                            <div className="flex items-center gap-2">
-                                                <input type="range" min="1" max="60" value={lockTimeout} onChange={(e) => setLockTimeout(e.target.value)} className="w-24 h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-orange-500" />
-                                                <span className="text-xs font-bold text-white w-6 text-right">{lockTimeout}m</span>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
 
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3">{localSettings.soundEnabled ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-gray-500" />}<span className="text-sm font-medium text-gray-200">{t('settings.master_sound')}</span></div>
@@ -172,6 +150,8 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                     <div className="flex items-center gap-3"><Zap size={18} className={localSettings.flashSoundEnabled !== false ? "text-yellow-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">{t('settings.flash_alert')}</span></div>
                                     <Toggle checked={localSettings.flashSoundEnabled !== false} onChange={() => toggleSetting('flashSoundEnabled')} />
                                 </div>
+
+                                {/* AUDIO SLIDERS */}
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-4">
                                     <div>
                                         <div className="flex items-center justify-between mb-2">
@@ -190,6 +170,8 @@ export const UserSettings = ({ isOpen, onClose }) => {
                                         <p className="text-[10px] text-gray-500 mt-1 text-right">{t('settings.chirp_desc')}</p>
                                     </div>
                                 </div>
+
+                                {/* HAPTIC */}
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Smartphone size={18} className={localSettings.vibrationEnabled ? "text-purple-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">{t('settings.haptic')}</span></div>
                                     <Toggle checked={localSettings.vibrationEnabled ?? true} onChange={() => toggleSetting('vibrationEnabled')} />
@@ -223,13 +205,20 @@ export const UserSettings = ({ isOpen, onClose }) => {
                             <section className="space-y-3 pt-4 border-t border-gray-800">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.disabled_stations_vis')}</h3>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-3">
-                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700"><span className="text-xs font-bold text-gray-300">{t('settings.desktop')}</span><Toggle checked={localSettings.showDisabledLarge !== false} onChange={() => toggleSetting('showDisabledLarge')} /></div>
-                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700"><span className="text-xs font-bold text-gray-300">{t('settings.mobile')}</span><Toggle checked={localSettings.showDisabledSmall !== false} onChange={() => toggleSetting('showDisabledSmall')} /></div>
+                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700">
+                                        <span className="text-xs font-bold text-gray-300">{t('settings.desktop')}</span>
+                                        <Toggle checked={localSettings.showDisabledLarge !== false} onChange={() => toggleSetting('showDisabledLarge')} />
+                                    </div>
+                                    <div className="flex items-center justify-between pl-2 border-l-2 border-gray-700">
+                                        <span className="text-xs font-bold text-gray-300">{t('settings.mobile')}</span>
+                                        <Toggle checked={localSettings.showDisabledSmall !== false} onChange={() => toggleSetting('showDisabledSmall')} />
+                                    </div>
                                 </div>
                             </section>
                         </div>
                     )}
 
+                    {/* PROFILE TAB */}
                     {activeTab === 'PROFILE' && (
                         <div className="p-6 space-y-8">
                             <section className="space-y-3">
@@ -257,11 +246,11 @@ export const UserSettings = ({ isOpen, onClose }) => {
                             </section>
                         </div>
                     )}
-
                     {activeTab === 'ADMIN' && <AdminPanel embedded={true} />}
                     {activeTab === 'LOGS' && <LogViewer embedded={true} />}
                 </div>
 
+                {/* FOOTER */}
                 {(activeTab === 'GENERAL' || activeTab === 'PROFILE') && (
                     <div className="p-4 bg-gray-900 border-t border-gray-800 flex gap-3 shrink-0">
                         <button onClick={() => { logout(); onClose(); }} className="flex-1 py-3 bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 rounded font-bold uppercase tracking-widest transition-all text-xs flex items-center justify-center gap-2"><LogOut size={16} /> {t('settings.sign_out')}</button>

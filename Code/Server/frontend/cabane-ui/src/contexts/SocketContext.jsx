@@ -113,15 +113,9 @@ export const SocketProvider = ({ children }) => {
 
     // ✅ DERIVED STATE (The "Parallel Universe")
     const systemState = useMemo(() => {
-        // Am I the simulation owner?
         const amISimOwner = user && simMeta.owner === user.username;
-
-        // If Sim Active AND Physical Link OFF AND I am Owner -> Use Derived State
         if (simMeta.active && !simMeta.physicalLink && amISimOwner && simRuntime) {
-
-            // 1. Map Sim Relays -> Virtual Switches
             const fakeVirtual = new Array(24).fill(0);
-
             INPUT_MAP.forEach(m => {
                 const stData = simRuntime[m.st];
                 if (stData) {
@@ -130,17 +124,14 @@ export const SocketProvider = ({ children }) => {
                     }
                 }
             });
-
-            // 2. Map Sim Inputs -> Feedback
             const fakeFeedback = simRuntime.map(s => s.inputMask);
             const fakeOnline = simRuntime.map(s => s.connected);
             const fakeLastSeen = simRuntime.map(s => s.connected ? Date.now() : 0);
 
             return {
                 ...realState,
-                // Override with Sim Data
-                controller: 'USER', // Fake User control so buttons unlock locally
-                currentUser: user?.username, // Fake ownership
+                controller: 'USER',
+                currentUser: user?.username,
                 virtualSwitches: fakeVirtual,
                 stationFeedback: fakeFeedback,
                 stationOnline: fakeOnline,
@@ -148,11 +139,10 @@ export const SocketProvider = ({ children }) => {
                 mainControllerOnline: true
             };
         }
-
-        // Otherwise, see Reality
         return realState;
     }, [realState, simMeta, simRuntime, user]);
 
+    // --- SESSION RESTORE ---
     useEffect(() => {
         const checkSession = async () => {
             try {
@@ -171,11 +161,14 @@ export const SocketProvider = ({ children }) => {
         checkSession();
     }, [token]);
 
+    // ✅ FIXED: Removed 'i18n' from dependency array to prevent revert loops
     useEffect(() => {
         if (user && user.settings && user.settings.language) {
-            if (i18n.language !== user.settings.language) i18n.changeLanguage(user.settings.language);
+            if (i18n.language !== user.settings.language) {
+                i18n.changeLanguage(user.settings.language);
+            }
         }
-    }, [user, i18n]);
+    }, [user]); // <--- Only run when USER loads/updates
 
     useEffect(() => { if (socket && user?.username) socket.emit('IDENTIFY', user.username); }, [socket, user]);
 
@@ -204,7 +197,6 @@ export const SocketProvider = ({ children }) => {
     const releaseToCabane = async () => { if (token) try { await axios.post(`${API_URL}/api/control/release-cabane`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { } };
 
     const toggleSwitch = async (index, value) => {
-        // Optimistic UI for Real State
         if (!simMeta.active || simMeta.physicalLink) {
             setRealState(prev => {
                 const newVirtual = [...prev.virtualSwitches];
@@ -212,7 +204,6 @@ export const SocketProvider = ({ children }) => {
                 return { ...prev, virtualSwitches: newVirtual };
             });
         }
-
         if (token) await axios.post(`${API_URL}/api/control/toggle`, { index, value }, { headers: { Authorization: `Bearer ${token}` } });
     };
 
