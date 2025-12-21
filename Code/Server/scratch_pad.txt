@@ -551,11 +551,54 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ When starting a Hardware simulation, the input feedback are coming from the Hardware Simulator. The user should be able to enable / disable sending the output ( relays ) state to the physical hardware along with the Hardware Simulator. If enabling sending to the physical hardware, then the user takes control, otherwise, if the user disables sending output configuration to the physical hardware outputs ( relays ), the system doesn't see the user taking control in Hardware Simulation.
 
 √ If the user choose to enable the physical hardware outputs when starting Hardware Simulation, the user takes control. In this scenario, if another user or the Main Controller takes control, the user in Hardware Simulation losses control and the hardware simulation automatically disables sending output messages to the Physical hardware.
+
+√ Make sure the Automation are available in Simulation Only AND in Live: Sending to Hardware.
 ---
 
 REQUESTED
 
+- When the automation is started, the user should be able to scroll all the way down so the bottom of the main page with the StationCards scroll up past the automation banner. Right now the furthest we can scroll, the last switches are hidden behind the automation banner. While the automation banner is fine the way it is, we need to scroll the main page further so that the lowest items of the main page are located above the automation banner so we can see them and interact with them.
 
+- Still did not get this right:
+
+Look into Branch 1 Step 3:
+
+
+## STEP 3
+
+### ST0
+
+- Vacuum Pump 1 [idx 2] -> ON
+- Vacuum Pump 2 [idx 3] -> ON
+- TH1 -> N/A
+
+
+### ST1
+
+- Transport Pump 1 [idx 0] -> Pulse ON 1 sec
+- Transport Pump 2 [idx 1] -> Pulse ON 1 sec
+- Empty (Drain) Valve T1 [idx 4] -> OFF
+- Open Valve T2 [idx 5] -> OFF
+- Empty (Drain) Valve T2 [idx 6] -> OFF
+- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> ON
+
+
+### ST2
+
+- Transport Pump [idx 8] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 9] -> ON
+- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> ON
+- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> ON
+
+
+### ST3
+
+- Transport Pump 1 [idx 12] -> NO Pulse ( Stay OFF )
+- Transport Pump 2 [idx 13] -> NO Pulse ( Stay OFF )
+- Vacuum Pump [idx 14] -> ON
+- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> OFF
+
+---
 
 - When in Hardware Simulation and the user disabled the "LIVE: Sending to Hardware, this users StationCard should behave as if the user had control. That said, no other account can see the user in Hardware Simulation having control as this user only controls the Hardware simulation. The user in Hardware Simulation will take actual control over the system if enabling the "Live: Sending To Harare" or stops Hardware Simulation and takes control.
 
@@ -573,13 +616,21 @@ REQUESTED
 
 
 
+
+
 ---
 
 NEXT
 
+
+- On the server, with pm2 status "watching" disabled, what does that mean? Should we enable that?
+
+
+
+
 - Some files are getting too long and I'm getting a warning from Vite Server.
 
-- Make sure the Automation are available in Simulation Only AND in Live: Sending to Hardware.
+
 
 
 

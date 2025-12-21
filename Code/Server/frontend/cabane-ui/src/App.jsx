@@ -32,23 +32,15 @@ function Dashboard() {
     socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings, simState
   } = useSocket();
 
-  // --- CONTROL AUTHORITY LOGIC ---
-  // 1. Am I the active controller of the real system?
   const isController = systemState.controller === 'USER' && systemState.currentUser === user?.username;
-
-  // 2. Am I the owner of an active simulation?
   const isSimOwner = simState?.active && simState?.owner === user?.username;
-
-  // 3. Is the simulation in "Isolated Mode" (Link OFF)?
   const isSimIsolated = isSimOwner && !simState?.physicalLink;
-
-  // 4. Is the simulation in "Live Mode" (Link ON)?
   const isSimLinked = isSimOwner && simState?.physicalLink;
 
-  // 5. Can I interact with switches? (Real Control OR Isolated Sim Control)
+  // ✅ CONTROL AUTHORITY: True if User is Real Controller OR Isolated Sim Owner
   const canInteract = isController || isSimIsolated;
 
-  // --- UI STATE ---
+  // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
 
@@ -347,10 +339,8 @@ function Dashboard() {
         />
       )}
 
-      {/* AUTOMATION & SHUTDOWN MODALS */}
       <AutomationModal isOpen={showAutomation} onClose={() => setShowAutomation(false)} />
       <ShutdownModal isOpen={showShutdown} onClose={() => setShowShutdown(false)} />
-
       <AutomationBanner />
 
       {/* HEADER */}
@@ -360,7 +350,6 @@ function Dashboard() {
         <div className="flex flex-col gap-1 items-center xl:items-start min-w-[250px]">
           <h1 className="text-3xl font-black tracking-widest text-gray-100 leading-none mb-1">CABANE CONTROL</h1>
 
-          {/* ✅ SIMULATION HEADER */}
           {isSimIsolated ? (
             <div className="flex items-center gap-2 text-purple-400 font-bold text-sm tracking-wider animate-pulse bg-purple-900/10 px-2 py-1 rounded border border-purple-500/30">
               <Cpu size={16} /> SIMULATION (ISOLATED)
@@ -402,39 +391,44 @@ function Dashboard() {
         {/* Right Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* ✅ SIMULATION CONTROLS */}
+          {/* SIMULATION STATE BUTTONS */}
           {isSimIsolated ? (
             <button onClick={stopSimulation} className="px-6 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg shadow-red-900/50 transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
               <Power size={18} /> STOP SIMULATION
             </button>
           ) : isSimLinked ? (
-            // Button to downgrade from LIVE to ISOLATED
             <button onClick={unlinkSim} className="px-6 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-black font-bold uppercase shadow-lg transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
               <Cpu size={18} /> SIMULATION ONLY
             </button>
           ) : (
+            // REAL CONTROLS (Hide if Sim Owner because Sim Owner is already controlling via Sim Panel)
+            // Show only if NOT sim owner, OR if sim owner but not active? 
+            // Actually, if Sim is NOT active, isSimOwner is false.
             <>
-              {/* Standard Controls */}
               {systemState.currentUser !== user?.username && (
                 user?.can_control ?
                   <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">{t('dashboard.take_control')}</button>
                   : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">{t('dashboard.view_only')}</div>
               )}
-
-              {systemState.controller === 'USER' && systemState.currentUser === user?.username && (
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
-                  {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
-
-                  {!isAutoRunning && (
-                    <>
-                      <button onClick={() => setShowAutomation(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation"><Clock size={20} /></button>
-                      <button onClick={() => setShowShutdown(true)} className="p-3 rounded bg-red-900/30 border border-red-500/50 text-red-300 hover:bg-red-900/50 transition-colors shadow-lg ml-2" title="Schedule Shutdown"><Power size={20} /></button>
-                    </>
-                  )}
-                </div>
-              )}
             </>
+          )}
+
+          {/* HOLD / RELEASE CONTROLS (Only if NOT Isolated Sim, because Isolated Sim has no server to release to) */}
+          {/* Correction: Isolated Sim implies you ARE the controller of the simulation. */}
+          {/* We only show Hold/Release for the REAL system context. */}
+          {!isSimIsolated && systemState.controller === 'USER' && systemState.currentUser === user?.username && (
+            <div className="flex gap-2 shrink-0">
+              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
+              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
+            </div>
+          )}
+
+          {/* ✅ AUTOMATION / SHUTDOWN (Show whenever you have control authority) */}
+          {canInteract && !isAutoRunning && (
+            <div className="flex gap-2 shrink-0">
+              <button onClick={() => setShowAutomation(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation"><Clock size={20} /></button>
+              <button onClick={() => setShowShutdown(true)} className="p-3 rounded bg-red-900/30 border border-red-500/50 text-red-300 hover:bg-red-900/50 transition-colors shadow-lg ml-2" title="Schedule Shutdown"><Power size={20} /></button>
+            </div>
           )}
 
           <button onClick={() => setShowMessageDrawer(true)} className={`p-3 rounded transition-colors relative shrink-0 ${unreadCount > 0 ? 'bg-red-900/50 text-red-400 animate-pulse border border-red-500' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`} title={t('nav.messages')}><Mail size={20} />{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full text-[10px] flex items-center justify-center text-white font-bold">{unreadCount}</span>}</button>

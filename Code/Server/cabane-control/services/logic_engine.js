@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - PRODUCTION v16 (Toggle Fix)
+// 🧠 LOGIC ENGINE - PRODUCTION v18 (Sim Isolation Fix)
 // ============================================================
 const udpService = require('./udp_service');
 const automationService = require('./automation_service');
@@ -23,7 +23,8 @@ const state = {
     buzzerStatus: 'OFF',
     timezone: 'UTC',
     disabledStations: [],
-    simulationMode: false
+    simulationMode: false,
+    physicalLink: false // ✅ NEW: Track link state to filter feedback
 };
 
 // ✅ HELPER: Defined early
@@ -206,6 +207,9 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
 }
 
 function updateStationHeartbeat(id) {
+    // ✅ ISOLATION: Ignore Physical Heartbeats in Sim-Only Mode
+    if (state.simulationMode && !state.physicalLink) return;
+
     if (id >= 0 && id < 6) {
         state.stationOnline[id] = true;
         state.stationLastSeen[id] = Date.now();
@@ -214,7 +218,12 @@ function updateStationHeartbeat(id) {
     }
 }
 
+// ✅ UDP FEEDBACK (Physical)
 function updateStationFeedback(id, bits) {
+    // ✅ ISOLATION: Ignore Physical Feedback in Sim-Only Mode
+    // This prevents the real hardware (which is OFF) from overwriting the Sim state (which is ON)
+    if (state.simulationMode && !state.physicalLink) return;
+
     if (id >= 0 && id < 6) {
         state.stationFeedback[id] = bits;
         state.stationOnline[id] = true;
@@ -224,11 +233,23 @@ function updateStationFeedback(id, bits) {
     }
 }
 
+// ✅ SIMULATION FEEDBACK (Virtual)
+// Called directly by simulation_service.js
+function updateSimFeedback(id, bits) {
+    // Only accept Sim feedback if we are actually in Simulation Mode
+    if (state.simulationMode) {
+        state.stationFeedback[id] = bits;
+        state.stationOnline[id] = true;
+        state.stationLastSeen[id] = Date.now(); // Keep it "Alive"
+        if (id === 1) { state.stationOnline[0] = true; state.stationLastSeen[0] = Date.now(); }
+        pushUpdate();
+    }
+}
+
 function takeControl(username) {
     const simStatus = simulationService.getStatus();
     const simOwner = simStatus.owner;
 
-    // ✅ FIX: Only unlink if the new controller is DIFFERENT from the Sim Owner
     if (simStatus.physicalLink && username !== simOwner && username !== 'SIM_ADMIN') {
         console.log(`[CONTROL] User '${username}' taking control. Forcing Simulation Unlink.`);
         simulationService.forcePhysicalUnlink();
@@ -271,28 +292,21 @@ function releaseToCabane() {
 function toggleSwitch(idx, value, actor) {
     if (idx < 0 || idx > 23) return;
 
-    // Simulation Isolation Logic
     const simStatus = simulationService.getStatus();
     const isSimOwner = simStatus.owner === actor;
+    const isAuto = actor === 'AUTO';
 
     // ✅ SCENARIO 1: Sim Only
-    // If Sim Active + Unlinked + Owner -> Update Sim ONLY
-    if (simStatus.active && !simStatus.physicalLink && isSimOwner) {
+    if (simStatus.active && !simStatus.physicalLink && (isSimOwner || isAuto)) {
         simulationService.setVirtualRelay(idx, value);
         return;
     }
 
     // ✅ SCENARIO 2: Real System
-    // If Cabane has control (and we are not forcing sim), ignore
     if (state.controller === 'CABANE' && !state.simulationMode) return;
-
     const isController = state.controller === 'SERVER' || (state.controller === 'USER' && state.currentUser === actor);
 
-    // Allow if:
-    // 1. We are the Controller
-    // 2. OR We are the Sim Owner and the Link is ON (Live Mode)
-    // 3. OR It's the Automation Service ('AUTO')
-    if (isController || (simStatus.physicalLink && isSimOwner) || actor === 'AUTO') {
+    if (isController || (simStatus.physicalLink && isSimOwner) || isAuto) {
         state.virtualSwitches[idx] = value ? 1 : 0;
         pushUpdate();
     }
@@ -305,7 +319,7 @@ function controlLoop() {
 
     if (applyThermostatOverrides()) stateChanged = true;
 
-    // ... (Alarm Logic) ...
+    // Vacuum Alarms
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
         if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) return;
@@ -352,7 +366,6 @@ function controlLoop() {
 
     if (stateChanged) pushUpdate();
 
-    // UDP Output
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
@@ -360,11 +373,8 @@ function controlLoop() {
             if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit);
         });
 
-        // 1. Hook Simulator
         simulationService.onCommandReceived(stationBytes);
 
-        // 2. Send Real UDP
-        // Always send if there is a controller. The toggleSwitch logic prevents changes if in Sim Only.
         udpService.sendGlobalBroadcast(stationBytes);
         udpService.sendRemoteData(virtualBytes(state.virtualSwitches));
 
@@ -414,5 +424,7 @@ function pushUpdate() {
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback, updateStationHeartbeat,
     takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig,
-    setSimulationMode: (mode) => { state.simulationMode = mode; pushUpdate(); }
+    setSimulationMode: (mode) => { state.simulationMode = mode; pushUpdate(); },
+    setPhysicalLink: (link) => { state.physicalLink = link; pushUpdate(); }, // ✅ EXPORTED
+    updateSimFeedback // ✅ EXPORTED
 };

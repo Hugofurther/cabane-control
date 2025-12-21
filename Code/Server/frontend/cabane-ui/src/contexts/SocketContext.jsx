@@ -50,7 +50,7 @@ export const SocketProvider = ({ children }) => {
     const [weatherData, setWeatherData] = useState([]);
 
     // Sim State
-    const [simMeta, setSimMeta] = useState({ active: false, physicalLink: false, owner: null });
+    const [simMeta, setSimMeta] = useState({ active: false, physicalLink: false, owner: null, systemSwitchMask: 0 }); // ✅ Added systemSwitchMask
     const [simRuntime, setSimRuntime] = useState(null);
 
     const [token, setToken] = useState(localStorage.getItem('cabane_token'));
@@ -87,7 +87,13 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('WEATHER_FULL_UPDATE', (data) => setWeatherData(Array.isArray(data) ? data : []));
 
         newSocket.on('SIM_STATUS', (data) => {
-            setSimMeta({ active: data.active, physicalLink: data.physicalLink, owner: data.owner });
+            // ✅ Save systemSwitchMask from server
+            setSimMeta({
+                active: data.active,
+                physicalLink: data.physicalLink,
+                owner: data.owner,
+                systemSwitchMask: data.systemSwitchMask || 0
+            });
             setSimRuntime(data.state);
         });
 
@@ -116,6 +122,8 @@ export const SocketProvider = ({ children }) => {
         const amISimOwner = user && simMeta.owner === user.username;
         if (simMeta.active && !simMeta.physicalLink && amISimOwner && simRuntime) {
             const fakeVirtual = new Array(24).fill(0);
+
+            // 1. Station Relays
             INPUT_MAP.forEach(m => {
                 const stData = simRuntime[m.st];
                 if (stData) {
@@ -124,6 +132,14 @@ export const SocketProvider = ({ children }) => {
                     }
                 }
             });
+
+            // 2. ✅ System Switches (21=Buzzer, 22=TH1, 23=TH2)
+            const sysMask = simMeta.systemSwitchMask || 0;
+            if ((sysMask >> 0) & 1) fakeVirtual[21] = 1;
+            if ((sysMask >> 1) & 1) fakeVirtual[22] = 1;
+            if ((sysMask >> 2) & 1) fakeVirtual[23] = 1;
+
+            // 3. Feedback
             const fakeFeedback = simRuntime.map(s => s.inputMask);
             const fakeOnline = simRuntime.map(s => s.connected);
             const fakeLastSeen = simRuntime.map(s => s.connected ? Date.now() : 0);
@@ -142,6 +158,7 @@ export const SocketProvider = ({ children }) => {
         return realState;
     }, [realState, simMeta, simRuntime, user]);
 
+    // ... (Session/Auth/Actions Logic Same) ...
     // --- SESSION RESTORE ---
     useEffect(() => {
         const checkSession = async () => {
@@ -161,14 +178,13 @@ export const SocketProvider = ({ children }) => {
         checkSession();
     }, [token]);
 
-    // ✅ FIXED: Removed 'i18n' from dependency array to prevent revert loops
     useEffect(() => {
         if (user && user.settings && user.settings.language) {
             if (i18n.language !== user.settings.language) {
                 i18n.changeLanguage(user.settings.language);
             }
         }
-    }, [user]); // <--- Only run when USER loads/updates
+    }, [user]);
 
     useEffect(() => { if (socket && user?.username) socket.emit('IDENTIFY', user.username); }, [socket, user]);
 
@@ -197,6 +213,7 @@ export const SocketProvider = ({ children }) => {
     const releaseToCabane = async () => { if (token) try { await axios.post(`${API_URL}/api/control/release-cabane`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { } };
 
     const toggleSwitch = async (index, value) => {
+        // Optimistic UI for Real State
         if (!simMeta.active || simMeta.physicalLink) {
             setRealState(prev => {
                 const newVirtual = [...prev.virtualSwitches];
@@ -204,6 +221,7 @@ export const SocketProvider = ({ children }) => {
                 return { ...prev, virtualSwitches: newVirtual };
             });
         }
+
         if (token) await axios.post(`${API_URL}/api/control/toggle`, { index, value }, { headers: { Authorization: `Bearer ${token}` } });
     };
 

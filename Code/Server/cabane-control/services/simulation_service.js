@@ -1,5 +1,5 @@
 // ============================================================
-// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v14 - Complete)
+// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v16 - System Switches)
 // ============================================================
 const dgram = require('dgram');
 const db = require('../db');
@@ -32,6 +32,9 @@ let state = Array(6).fill(null).map((_, i) => ({
     inputMask: 0x7F
 }));
 
+// ✅ NEW: Track System Switches (21, 22, 23) separately
+let systemSwitchMask = 0;
+
 let physicalLink = false;
 
 function init(io) {
@@ -61,7 +64,6 @@ function setSimulationActive(isActive, username) {
 
     console.log(`[SIM] Simulation Mode: ${isActive ? 'ON' : 'OFF'} (Owner: ${owner})`);
 
-    // If stopping, drop link
     if (!isActive && physicalLink) {
         togglePhysicalLink(false);
     }
@@ -90,12 +92,11 @@ function togglePhysicalLink(shouldLink, requestUser) {
     console.log(`[SIM] Physical Link: ${physicalLink ? 'CONNECTED' : 'DISCONNECTED'}`);
 
     const logicEngine = require('./logic_engine');
+    logicEngine.setPhysicalLink(physicalLink);
 
     if (physicalLink) {
-        // Take Real Control
         logicEngine.takeControl(owner || 'SIM_ADMIN');
     } else {
-        // Release Control
         const engState = logicEngine.getFullState();
         if (engState.currentUser === (owner || 'SIM_ADMIN')) {
             logicEngine.releaseToCabane();
@@ -108,18 +109,17 @@ function forcePhysicalUnlink() {
     if (physicalLink) {
         console.log("[SIM] Control Lost (Preempted). Disabling Physical Link.");
         physicalLink = false;
-
-        // Also ensure Logic Engine knows we are back to Isolated Sim Mode
         try {
             const logicEngine = require('./logic_engine');
-            logicEngine.setSimulationMode(true); // Re-enable isolated mode
+            logicEngine.setSimulationMode(true);
+            logicEngine.setPhysicalLink(false);
         } catch (e) { }
-
         emitStatus();
     }
 }
 
-function getStatus() { return { active, owner, config, state, physicalLink }; }
+// ✅ INCLUDE systemSwitchMask in Status
+function getStatus() { return { active, owner, config, state, physicalLink, systemSwitchMask }; }
 function emitStatus() { if (ioRef) ioRef.emit('SIM_STATUS', getStatus()); }
 function isPhysicalLinked() { return physicalLink; }
 function getOwner() { return owner; }
@@ -146,9 +146,7 @@ function updateInputConfig(stId, inputIdx, updates) {
     saveConfig();
 }
 
-function setName(id, bit, name) {
-    updateInputConfig(id, bit, { name });
-}
+function setName(id, bit, name) { updateInputConfig(id, bit, { name }); }
 
 function toggleManualInput(stId, inputIdx) {
     if (!active || !state[stId].connected) return;
@@ -161,10 +159,18 @@ function toggleManualInput(stId, inputIdx) {
 
 // --- CORE LOGIC ---
 
-// Used for "Sim Only" manual toggles via API (Isolated Mode)
 function setVirtualRelay(idx, value) {
     if (!active) return;
-    // Map idx to station bit
+
+    // ✅ HANDLE SYSTEM SWITCHES (21, 22, 23)
+    if (idx >= 21 && idx <= 23) {
+        const bit = idx - 21; // 0, 1, 2
+        if (value) systemSwitchMask |= (1 << bit);
+        else systemSwitchMask &= ~(1 << bit);
+        emitStatus();
+        return;
+    }
+
     const INPUT_MAP = [
         { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 }, { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
         { idx: 4, st: 1, bit: 2 }, { idx: 5, st: 1, bit: 3 }, { idx: 6, st: 1, bit: 4 }, { idx: 7, st: 1, bit: 5 },
@@ -184,13 +190,8 @@ function setVirtualRelay(idx, value) {
     setTimeout(calculatePhysics, 100);
 }
 
-// Hook called by LogicEngine (Global Broadcast)
 function onCommandReceived(stationBytes) {
     if (!active) return;
-
-    // ✅ ISOLATION LOGIC:
-    // If Physical Link is OFF, we ignore the Logic Engine's broadcast.
-    // This prevents "Jitter" where the real system state overwrites the sim state.
     if (!physicalLink) return;
 
     let changed = false;
@@ -211,30 +212,26 @@ function onCommandReceived(stationBytes) {
 function calculatePhysics() {
     if (!active) return;
 
-    // 1. Start with Manual Inputs
     let nextInputs = state.map(s => s.manualInputs);
 
-    // 2. Apply Relay Links
     config.forEach((stConfig, sourceStId) => {
         if (!state[sourceStId].connected) return;
         const sourceRelays = state[sourceStId].relayMask;
 
         stConfig.relays.forEach((rConfig, rIdx) => {
             if (rConfig.enabled === false) return;
-
             const isRelayOn = (sourceRelays >> rIdx) & 1;
 
             if (isRelayOn && rConfig.linked) {
                 const tSt = rConfig.targetSt;
                 const tBit = rConfig.targetBit;
                 if (tSt >= 0 && tSt < 6 && tBit >= 0 && tBit < 7) {
-                    nextInputs[tSt] &= ~(1 << tBit); // Pull Low (Active)
+                    nextInputs[tSt] &= ~(1 << tBit);
                 }
             }
         });
     });
 
-    // 3. Apply & Send
     for (let i = 0; i < 6; i++) {
         if (!state[i].connected) continue;
         if (state[i].inputMask !== nextInputs[i]) {
@@ -249,6 +246,12 @@ function calculatePhysics() {
 function sendFeedback(id) {
     if (!state[id].connected) return;
     const s = state[id];
+
+    try {
+        const logicEngine = require('./logic_engine');
+        logicEngine.updateSimFeedback(id, s.inputMask);
+    } catch (e) { }
+
     const packet = Buffer.alloc(5);
     packet[0] = 0xAC; packet[1] = id; packet[2] = s.inputMask; packet[3] = 0x00;
     packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
@@ -269,18 +272,5 @@ function heartbeatLoop() {
 }
 
 module.exports = {
-    init,
-    setSimulationActive,
-    togglePhysicalLink,
-    forcePhysicalUnlink,
-    isPhysicalLinked,
-    getOwner,
-    getStatus,
-    updateRelayConfig,
-    updateInputConfig,
-    setName,
-    toggleStationConnection,
-    toggleManualInput,
-    onCommandReceived,
-    setVirtualRelay
+    init, setSimulationActive, togglePhysicalLink, forcePhysicalUnlink, isPhysicalLinked, getOwner, getStatus, updateRelayConfig, updateInputConfig, setName, toggleStationConnection, toggleManualInput, onCommandReceived, setVirtualRelay
 };
