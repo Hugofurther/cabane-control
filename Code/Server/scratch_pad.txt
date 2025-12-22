@@ -553,104 +553,40 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 √ If the user choose to enable the physical hardware outputs when starting Hardware Simulation, the user takes control. In this scenario, if another user or the Main Controller takes control, the user in Hardware Simulation losses control and the hardware simulation automatically disables sending output messages to the Physical hardware.
 
 √ Make sure the Automation are available in Simulation Only AND in Live: Sending to Hardware.
+
+√ When the automation is started, the user should be able to scroll all the way down so the bottom of the main page with the StationCards scroll up past the automation banner. Right now the furthest we can scroll, the last switches are hidden behind the automation banner. While the automation banner is fine the way it is, we need to scroll the main page further so that the lowest items of the main page are located above the automation banner so we can see them and interact with them.
+
+√ Some files are getting too long and I'm getting a warning from Vite Server.
+
+√ In hardware simulation we should be able to toggle the Buzzer switch and the 2 thermostat switches. We used to be able to, but currently clicking on them is not doing anything. Can you please fix it.
+
 ---
 
 REQUESTED
 
-- When the automation is started, the user should be able to scroll all the way down so the bottom of the main page with the StationCards scroll up past the automation banner. Right now the furthest we can scroll, the last switches are hidden behind the automation banner. While the automation banner is fine the way it is, we need to scroll the main page further so that the lowest items of the main page are located above the automation banner so we can see them and interact with them.
-
-- Still did not get this right:
-
-Look into Branch 1 Step 3:
-
-
-## STEP 3
-
-### ST0
-
-- Vacuum Pump 1 [idx 2] -> ON
-- Vacuum Pump 2 [idx 3] -> ON
-- TH1 -> N/A
-
-
-### ST1
-
-- Transport Pump 1 [idx 0] -> Pulse ON 1 sec
-- Transport Pump 2 [idx 1] -> Pulse ON 1 sec
-- Empty (Drain) Valve T1 [idx 4] -> OFF
-- Open Valve T2 [idx 5] -> OFF
-- Empty (Drain) Valve T2 [idx 6] -> OFF
-- Empty (Drain) Valve ST2 -> ST1 [idx 6] -> ON
-
-
-### ST2
-
-- Transport Pump [idx 8] -> NO Pulse ( Stay OFF )
-- Vacuum Pump [idx 9] -> ON
-- Empty (Drain) Valve ST1 -> ST2 [idx 10] -> ON
-- Empty (Drain) Valve ST3 -> ST2 [idx 11] -> ON
-
-
-### ST3
-
-- Transport Pump 1 [idx 12] -> NO Pulse ( Stay OFF )
-- Transport Pump 2 [idx 13] -> NO Pulse ( Stay OFF )
-- Vacuum Pump [idx 14] -> ON
-- Empty (Drain) Valve ST2 -> ST3 [idx 15] -> OFF
-
----
-
-- When in Hardware Simulation and the user disabled the "LIVE: Sending to Hardware, this users StationCard should behave as if the user had control. That said, no other account can see the user in Hardware Simulation having control as this user only controls the Hardware simulation. The user in Hardware Simulation will take actual control over the system if enabling the "Live: Sending To Harare" or stops Hardware Simulation and takes control.
-
-
-
----
-
-- When a user is in Simulation Mode. The Hardware Simulator only propagated to other users if the "Live: Sending to Hardware" is enabled. Otherwise the feedback from the Hardware Simulator is only read by the user in Hardware Simulation and the other users are reading the feedback from the Physical hardware.
-
-- When a user is in Simulation Mode.
-
-- When a starting gets disconnected, the Main Page doesn't recognized it as being OFFLINE anymore. It used to, but this feature was broken on the last implementation.
-
-- Why is the Main Controller becoming OFFLINE when in Hardware Simulation?
-
+- In Hardware Simulation, I want to remove the entire part where we can enable the physical hardware. When in Hardware simulation, the user should be entirely isolated from the rest of the physical hardware system. The only thing being controlled by the user in Hardware Simulation should be the Hardware Simulator and the only feedback the user in Hardware simulation is acknowledging are the feedbacks from the Hardware simulation. The StationCards enabled / disabled in Hardware simulation should be dictated by the Hardware simulation, not the physical system. The Hardware Simulation system should not affect the "regular" physical hardware network and its system, and the physical hardware network system should not affect the Hardware Simulation. They should be totally isolated. Please let me know you understand this request properly and if you have any questions, just ask them.
 
 
 
 
 ---
-
 NEXT
 
+
+
+
+---
 
 - On the server, with pm2 status "watching" disabled, what does that mean? Should we enable that?
 
 
 
 
-- Some files are getting too long and I'm getting a warning from Vite Server.
-
-
-
-
-
-
 - Can you verify the hardware simulator did not affect any of the regular operations when the Simulation is stopped.
-
 
 ---
 
-
 - AutomationModal.jsx background opacity and blur are not the standard for the app. Please set them to what we are using fo the other modals.
-
-
-
-
-
-
-- I need to be able to access the app directly from the Pi Server. Can we set it up so that at boot, the Pi opens the app and can only access the app. Like a kiosk display.
-
-
 
 - The OFFLINE label on Station Cards is a bit too close vertically from "Station x" title. Can we add a tiny bit of bottom padding to it, or whatever is the best thing to do.
 
@@ -720,6 +656,9 @@ MESSAGIN
 
 
 -----------------------------------
+AUTOMATION
+
+- Can we have a toggle on Thermostat switches to allow the vacuum switches to also turn off if the thermostat feedback go red.
 
 -----------------------------------
 WEATHER
@@ -749,7 +688,11 @@ UX
 - When overing over a component, can we have a tiny comment or pop up explanation of the feature (e.g. overing over "Flash Message" -> pop-up content: Add this option to display the message in a big message viewer on the recipient's screen)
 
 
-
+----
+Now, I would like to to add in the AdminPanel a setting to make the Server either "headless" or whatever the setup we currently have is called, or in Kiosk mode with a screen attached. Can you please make a plan and evaluate the best way to accomplish this.
+- Should the setting be automated when detecting a screen connection on the hdmi port and revert to the current setup when the screen gets disconnected, or it is better to have a setting in the AdminPanel to switch between modes?
+- Do we need to have a setting for the display size or it is detected automatically.
+- Should we keep it to 1080p resolution or should we have a setting for that?
 
 -----------------------------------
 NATIVE BROWSER ALERTS -> Should be Modal pop-up

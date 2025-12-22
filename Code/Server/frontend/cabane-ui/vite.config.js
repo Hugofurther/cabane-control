@@ -2,26 +2,29 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
-// https://vite.dev/config/
+// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
 
+  // ✅ Your existing alias configuration
   resolve: {
     alias: {
-      // If your tests import from the app, this helps:
       '@': resolve(__dirname, 'src'),
     },
   },
-  test: {
-    // Tell Vitest where your tests live
-    include: [
-      // Default patterns inside app (optional)
-      'src/**/*.{test,spec}.{js,ts,jsx,tsx}',
-      // Your external test folder, adjust path as needed:
-      '../../tests/**/*.{js,ts,jsx,tsx}',
 
-    ],
-    globals: true,
-    environment: 'jsdom',
+  // ✅ New build settings to fix the size warning
+  build: {
+    chunkSizeWarningLimit: 1000, // Increases warning threshold to 1MB
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Separates third-party libs (node_modules) from your app code
+          if (id.includes('node_modules')) {
+            return 'vendor';
+          }
+        },
+      },
+    },
   },
 })

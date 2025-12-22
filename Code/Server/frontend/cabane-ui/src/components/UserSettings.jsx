@@ -12,7 +12,7 @@ import { LogViewer } from './LogViewer';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
-export const UserSettings = ({ isOpen, onClose }) => {
+export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
     const { user, updateSettings, logout } = useSocket();
     const { showAlert } = useModal();
     const { t, i18n } = useTranslation();
@@ -246,7 +246,8 @@ export const UserSettings = ({ isOpen, onClose }) => {
                             </section>
                         </div>
                     )}
-                    {activeTab === 'ADMIN' && <AdminPanel embedded={true} />}
+                    {/* ✅ PASS PROP to Embedded AdminPanel */}
+                    {activeTab === 'ADMIN' && <AdminPanel embedded={true} onOpenSim={onOpenSim} />}
                     {activeTab === 'LOGS' && <LogViewer embedded={true} />}
                 </div>
 

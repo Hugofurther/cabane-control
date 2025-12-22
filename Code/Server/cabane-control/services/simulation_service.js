@@ -1,5 +1,5 @@
 // ============================================================
-// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v16 - System Switches)
+// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v18 - Physics Loop Fix)
 // ============================================================
 const dgram = require('dgram');
 const db = require('../db');
@@ -12,6 +12,9 @@ let ioRef = null;
 let active = false;
 let owner = null;
 let heartbeatInterval = null;
+
+// Track switches that don't belong to stations (21, 22, 23)
+let extraState = 0;
 
 // CONFIG
 let config = Array(6).fill(null).map((_, i) => ({
@@ -32,10 +35,28 @@ let state = Array(6).fill(null).map((_, i) => ({
     inputMask: 0x7F
 }));
 
-// ✅ NEW: Track System Switches (21, 22, 23) separately
-let systemSwitchMask = 0;
-
 let physicalLink = false;
+
+// THERMOSTAT DEFINITIONS
+const THERMOSTATS = [
+    { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
+    { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
+];
+
+// GLOBAL INPUT MAP
+const INPUT_MAP = [
+    { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
+    { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
+    { idx: 4, st: 1, bit: 2 }, { idx: 5, st: 1, bit: 3 },
+    { idx: 6, st: 1, bit: 4 }, { idx: 7, st: 1, bit: 5 },
+    { idx: 8, st: 2, bit: 0 }, { idx: 9, st: 2, bit: 1 },
+    { idx: 10, st: 2, bit: 2 }, { idx: 11, st: 2, bit: 3 },
+    { idx: 12, st: 3, bit: 0 }, { idx: 13, st: 3, bit: 1 },
+    { idx: 14, st: 3, bit: 2 }, { idx: 15, st: 3, bit: 3 },
+    { idx: 16, st: 4, bit: 0 }, { idx: 17, st: 4, bit: 1 },
+    { idx: 18, st: 4, bit: 2 },
+    { idx: 19, st: 5, bit: 0 }, { idx: 20, st: 5, bit: 1 }
+];
 
 function init(io) {
     ioRef = io;
@@ -118,8 +139,7 @@ function forcePhysicalUnlink() {
     }
 }
 
-// ✅ INCLUDE systemSwitchMask in Status
-function getStatus() { return { active, owner, config, state, physicalLink, systemSwitchMask }; }
+function getStatus() { return { active, owner, config, state, physicalLink, extraState }; }
 function emitStatus() { if (ioRef) ioRef.emit('SIM_STATUS', getStatus()); }
 function isPhysicalLinked() { return physicalLink; }
 function getOwner() { return owner; }
@@ -161,33 +181,21 @@ function toggleManualInput(stId, inputIdx) {
 
 function setVirtualRelay(idx, value) {
     if (!active) return;
-
-    // ✅ HANDLE SYSTEM SWITCHES (21, 22, 23)
-    if (idx >= 21 && idx <= 23) {
-        const bit = idx - 21; // 0, 1, 2
-        if (value) systemSwitchMask |= (1 << bit);
-        else systemSwitchMask &= ~(1 << bit);
-        emitStatus();
-        return;
-    }
-
-    const INPUT_MAP = [
-        { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 }, { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
-        { idx: 4, st: 1, bit: 2 }, { idx: 5, st: 1, bit: 3 }, { idx: 6, st: 1, bit: 4 }, { idx: 7, st: 1, bit: 5 },
-        { idx: 8, st: 2, bit: 0 }, { idx: 9, st: 2, bit: 1 }, { idx: 10, st: 2, bit: 2 }, { idx: 11, st: 2, bit: 3 },
-        { idx: 12, st: 3, bit: 0 }, { idx: 13, st: 3, bit: 1 }, { idx: 14, st: 3, bit: 2 }, { idx: 15, st: 3, bit: 3 },
-        { idx: 16, st: 4, bit: 0 }, { idx: 17, st: 4, bit: 1 }, { idx: 18, st: 4, bit: 2 },
-        { idx: 19, st: 5, bit: 0 }, { idx: 20, st: 5, bit: 1 }
-    ];
-
     const map = INPUT_MAP.find(m => m.idx === idx);
-    if (!map) return;
 
-    if (value) state[map.st].relayMask |= (1 << map.bit);
-    else state[map.st].relayMask &= ~(1 << map.bit);
-
-    emitStatus();
-    setTimeout(calculatePhysics, 100);
+    if (map) {
+        if (value) state[map.st].relayMask |= (1 << map.bit);
+        else state[map.st].relayMask &= ~(1 << map.bit);
+        emitStatus();
+        setTimeout(calculatePhysics, 100);
+    }
+    else if (idx >= 21 && idx <= 23) {
+        if (value) extraState |= (1 << idx);
+        else extraState &= ~(1 << idx);
+        emitStatus();
+        // ✅ RE-CALC PHYSICS TO APPLY THERMOSTAT LOGIC IMMEDIATELY
+        setTimeout(calculatePhysics, 100);
+    }
 }
 
 function onCommandReceived(stationBytes) {
@@ -209,33 +217,83 @@ function onCommandReceived(stationBytes) {
     }
 }
 
+// ✅ UPDATED PHYSICS ENGINE: 2-PASS RESOLUTION
 function calculatePhysics() {
     if (!active) return;
 
-    let nextInputs = state.map(s => s.manualInputs);
+    // Helper: Determine Inputs from Relays + Manual
+    const resolveInputs = () => {
+        let nextInputs = state.map(s => s.manualInputs);
 
-    config.forEach((stConfig, sourceStId) => {
-        if (!state[sourceStId].connected) return;
-        const sourceRelays = state[sourceStId].relayMask;
+        config.forEach((stConfig, sourceStId) => {
+            if (!state[sourceStId].connected) return;
+            const sourceRelays = state[sourceStId].relayMask;
 
-        stConfig.relays.forEach((rConfig, rIdx) => {
-            if (rConfig.enabled === false) return;
-            const isRelayOn = (sourceRelays >> rIdx) & 1;
+            stConfig.relays.forEach((rConfig, rIdx) => {
+                if (rConfig.enabled === false) return;
+                const isRelayOn = (sourceRelays >> rIdx) & 1;
 
-            if (isRelayOn && rConfig.linked) {
-                const tSt = rConfig.targetSt;
-                const tBit = rConfig.targetBit;
-                if (tSt >= 0 && tSt < 6 && tBit >= 0 && tBit < 7) {
-                    nextInputs[tSt] &= ~(1 << tBit);
+                if (isRelayOn && rConfig.linked) {
+                    const tSt = rConfig.targetSt;
+                    const tBit = rConfig.targetBit;
+                    if (tSt >= 0 && tSt < 6 && tBit >= 0 && tBit < 7) {
+                        nextInputs[tSt] &= ~(1 << tBit); // Pull Low (Active)
+                    }
                 }
-            }
+            });
         });
+
+        // Apply to State
+        let changed = false;
+        for (let i = 0; i < 6; i++) {
+            if (!state[i].connected) continue;
+            if (state[i].inputMask !== nextInputs[i]) {
+                state[i].inputMask = nextInputs[i];
+                changed = true;
+            }
+        }
+        return changed;
+    };
+
+    // --- PASS 1: Update Inputs based on Manual Toggles & Current Relays ---
+    // This ensures Thermostat logic sees the NEW input state (e.g., Green)
+    resolveInputs();
+
+    // --- PASS 2: Apply Thermostat Logic ---
+    let relayChanged = false;
+    THERMOSTATS.forEach(th => {
+        const isEnabled = (extraState >> th.swIdx) & 1;
+        if (isEnabled) {
+            const currentInputs = state[th.feedbackSt].inputMask;
+            const rawBit = (currentInputs >> th.feedbackBit) & 1;
+
+            // If Input is Active (Low/0), Turn on target Relays
+            if (rawBit === 0) {
+                th.overrides.forEach(targetIdx => {
+                    const map = INPUT_MAP.find(m => m.idx === targetIdx);
+                    if (map) {
+                        if (!((state[map.st].relayMask >> map.bit) & 1)) {
+                            state[map.st].relayMask |= (1 << map.bit);
+                            relayChanged = true;
+                        }
+                    }
+                });
+            }
+        }
     });
 
+    if (relayChanged) {
+        emitStatus();
+        // --- PASS 3: Re-resolve Inputs if Relays changed ---
+        // (In case the thermostat turned on a pump that links to another input)
+        if (resolveInputs()) {
+            // If inputs changed again, we send feedback again
+        }
+    }
+
+    // --- FINAL: SEND FEEDBACK ---
     for (let i = 0; i < 6; i++) {
-        if (!state[i].connected) continue;
-        if (state[i].inputMask !== nextInputs[i]) {
-            state[i].inputMask = nextInputs[i];
+        if (state[i].connected) {
             sendFeedback(i);
         }
     }
@@ -246,7 +304,6 @@ function calculatePhysics() {
 function sendFeedback(id) {
     if (!state[id].connected) return;
     const s = state[id];
-
     try {
         const logicEngine = require('./logic_engine');
         logicEngine.updateSimFeedback(id, s.inputMask);
@@ -272,5 +329,7 @@ function heartbeatLoop() {
 }
 
 module.exports = {
-    init, setSimulationActive, togglePhysicalLink, forcePhysicalUnlink, isPhysicalLinked, getOwner, getStatus, updateRelayConfig, updateInputConfig, setName, toggleStationConnection, toggleManualInput, onCommandReceived, setVirtualRelay
+    init, setSimulationActive, togglePhysicalLink, forcePhysicalUnlink, isPhysicalLinked,
+    getOwner, getStatus, updateRelayConfig, updateInputConfig, setName,
+    toggleStationConnection, toggleManualInput, onCommandReceived, setVirtualRelay
 };

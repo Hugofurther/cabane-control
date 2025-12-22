@@ -3,15 +3,12 @@ import axios from 'axios';
 import {
     X, Check, Trash2, Shield, Globe, MapPin, Search, Save,
     HardDrive, Power, Clock, RefreshCw, Calculator, User,
-    Lock, Crown, Volume2, Cpu
+    Lock, Crown, Volume2, Cpu // ✅ Monitor removed
 } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
 import { useSocket } from '../contexts/SocketContext';
 import { useTranslation } from 'react-i18next';
-
-// ✅ NEW IMPORT
-import { SimulationPanel } from './SimulationPanel';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -34,7 +31,7 @@ const Toggle = ({ checked, onChange, disabled }) => (
     </div>
 );
 
-export const AdminPanel = ({ embedded, isOpen, onClose }) => {
+export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
     const { t } = useTranslation();
     const { user: currentUser } = useSocket();
     const { showConfirm, showAlert } = useModal();
@@ -42,11 +39,8 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     const [activeTab, setActiveTab] = useState('USERS');
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
 
-    // ✅ SIMULATION STATE
-    const [showSim, setShowSim] = useState(false);
-
-    // System Settings State
     const [sysSettings, setSysSettings] = useState({
         timezone: 'UTC',
         weather_api_key: '',
@@ -59,9 +53,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         buzzer_alarm_on: '5',
         buzzer_alarm_off: '10',
         buzzer_reminder_min: '2',
-        burglar_station: '0',
-        drain_timer_min: '15',
-        shutdown_timer_min: '60' // ✅ NEW
+        burglar_station: '0'
     });
 
     const [locations, setLocations] = useState([]);
@@ -108,7 +100,8 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                 used: (resStatus.data.size || 0) - (resStatus.data.free || 0)
             });
 
-        } catch (e) { console.error("Admin Load Error", e); }
+            setError('');
+        } catch (e) { setError("Failed to load data."); }
         finally { setLoading(false); }
     };
 
@@ -116,7 +109,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         if (isOpen || embedded) fetchData();
     }, [isOpen, embedded]);
 
-    // --- LOGIC ---
     const toggleStation = (id) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
     };
@@ -144,43 +136,25 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         setLocations(prev => prev.map((l, i) => i === index ? { ...l, enabled: !l.enabled } : l));
     };
 
-    // --- CALCULATOR ---
     const calculateApiUsage = () => {
         const activeCount = locations.filter(l => l.enabled).length;
         if (activeCount === 0) return { val: '0.00', status: 'SAFE', color: 'text-gray-500', limitMsg: 'Idle', monthly: 0 };
-
         const callsCurrent = activeCount / (parseInt(sysSettings.weather_update_interval) || 15);
         const callsForecast = activeCount / (parseInt(sysSettings.weather_update_interval_forecast) || 60);
         const totalPerMin = callsCurrent + callsForecast;
-
         const limitMin = parseInt(sysSettings.weather_api_limit_min) || 60;
         const limitMonth = parseInt(sysSettings.weather_api_limit_month) || 1000000;
         const estimatedMonth = totalPerMin * 43200;
-
-        let status = 'SAFE';
-        let color = 'text-green-400';
-        let limitMsg = `Limit: ${limitMin}/min`;
-
-        if (totalPerMin > limitMin) {
-            status = 'EXCEEDED (MIN)'; color = 'text-red-500';
-        } else if (estimatedMonth > limitMonth) {
-            status = 'EXCEEDED (MONTH)'; color = 'text-red-500';
-            limitMsg = `Limit: ${limitMonth}/mo`;
-        } else if (totalPerMin > limitMin * 0.8) {
-            status = 'WARNING'; color = 'text-yellow-500';
-        }
-
+        let status = 'SAFE'; let color = 'text-green-400'; let limitMsg = `Limit: ${limitMin}/min`;
+        if (totalPerMin > limitMin) { status = 'EXCEEDED (MIN)'; color = 'text-red-500'; }
+        else if (estimatedMonth > limitMonth) { status = 'EXCEEDED (MONTH)'; color = 'text-red-500'; limitMsg = `Limit: ${limitMonth}/mo`; }
+        else if (totalPerMin > limitMin * 0.8) { status = 'WARNING'; color = 'text-yellow-500'; }
         return { val: totalPerMin.toFixed(2), status, color, limitMsg, monthly: Math.round(estimatedMonth) };
     };
-
     const apiUsage = calculateApiUsage();
 
     const saveSettings = async () => {
-        if (apiUsage.status.includes('EXCEEDED')) {
-            showAlert(t('common.error'), "API Limit Exceeded. Adjust settings.");
-            return;
-        }
-
+        if (apiUsage.status.includes('EXCEEDED')) { showAlert(t('common.error'), "API Limit Exceeded. Adjust settings."); return; }
         const token = localStorage.getItem('cabane_token');
         try {
             const payload = {
@@ -193,56 +167,17 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         } catch (e) { showAlert(t('common.error'), "Failed to save."); }
     };
 
-    // --- USER ACTIONS ---
-    const approveUser = async (id) => {
-        await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-        fetchData();
-    };
+    const approveUser = async (id) => { await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
+    const togglePermission = async (id, type, val) => { await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
+    const deleteUser = async (id) => { showConfirm({ title: t('common.delete'), message: "Permanently delete user?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); } catch (e) { } } }); };
+    const transferAdmin = async (targetId, targetName) => { showConfirm({ title: t('admin.transfer_admin'), message: `Transfer rights to ${targetName}?`, isDestructive: false, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/transfer-admin`, { newAdminId: targetId }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); showAlert(t('common.success'), "Admin rights transferred."); fetchData(); } catch (e) { showAlert(t('common.error'), e.response?.data?.error || "Transfer failed."); } } }); };
 
-    const togglePermission = async (id, type, val) => {
-        await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-        fetchData();
-    };
-
-    const deleteUser = async (id) => {
-        showConfirm({
-            title: t('common.delete'),
-            message: "Permanently delete user?",
-            isDestructive: true,
-            onConfirm: async () => {
-                try {
-                    await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-                    fetchData();
-                } catch (e) { }
-            }
-        });
-    };
-
-    const transferAdmin = async (targetId, targetName) => {
-        showConfirm({
-            title: t('admin.transfer_admin'),
-            message: `Transfer rights to ${targetName}?`,
-            isDestructive: false,
-            onConfirm: async () => {
-                try {
-                    await axios.post(`${API_URL}/api/users/transfer-admin`, { newAdminId: targetId }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
-                    showAlert(t('common.success'), "Admin rights transferred.");
-                    fetchData();
-                } catch (e) {
-                    showAlert(t('common.error'), e.response?.data?.error || "Transfer failed.");
-                }
-            }
-        });
-    };
-
-    // --- RENDER ---
     const containerClass = embedded ? "flex-grow flex flex-col overflow-hidden" : "bg-cabane-panel border border-gray-600 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]";
 
     if (!embedded && !isOpen) return null;
 
     const content = (
         <div className={containerClass} onClick={e => e.stopPropagation()}>
-
             {!embedded && (
                 <div className="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-800 shrink-0">
                     <h2 className="text-xl font-black text-gray-200 flex items-center gap-3 tracking-wide"><Shield className="text-blue-500" size={24} /> {t('admin.title').toUpperCase()}</h2>
@@ -259,14 +194,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                 {activeTab === 'USERS' && (
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-gray-900/50 text-gray-400 text-xs uppercase font-mono sticky top-0 z-10">
-                            <tr>
-                                <th className="p-4">{t('auth.username')}</th>
-                                <th className="p-4">{t('admin.role')}</th>
-                                <th className="p-4">{t('admin.status')}</th>
-                                <th className="p-4 text-center">{t('admin.control')}</th>
-                                <th className="p-4 text-center">{t('settings.tabs.logs')}</th>
-                                <th className="p-4 text-right">Actions</th>
-                            </tr>
+                            <tr><th className="p-4">{t('auth.username')}</th><th className="p-4">{t('admin.role')}</th><th className="p-4">{t('admin.status')}</th><th className="p-4 text-center">{t('admin.control')}</th><th className="p-4 text-center">{t('settings.tabs.logs')}</th><th className="p-4 text-right">Actions</th></tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700">
                             {users.map(u => (
@@ -278,9 +206,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                     <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'logs', u.can_view_logs)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_view_logs ? 'bg-yellow-900/50 text-yellow-400 border-yellow-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_view_logs ? t('admin.viewer') : t('admin.hidden')}</button></td>
                                     <td className="p-4 flex justify-end gap-2">
                                         {u.status === 'PENDING' && <button onClick={() => approveUser(u.id)} className="p-2 bg-green-700 rounded text-white"><Check size={16} /></button>}
-                                        {u.status === 'ACTIVE' && currentUser && String(u.id) !== String(currentUser.id) && (
-                                            <button onClick={() => transferAdmin(u.id, u.username)} className="p-2 bg-gray-700 hover:bg-yellow-900/50 text-yellow-500 rounded"><Crown size={16} /></button>
-                                        )}
+                                        {u.status === 'ACTIVE' && currentUser && String(u.id) !== String(currentUser.id) && <button onClick={() => transferAdmin(u.id, u.username)} className="p-2 bg-gray-700 hover:bg-yellow-900/50 text-yellow-500 rounded"><Crown size={16} /></button>}
                                         {u.username !== 'admin' && String(u.id) !== String(currentUser?.id) && <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-700 rounded text-red-400 hover:bg-red-900/50"><Trash2 size={16} /></button>}
                                     </td>
                                 </tr>
@@ -291,7 +217,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
 
                 {activeTab === 'SYSTEM' && (
                     <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
-
                         {/* Timezone & Disk */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
                             <div>
@@ -316,14 +241,25 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
-                        {/* Weather Config */}
+                        {/* ✅ ONLY SIMULATOR LAUNCHER REMAINS */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
-                            <div className="flex justify-between items-center"><h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> {t('admin.weather_services')}</h3></div>
+                            <div className="flex justify-between items-center border-b border-gray-700 pb-6">
+                                <div>
+                                    <h3 className="text-lg font-bold text-white flex items-center gap-2"><Cpu size={20} className="text-purple-500" /> Hardware</h3>
+                                    <p className="text-xs text-gray-500 mt-1">Virtual environment for testing automation logic.</p>
+                                </div>
+                                <button onClick={onOpenSim} className="bg-purple-900/50 hover:bg-purple-900 text-purple-300 border border-purple-500/50 px-4 py-2 rounded font-bold text-xs uppercase transition-colors shadow-lg">
+                                    Launch Simulator
+                                </button>
+                            </div>
+
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> {t('admin.weather_services')}</h3>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-gray-700">
                                 <div className="md:col-span-1"><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.api_key')}</label><input type="text" value={sysSettings.weather_api_key || ''} onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs" /></div>
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.limit_min')}</label><input type="number" value={sysSettings.weather_api_limit_min} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.limit_month')}</label><input type="number" value={sysSettings.weather_api_limit_month} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_month: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                             </div>
+                            {/* ... Weather Config ... */}
                             <div className="grid grid-cols-3 gap-4 pb-6 border-b border-gray-700">
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.current_min')}</label><input type="number" min="5" value={sysSettings.weather_update_interval} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.forecast_min')}</label><input type="number" min="30" value={sysSettings.weather_update_interval_forecast} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval_forecast: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
@@ -360,19 +296,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                         {/* Station Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2">
                             <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Power size={20} className="text-red-500" /> {t('admin.station_config')}</h3>
-
-                            {/* Automation Settings */}
-                            <div className="mb-6 border-b border-gray-700 pb-6 flex gap-6">
-                                <div>
-                                    <label className="text-xs font-bold text-gray-500 mb-1 block">DRAIN TIMER (MIN)</label>
-                                    <input type="number" value={sysSettings.drain_timer_min} onChange={e => setSysSettings({ ...sysSettings, drain_timer_min: e.target.value })} className="w-24 bg-gray-900 border border-gray-600 rounded p-2 text-white" />
-                                </div>
-                                <div>
-                                    <label className="text-xs font-bold text-gray-500 mb-1 block">SHUTDOWN DEFAULT (MIN)</label>
-                                    <input type="number" value={sysSettings.shutdown_timer_min} onChange={e => setSysSettings({ ...sysSettings, shutdown_timer_min: e.target.value })} className="w-24 bg-gray-900 border border-gray-600 rounded p-2 text-white" />
-                                </div>
-                            </div>
-
                             <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
                                 {[0, 1, 2, 3, 4, 5].map(id => {
                                     const isDisabled = disabledStations.includes(id);
@@ -386,17 +309,14 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
-                        {/* ✅ NEW: LAB SIMULATION */}
-                        <div className="md:col-span-2 pt-6 border-t border-gray-700 flex justify-between items-center">
-                            <div className="flex flex-col">
-                                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                    <Cpu size={20} className="text-purple-500" /> Lab Simulation
-                                </h3>
-                                <p className="text-xs text-gray-400">Virtualize station hardware for testing.</p>
+                        {/* Buzzer Config */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Volume2 size={20} className="text-yellow-500" /> {t('admin.buzzer_config')}</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div><label htmlFor="buzzer_on" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_on')}</label><input id="buzzer_on" name="buzzer_on" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_on || '5'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_on: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" /></div>
+                                <div><label htmlFor="buzzer_off" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_off')}</label><input id="buzzer_off" name="buzzer_off" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_off || '10'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_off: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" /></div>
+                                <div><label htmlFor="buzzer_rem" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.reminder_int')}</label><input id="buzzer_rem" name="buzzer_rem" type="number" min="1" max="240" autoComplete="off" value={sysSettings.buzzer_reminder_min || '2'} onChange={e => setSysSettings({ ...sysSettings, buzzer_reminder_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" /></div>
                             </div>
-                            <button onClick={() => setShowSim(true)} className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold shadow-lg">
-                                OPEN SIMULATOR
-                            </button>
                         </div>
                     </div>
                 )}
@@ -409,9 +329,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                     </button>
                 </div>
             )}
-
-            {/* ✅ RENDER SIMULATION PANEL */}
-            <SimulationPanel isOpen={showSim} onClose={() => setShowSim(false)} />
         </div>
     );
 

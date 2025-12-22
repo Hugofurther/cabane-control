@@ -143,7 +143,13 @@
     "confirm_delete_user": "Permanently delete user?",
     "confirm_transfer": "Transfer rights to {{name}}?",
     "transfer_success": "Admin rights transferred.",
-    "transfer_failed": "Transfer failed."
+    "transfer_failed": "Transfer failed.",
+    "kiosk_mode": "Kiosk Display Mode",
+    "kiosk_desc": "Enables local HDMI output. System will reboot immediately upon change.",
+    "enable_kiosk": "ENABLE HDMI KIOSK",
+    "confirm_kiosk_on": "Enable Kiosk Mode?",
+    "confirm_kiosk_off": "Disable Kiosk Mode?",
+    "reboot_warn": "The server will REBOOT immediately to apply this change. Connection will be lost for ~60 seconds."
   },
   "logs": {
     "title": "System Logs",
@@ -288,7 +294,20 @@
     "branch1": "Branch 1: Main (ST1-ST2-ST3)",
     "branch2": "Branch 2: Station 4",
     "branch3": "Branch 3: Station 5",
-    "auto_off": "AUTO-OFF"
+    "auto_off": "AUTO-OFF",
+    "steps": {
+      "b1_s1": "Pulse / Drain T2",
+      "b1_s2": "Drain ST2-3",
+      "b1_s3": "Drain ST1-2",
+      "b1_s4": "Drain T1 (Timer)",
+      "b1_s5": "Finished",
+      "b2_s1": "Pulse Pump",
+      "b2_s2": "Drain (Timer)",
+      "b2_s3": "Finished",
+      "b3_s1": "Pulse Pump",
+      "b3_s2": "Drain (Timer)",
+      "b3_s3": "Finished"
+    }
   },
   "shutdown": {
     "title": "Schedule Shutdown?",

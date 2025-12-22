@@ -143,7 +143,13 @@
     "confirm_delete_user": "Supprimer l'utilisateur ?",
     "confirm_transfer": "Transférer les droits à {{name}} ?",
     "transfer_success": "Droits Admin transférés.",
-    "transfer_failed": "Échec transfert."
+    "transfer_failed": "Échec transfert.",
+    "kiosk_mode": "Mode Kiosque (Écran)",
+    "kiosk_desc": "Active la sortie HDMI locale. Le système redémarrera immédiatement.",
+    "enable_kiosk": "ACTIVER KIOSQUE HDMI",
+    "confirm_kiosk_on": "Activer le Mode Kiosque ?",
+    "confirm_kiosk_off": "Désactiver le Mode Kiosque ?",
+    "reboot_warn": "Le serveur va REDÉMARRER immédiatement. La connexion sera coupée pour ~60 secondes."
   },
   "logs": {
     "title": "Journaux Système",
@@ -288,7 +294,20 @@
     "branch1": "Branche 1: Principale (ST1-ST2-ST3)",
     "branch2": "Branche 2: Station 4",
     "branch3": "Branche 3: Station 5",
-    "auto_off": "AUTO-OFF"
+    "auto_off": "AUTO-OFF",
+    "steps": {
+      "b1_s1": "Pulsation / Vidange T2",
+      "b1_s2": "Vidange ST2-3",
+      "b1_s3": "Vidange ST1-2",
+      "b1_s4": "Vidange T1 (Minuteur)",
+      "b1_s5": "Terminé",
+      "b2_s1": "Pulsation",
+      "b2_s2": "Vidange (Minuteur)",
+      "b2_s3": "Terminé",
+      "b3_s1": "Pulsation",
+      "b3_s2": "Vidange (Minuteur)",
+      "b3_s3": "Terminé"
+    }
   },
   "shutdown": {
     "title": "Planifier Arrêt ?",

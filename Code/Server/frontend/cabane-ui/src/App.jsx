@@ -29,7 +29,7 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 function Dashboard() {
   const { t } = useTranslation();
   const {
-    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings, simState
+    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings, simState, bannerHeight
   } = useSocket();
 
   const isController = systemState.controller === 'USER' && systemState.currentUser === user?.username;
@@ -37,12 +37,14 @@ function Dashboard() {
   const isSimIsolated = isSimOwner && !simState?.physicalLink;
   const isSimLinked = isSimOwner && simState?.physicalLink;
 
-  // ✅ CONTROL AUTHORITY: True if User is Real Controller OR Isolated Sim Owner
   const canInteract = isController || isSimIsolated;
 
   // UI State
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
+
+  // Simulation Panel State
+  const [showSimPanel, setShowSimPanel] = useState(false);
 
   // Automation & Shutdown UI
   const [showAutomation, setShowAutomation] = useState(false);
@@ -306,7 +308,14 @@ function Dashboard() {
 
   // --- RENDER ---
   return (
-    <div className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20" onClick={wakeAudio} onTouchStart={wakeAudio}>
+    // ✅ APPLY PADDING DYNAMICALLY TO MAIN APP
+    // Uses 'bannerHeight' from Context to push content up above the fixed footer
+    <div
+      className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20"
+      onClick={wakeAudio}
+      onTouchStart={wakeAudio}
+      style={{ paddingBottom: bannerHeight > 0 ? `${bannerHeight + 20}px` : '20px' }}
+    >
 
       {notification && (
         <NotificationBanner
@@ -341,7 +350,15 @@ function Dashboard() {
 
       <AutomationModal isOpen={showAutomation} onClose={() => setShowAutomation(false)} />
       <ShutdownModal isOpen={showShutdown} onClose={() => setShowShutdown(false)} />
+
+      {/* ✅ AutomationBanner: Sets height in Context */}
       <AutomationBanner />
+
+      {/* ✅ SimulationPanel: Reads height from Context */}
+      <SimulationPanel
+        isOpen={showSimPanel}
+        onClose={() => setShowSimPanel(false)}
+      />
 
       {/* HEADER */}
       <div className="flex flex-col xl:flex-row justify-between items-center mb-10 border-b border-gray-700 pb-6 gap-6 relative z-[50]">
@@ -401,10 +418,8 @@ function Dashboard() {
               <Cpu size={18} /> SIMULATION ONLY
             </button>
           ) : (
-            // REAL CONTROLS (Hide if Sim Owner because Sim Owner is already controlling via Sim Panel)
-            // Show only if NOT sim owner, OR if sim owner but not active? 
-            // Actually, if Sim is NOT active, isSimOwner is false.
             <>
+              {/* Standard Controls */}
               {systemState.currentUser !== user?.username && (
                 user?.can_control ?
                   <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">{t('dashboard.take_control')}</button>
@@ -413,9 +428,7 @@ function Dashboard() {
             </>
           )}
 
-          {/* HOLD / RELEASE CONTROLS (Only if NOT Isolated Sim, because Isolated Sim has no server to release to) */}
-          {/* Correction: Isolated Sim implies you ARE the controller of the simulation. */}
-          {/* We only show Hold/Release for the REAL system context. */}
+          {/* HOLD / RELEASE CONTROLS */}
           {!isSimIsolated && systemState.controller === 'USER' && systemState.currentUser === user?.username && (
             <div className="flex gap-2 shrink-0">
               <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
@@ -423,7 +436,7 @@ function Dashboard() {
             </div>
           )}
 
-          {/* ✅ AUTOMATION / SHUTDOWN (Show whenever you have control authority) */}
+          {/* AUTOMATION / SHUTDOWN */}
           {canInteract && !isAutoRunning && (
             <div className="flex gap-2 shrink-0">
               <button onClick={() => setShowAutomation(true)} className="p-3 rounded bg-purple-900/30 border border-purple-500/50 text-purple-300 hover:bg-purple-900/50 transition-colors shadow-lg" title="Drainage Automation"><Clock size={20} /></button>
@@ -464,7 +477,7 @@ function Dashboard() {
         })}
       </div>
 
-      <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} />
+      <UserSettings isOpen={showSettings} onClose={() => setShowSettings(false)} onOpenSim={() => { setShowSettings(false); setShowSimPanel(true); }} />
       <MessageDrawer isOpen={showMessageDrawer} onClose={() => setShowMessageDrawer(false)} onUnreadChange={handleUnreadChange} />
     </div>
   );

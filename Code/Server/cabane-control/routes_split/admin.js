@@ -7,6 +7,7 @@ const logicEngine = require('../services/logic_engine');
 const automationService = require('../services/automation_service');
 const simulationService = require('../services/simulation_service'); // ✅ Import
 
+
 // ... (Settings, Logs, Status routes same as before) ...
 
 router.get('/system/settings', authenticateToken, (req, res) => {
@@ -59,11 +60,33 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
     });
 });
 
+// ============================================================
+// 🖥️ SYSTEM HARDWARE
+// ============================================================
+
 router.get('/system/status', authenticateToken, async (req, res) => {
     try {
         const space = await checkDiskSpace('/');
-        res.json({ diskUsage: `${Math.round(((space.size - space.free) / space.size) * 100)}%`, free: space.free, size: space.size });
-    } catch (e) { res.json({ diskUsage: 'Unknown', free: 0, size: 0 }); }
+        // ✅ ADD KIOSK STATUS TO RESPONSE
+        const kioskEnabled = await systemService.getKioskStatus();
+
+        res.json({
+            diskUsage: `${Math.round(((space.size - space.free) / space.size) * 100)}%`,
+            free: space.free,
+            size: space.size,
+            kioskEnabled
+        });
+    } catch (e) { res.json({ diskUsage: 'Unknown', free: 0, size: 0, kioskEnabled: false }); }
+});
+
+router.post('/system/kiosk', authenticateToken, requireAdmin, async (req, res) => {
+    const { enabled } = req.body;
+    try {
+        await systemService.setKioskMode(enabled);
+        res.json({ success: true, message: "System is rebooting..." });
+    } catch (e) {
+        res.status(500).json({ error: "Failed to configure Kiosk mode." });
+    }
 });
 
 router.get('/logs', authenticateToken, (req, res) => {
