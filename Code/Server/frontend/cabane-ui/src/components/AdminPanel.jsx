@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
     X, Check, Trash2, Shield, Globe, MapPin, Search, Save,
     HardDrive, Power, Clock, RefreshCw, Calculator, User,
-    Lock, Crown, Volume2, Cpu // ✅ Monitor removed
+    Lock, Crown, Volume2, Workflow // ✅ Added Workflow Icon
 } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
@@ -31,7 +31,7 @@ const Toggle = ({ checked, onChange, disabled }) => (
     </div>
 );
 
-export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
+export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     const { t } = useTranslation();
     const { user: currentUser } = useSocket();
     const { showConfirm, showAlert } = useModal();
@@ -41,6 +41,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
+    // System Settings State
     const [sysSettings, setSysSettings] = useState({
         timezone: 'UTC',
         weather_api_key: '',
@@ -53,7 +54,10 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
         buzzer_alarm_on: '5',
         buzzer_alarm_off: '10',
         buzzer_reminder_min: '2',
-        burglar_station: '0'
+        burglar_station: '0',
+        // ✅ NEW DEFAULTS
+        drain_timer_min: '15',
+        shutdown_timer_min: '60'
     });
 
     const [locations, setLocations] = useState([]);
@@ -109,6 +113,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
         if (isOpen || embedded) fetchData();
     }, [isOpen, embedded]);
 
+    // --- LOGIC ---
     const toggleStation = (id) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
     };
@@ -136,25 +141,43 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
         setLocations(prev => prev.map((l, i) => i === index ? { ...l, enabled: !l.enabled } : l));
     };
 
+    // --- CALCULATOR ---
     const calculateApiUsage = () => {
         const activeCount = locations.filter(l => l.enabled).length;
         if (activeCount === 0) return { val: '0.00', status: 'SAFE', color: 'text-gray-500', limitMsg: 'Idle', monthly: 0 };
+
         const callsCurrent = activeCount / (parseInt(sysSettings.weather_update_interval) || 15);
         const callsForecast = activeCount / (parseInt(sysSettings.weather_update_interval_forecast) || 60);
         const totalPerMin = callsCurrent + callsForecast;
+
         const limitMin = parseInt(sysSettings.weather_api_limit_min) || 60;
         const limitMonth = parseInt(sysSettings.weather_api_limit_month) || 1000000;
         const estimatedMonth = totalPerMin * 43200;
-        let status = 'SAFE'; let color = 'text-green-400'; let limitMsg = `Limit: ${limitMin}/min`;
-        if (totalPerMin > limitMin) { status = 'EXCEEDED (MIN)'; color = 'text-red-500'; }
-        else if (estimatedMonth > limitMonth) { status = 'EXCEEDED (MONTH)'; color = 'text-red-500'; limitMsg = `Limit: ${limitMonth}/mo`; }
-        else if (totalPerMin > limitMin * 0.8) { status = 'WARNING'; color = 'text-yellow-500'; }
+
+        let status = 'SAFE';
+        let color = 'text-green-400';
+        let limitMsg = `Limit: ${limitMin}/min`;
+
+        if (totalPerMin > limitMin) {
+            status = 'EXCEEDED (MIN)'; color = 'text-red-500';
+        } else if (estimatedMonth > limitMonth) {
+            status = 'EXCEEDED (MONTH)'; color = 'text-red-500';
+            limitMsg = `Limit: ${limitMonth}/mo`;
+        } else if (totalPerMin > limitMin * 0.8) {
+            status = 'WARNING'; color = 'text-yellow-500';
+        }
+
         return { val: totalPerMin.toFixed(2), status, color, limitMsg, monthly: Math.round(estimatedMonth) };
     };
+
     const apiUsage = calculateApiUsage();
 
     const saveSettings = async () => {
-        if (apiUsage.status.includes('EXCEEDED')) { showAlert(t('common.error'), "API Limit Exceeded. Adjust settings."); return; }
+        if (apiUsage.status.includes('EXCEEDED')) {
+            showAlert(t('common.error'), "API Limit Exceeded. Adjust settings.");
+            return;
+        }
+
         const token = localStorage.getItem('cabane_token');
         try {
             const payload = {
@@ -167,17 +190,56 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
         } catch (e) { showAlert(t('common.error'), "Failed to save."); }
     };
 
-    const approveUser = async (id) => { await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
-    const togglePermission = async (id, type, val) => { await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); };
-    const deleteUser = async (id) => { showConfirm({ title: t('common.delete'), message: "Permanently delete user?", isDestructive: true, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); fetchData(); } catch (e) { } } }); };
-    const transferAdmin = async (targetId, targetName) => { showConfirm({ title: t('admin.transfer_admin'), message: `Transfer rights to ${targetName}?`, isDestructive: false, onConfirm: async () => { try { await axios.post(`${API_URL}/api/users/transfer-admin`, { newAdminId: targetId }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } }); showAlert(t('common.success'), "Admin rights transferred."); fetchData(); } catch (e) { showAlert(t('common.error'), e.response?.data?.error || "Transfer failed."); } } }); };
+    // --- USER ACTIONS ---
+    const approveUser = async (id) => {
+        await axios.post(`${API_URL}/api/users/approve`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
+        fetchData();
+    };
 
+    const togglePermission = async (id, type, val) => {
+        await axios.post(`${API_URL}/api/users/permission`, { userId: id, type, value: !val }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
+        fetchData();
+    };
+
+    const deleteUser = async (id) => {
+        showConfirm({
+            title: t('common.delete'),
+            message: "Permanently delete user?",
+            isDestructive: true,
+            onConfirm: async () => {
+                try {
+                    await axios.post(`${API_URL}/api/users/delete`, { userId: id }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
+                    fetchData();
+                } catch (e) { }
+            }
+        });
+    };
+
+    const transferAdmin = async (targetId, targetName) => {
+        showConfirm({
+            title: t('admin.transfer_admin'),
+            message: `Transfer rights to ${targetName}?`,
+            isDestructive: false,
+            onConfirm: async () => {
+                try {
+                    await axios.post(`${API_URL}/api/users/transfer-admin`, { newAdminId: targetId }, { headers: { Authorization: `Bearer ${localStorage.getItem('cabane_token')}` } });
+                    showAlert(t('common.success'), "Admin rights transferred.");
+                    fetchData();
+                } catch (e) {
+                    showAlert(t('common.error'), e.response?.data?.error || "Transfer failed.");
+                }
+            }
+        });
+    };
+
+    // --- RENDER ---
     const containerClass = embedded ? "flex-grow flex flex-col overflow-hidden" : "bg-cabane-panel border border-gray-600 rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col max-h-[90vh]";
 
     if (!embedded && !isOpen) return null;
 
     const content = (
         <div className={containerClass} onClick={e => e.stopPropagation()}>
+
             {!embedded && (
                 <div className="flex justify-between items-center p-5 border-b border-gray-700 bg-gray-800 shrink-0">
                     <h2 className="text-xl font-black text-gray-200 flex items-center gap-3 tracking-wide"><Shield className="text-blue-500" size={24} /> {t('admin.title').toUpperCase()}</h2>
@@ -194,7 +256,14 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
                 {activeTab === 'USERS' && (
                     <table className="w-full text-left border-collapse">
                         <thead className="bg-gray-900/50 text-gray-400 text-xs uppercase font-mono sticky top-0 z-10">
-                            <tr><th className="p-4">{t('auth.username')}</th><th className="p-4">{t('admin.role')}</th><th className="p-4">{t('admin.status')}</th><th className="p-4 text-center">{t('admin.control')}</th><th className="p-4 text-center">{t('settings.tabs.logs')}</th><th className="p-4 text-right">Actions</th></tr>
+                            <tr>
+                                <th className="p-4">{t('auth.username')}</th>
+                                <th className="p-4">{t('admin.role')}</th>
+                                <th className="p-4">{t('admin.status')}</th>
+                                <th className="p-4 text-center">{t('admin.control')}</th>
+                                <th className="p-4 text-center">{t('settings.tabs.logs')}</th>
+                                <th className="p-4 text-right">Actions</th>
+                            </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-700">
                             {users.map(u => (
@@ -206,7 +275,9 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
                                     <td className="p-4 text-center"><button onClick={() => togglePermission(u.id, 'logs', u.can_view_logs)} className={`px-2 py-1 rounded text-xs font-bold border w-20 ${u.can_view_logs ? 'bg-yellow-900/50 text-yellow-400 border-yellow-800' : 'bg-gray-800 text-gray-500 border-gray-700'}`}>{u.can_view_logs ? t('admin.viewer') : t('admin.hidden')}</button></td>
                                     <td className="p-4 flex justify-end gap-2">
                                         {u.status === 'PENDING' && <button onClick={() => approveUser(u.id)} className="p-2 bg-green-700 rounded text-white"><Check size={16} /></button>}
-                                        {u.status === 'ACTIVE' && currentUser && String(u.id) !== String(currentUser.id) && <button onClick={() => transferAdmin(u.id, u.username)} className="p-2 bg-gray-700 hover:bg-yellow-900/50 text-yellow-500 rounded"><Crown size={16} /></button>}
+                                        {u.status === 'ACTIVE' && currentUser && String(u.id) !== String(currentUser.id) && (
+                                            <button onClick={() => transferAdmin(u.id, u.username)} className="p-2 bg-gray-700 hover:bg-yellow-900/50 text-yellow-500 rounded"><Crown size={16} /></button>
+                                        )}
                                         {u.username !== 'admin' && String(u.id) !== String(currentUser?.id) && <button onClick={() => deleteUser(u.id)} className="p-2 bg-gray-700 rounded text-red-400 hover:bg-red-900/50"><Trash2 size={16} /></button>}
                                     </td>
                                 </tr>
@@ -217,6 +288,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
 
                 {activeTab === 'SYSTEM' && (
                     <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
+
                         {/* Timezone & Disk */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
                             <div>
@@ -241,25 +313,14 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
                             </div>
                         </div>
 
-                        {/* ✅ ONLY SIMULATOR LAUNCHER REMAINS */}
+                        {/* Weather Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
-                            <div className="flex justify-between items-center border-b border-gray-700 pb-6">
-                                <div>
-                                    <h3 className="text-lg font-bold text-white flex items-center gap-2"><Cpu size={20} className="text-purple-500" /> Hardware</h3>
-                                    <p className="text-xs text-gray-500 mt-1">Virtual environment for testing automation logic.</p>
-                                </div>
-                                <button onClick={onOpenSim} className="bg-purple-900/50 hover:bg-purple-900 text-purple-300 border border-purple-500/50 px-4 py-2 rounded font-bold text-xs uppercase transition-colors shadow-lg">
-                                    Launch Simulator
-                                </button>
-                            </div>
-
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> {t('admin.weather_services')}</h3>
+                            <div className="flex justify-between items-center"><h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> {t('admin.weather_services')}</h3></div>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pb-6 border-b border-gray-700">
                                 <div className="md:col-span-1"><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.api_key')}</label><input type="text" value={sysSettings.weather_api_key || ''} onChange={e => setSysSettings({ ...sysSettings, weather_api_key: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none font-mono text-xs" /></div>
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.limit_min')}</label><input type="number" value={sysSettings.weather_api_limit_min} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.limit_month')}</label><input type="number" value={sysSettings.weather_api_limit_month} onChange={e => setSysSettings({ ...sysSettings, weather_api_limit_month: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                             </div>
-                            {/* ... Weather Config ... */}
                             <div className="grid grid-cols-3 gap-4 pb-6 border-b border-gray-700">
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.current_min')}</label><input type="number" min="5" value={sysSettings.weather_update_interval} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
                                 <div><label className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.forecast_min')}</label><input type="number" min="30" value={sysSettings.weather_update_interval_forecast} onChange={e => setSysSettings({ ...sysSettings, weather_update_interval_forecast: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none" /></div>
@@ -275,6 +336,40 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
                                     {locations.map((loc, i) => (
                                         <div key={i} className={`flex justify-between items-center p-3 rounded border transition-colors ${loc.enabled ? 'bg-gray-900/50 border-gray-700' : 'bg-gray-800 border-gray-700 opacity-50'}`}><div className="flex items-center gap-3"><Toggle checked={loc.enabled} onChange={() => toggleLocation(i)} /><span className={`text-sm ${loc.enabled ? 'text-gray-300' : 'text-gray-500 line-through'}`}>{loc.name}</span></div><button onClick={() => removeLocation(i)} className="text-red-400 hover:text-white"><Trash2 size={16} /></button></div>
                                     ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* ✅ NEW: AUTOMATION DEFAULTS */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Workflow size={20} className="text-purple-400" /> {t('admin.automation_config')}</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div>
+                                    <label htmlFor="drain_timer" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.drain_duration')}</label>
+                                    <input id="drain_timer" type="number" min="1" max="120" value={sysSettings.drain_timer_min || '15'} onChange={e => setSysSettings({ ...sysSettings, drain_timer_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
+                                </div>
+                                <div>
+                                    <label htmlFor="shutdown_timer" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.shutdown_default')}</label>
+                                    <input id="shutdown_timer" type="number" min="1" max="240" value={sysSettings.shutdown_timer_min || '60'} onChange={e => setSysSettings({ ...sysSettings, shutdown_timer_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Buzzer Config */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Volume2 size={20} className="text-yellow-500" /> {t('admin.buzzer_config')}</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                <div>
+                                    <label htmlFor="buzzer_on" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_on')}</label>
+                                    <input id="buzzer_on" name="buzzer_on" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_on || '5'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_on: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
+                                </div>
+                                <div>
+                                    <label htmlFor="buzzer_off" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_off')}</label>
+                                    <input id="buzzer_off" name="buzzer_off" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_off || '10'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_off: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
+                                </div>
+                                <div>
+                                    <label htmlFor="buzzer_rem" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.reminder_int')}</label>
+                                    <input id="buzzer_rem" name="buzzer_rem" type="number" min="1" max="240" autoComplete="off" value={sysSettings.buzzer_reminder_min || '2'} onChange={e => setSysSettings({ ...sysSettings, buzzer_reminder_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" />
                                 </div>
                             </div>
                         </div>
@@ -306,16 +401,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose, onOpenSim }) => {
                                         </button>
                                     );
                                 })}
-                            </div>
-                        </div>
-
-                        {/* Buzzer Config */}
-                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2"><Volume2 size={20} className="text-yellow-500" /> {t('admin.buzzer_config')}</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                <div><label htmlFor="buzzer_on" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_on')}</label><input id="buzzer_on" name="buzzer_on" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_on || '5'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_on: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" /></div>
-                                <div><label htmlFor="buzzer_off" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.alarm_off')}</label><input id="buzzer_off" name="buzzer_off" type="number" min="1" max="60" autoComplete="off" value={sysSettings.buzzer_alarm_off || '10'} onChange={e => setSysSettings({ ...sysSettings, buzzer_alarm_off: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" /></div>
-                                <div><label htmlFor="buzzer_rem" className="text-xs font-bold text-gray-500 mb-1 block">{t('admin.reminder_int')}</label><input id="buzzer_rem" name="buzzer_rem" type="number" min="1" max="240" autoComplete="off" value={sysSettings.buzzer_reminder_min || '2'} onChange={e => setSysSettings({ ...sysSettings, buzzer_reminder_min: e.target.value })} className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white outline-none focus:border-blue-500" /></div>
                             </div>
                         </div>
                     </div>

@@ -1,20 +1,20 @@
 // ============================================================
-// 🎮 SIMULATION SERVICE - VIRTUAL STATIONS (v18 - Physics Loop Fix)
+// 🎮 SIMULATION SERVICE - TOTALLY ISOLATED (v23 - No UDP Leak)
 // ============================================================
 const dgram = require('dgram');
 const db = require('../db');
-const client = dgram.createSocket('udp4');
 
-const TARGET_PORT = 8889;
-const TARGET_IP = '127.0.0.1';
+// ✅ REMOVED: UDP Client Socket (Source of the leak)
+// const client = dgram.createSocket('udp4');
+// const TARGET_PORT = 8889;
+// const TARGET_IP = '127.0.0.1';
 
 let ioRef = null;
 let active = false;
 let owner = null;
 let heartbeatInterval = null;
 
-// Track switches that don't belong to stations (21, 22, 23)
-let extraState = 0;
+let extraState = 0; // Switches 21, 22, 23
 
 // CONFIG
 let config = Array(6).fill(null).map((_, i) => ({
@@ -35,18 +35,14 @@ let state = Array(6).fill(null).map((_, i) => ({
     inputMask: 0x7F
 }));
 
-let physicalLink = false;
-
-// THERMOSTAT DEFINITIONS
+// THERMOSTATS & MAP
 const THERMOSTATS = [
     { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
     { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
 ];
 
-// GLOBAL INPUT MAP
 const INPUT_MAP = [
-    { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
-    { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
+    { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 }, { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
     { idx: 4, st: 1, bit: 2 }, { idx: 5, st: 1, bit: 3 },
     { idx: 6, st: 1, bit: 4 }, { idx: 7, st: 1, bit: 5 },
     { idx: 8, st: 2, bit: 0 }, { idx: 9, st: 2, bit: 1 },
@@ -85,19 +81,12 @@ function setSimulationActive(isActive, username) {
 
     console.log(`[SIM] Simulation Mode: ${isActive ? 'ON' : 'OFF'} (Owner: ${owner})`);
 
-    if (!isActive && physicalLink) {
-        togglePhysicalLink(false);
-    }
-
-    try {
-        const logicEngine = require('./logic_engine');
-        logicEngine.setSimulationMode(isActive);
-    } catch (e) { console.error(e); }
-
+    // Reset state on start
     if (active) {
+        state.forEach(s => { s.relayMask = 0; s.inputMask = 0x7F; });
+        extraState = 0;
         if (!heartbeatInterval) heartbeatInterval = setInterval(heartbeatLoop, 1000);
         calculatePhysics();
-        state.forEach((s, i) => { if (s.connected) { sendFeedback(i); sendHeartbeat(i); } });
     } else {
         if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
     }
@@ -105,52 +94,16 @@ function setSimulationActive(isActive, username) {
     emitStatus();
 }
 
-function togglePhysicalLink(shouldLink, requestUser) {
-    if (!active) return;
-    if (owner && requestUser && requestUser !== owner) return;
-
-    physicalLink = shouldLink;
-    console.log(`[SIM] Physical Link: ${physicalLink ? 'CONNECTED' : 'DISCONNECTED'}`);
-
-    const logicEngine = require('./logic_engine');
-    logicEngine.setPhysicalLink(physicalLink);
-
-    if (physicalLink) {
-        logicEngine.takeControl(owner || 'SIM_ADMIN');
-    } else {
-        const engState = logicEngine.getFullState();
-        if (engState.currentUser === (owner || 'SIM_ADMIN')) {
-            logicEngine.releaseToCabane();
-        }
-    }
-    emitStatus();
-}
-
-function forcePhysicalUnlink() {
-    if (physicalLink) {
-        console.log("[SIM] Control Lost (Preempted). Disabling Physical Link.");
-        physicalLink = false;
-        try {
-            const logicEngine = require('./logic_engine');
-            logicEngine.setSimulationMode(true);
-            logicEngine.setPhysicalLink(false);
-        } catch (e) { }
-        emitStatus();
-    }
-}
-
-function getStatus() { return { active, owner, config, state, physicalLink, extraState }; }
+function getStatus() { return { active, owner, config, state, extraState }; }
 function emitStatus() { if (ioRef) ioRef.emit('SIM_STATUS', getStatus()); }
-function isPhysicalLinked() { return physicalLink; }
 function getOwner() { return owner; }
 
-// --- STATION COMMANDS ---
+// --- API ACTIONS ---
 
 function toggleStationConnection(id) {
     if (!state[id]) return;
     state[id].connected = !state[id].connected;
     if (ioRef) ioRef.emit('SIM_UPDATE', { id, ...state[id] });
-    if (state[id].connected) sendHeartbeat(id);
 }
 
 function updateRelayConfig(stId, relayIdx, updates) {
@@ -166,8 +119,6 @@ function updateInputConfig(stId, inputIdx, updates) {
     saveConfig();
 }
 
-function setName(id, bit, name) { updateInputConfig(id, bit, { name }); }
-
 function toggleManualInput(stId, inputIdx) {
     if (!active || !state[stId].connected) return;
     const current = (state[stId].manualInputs >> inputIdx) & 1;
@@ -177,73 +128,48 @@ function toggleManualInput(stId, inputIdx) {
     calculatePhysics();
 }
 
-// --- CORE LOGIC ---
-
-function setVirtualRelay(idx, value) {
+function toggleSimSwitch(idx, value) {
     if (!active) return;
-    const map = INPUT_MAP.find(m => m.idx === idx);
 
+    const map = INPUT_MAP.find(m => m.idx === idx);
     if (map) {
         if (value) state[map.st].relayMask |= (1 << map.bit);
         else state[map.st].relayMask &= ~(1 << map.bit);
         emitStatus();
-        setTimeout(calculatePhysics, 100);
+        setTimeout(calculatePhysics, 50);
     }
     else if (idx >= 21 && idx <= 23) {
         if (value) extraState |= (1 << idx);
         else extraState &= ~(1 << idx);
         emitStatus();
-        // ✅ RE-CALC PHYSICS TO APPLY THERMOSTAT LOGIC IMMEDIATELY
-        setTimeout(calculatePhysics, 100);
+        setTimeout(calculatePhysics, 50);
     }
 }
 
-function onCommandReceived(stationBytes) {
-    if (!active) return;
-    if (!physicalLink) return;
+// --- PHYSICS ENGINE ---
 
-    let changed = false;
-    for (let i = 0; i < 6; i++) {
-        const cmd = stationBytes[i] || 0;
-        const maskedCmd = cmd & 0x3F;
-        if (state[i].relayMask !== maskedCmd) {
-            state[i].relayMask = maskedCmd;
-            changed = true;
-        }
-    }
-    if (changed) {
-        emitStatus();
-        setTimeout(calculatePhysics, 100);
-    }
-}
-
-// ✅ UPDATED PHYSICS ENGINE: 2-PASS RESOLUTION
 function calculatePhysics() {
     if (!active) return;
 
     // Helper: Determine Inputs from Relays + Manual
     const resolveInputs = () => {
         let nextInputs = state.map(s => s.manualInputs);
-
         config.forEach((stConfig, sourceStId) => {
             if (!state[sourceStId].connected) return;
             const sourceRelays = state[sourceStId].relayMask;
-
             stConfig.relays.forEach((rConfig, rIdx) => {
                 if (rConfig.enabled === false) return;
                 const isRelayOn = (sourceRelays >> rIdx) & 1;
-
                 if (isRelayOn && rConfig.linked) {
                     const tSt = rConfig.targetSt;
                     const tBit = rConfig.targetBit;
                     if (tSt >= 0 && tSt < 6 && tBit >= 0 && tBit < 7) {
-                        nextInputs[tSt] &= ~(1 << tBit); // Pull Low (Active)
+                        nextInputs[tSt] &= ~(1 << tBit);
                     }
                 }
             });
         });
 
-        // Apply to State
         let changed = false;
         for (let i = 0; i < 6; i++) {
             if (!state[i].connected) continue;
@@ -255,19 +181,14 @@ function calculatePhysics() {
         return changed;
     };
 
-    // --- PASS 1: Update Inputs based on Manual Toggles & Current Relays ---
-    // This ensures Thermostat logic sees the NEW input state (e.g., Green)
     resolveInputs();
 
-    // --- PASS 2: Apply Thermostat Logic ---
     let relayChanged = false;
     THERMOSTATS.forEach(th => {
         const isEnabled = (extraState >> th.swIdx) & 1;
         if (isEnabled) {
             const currentInputs = state[th.feedbackSt].inputMask;
             const rawBit = (currentInputs >> th.feedbackBit) & 1;
-
-            // If Input is Active (Low/0), Turn on target Relays
             if (rawBit === 0) {
                 th.overrides.forEach(targetIdx => {
                     const map = INPUT_MAP.find(m => m.idx === targetIdx);
@@ -284,52 +205,50 @@ function calculatePhysics() {
 
     if (relayChanged) {
         emitStatus();
-        // --- PASS 3: Re-resolve Inputs if Relays changed ---
-        // (In case the thermostat turned on a pump that links to another input)
-        if (resolveInputs()) {
-            // If inputs changed again, we send feedback again
-        }
+        resolveInputs();
     }
 
-    // --- FINAL: SEND FEEDBACK ---
     for (let i = 0; i < 6; i++) {
-        if (state[i].connected) {
-            sendFeedback(i);
-        }
+        if (state[i].connected) sendFeedback(i);
     }
 }
-
-// --- UDP SENDERS ---
 
 function sendFeedback(id) {
     if (!state[id].connected) return;
     const s = state[id];
-    try {
-        const logicEngine = require('./logic_engine');
-        logicEngine.updateSimFeedback(id, s.inputMask);
-    } catch (e) { }
 
-    const packet = Buffer.alloc(5);
-    packet[0] = 0xAC; packet[1] = id; packet[2] = s.inputMask; packet[3] = 0x00;
-    packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
-    client.send(packet, TARGET_PORT, TARGET_IP, (err) => { if (err) console.error(`[SIM] UDP Error:`, err); });
+    // ✅ FIX: DO NOT send UDP packets. 
+    // This prevents udp_service.js from picking them up and polluting the real logic_engine state.
+
+    // const packet = Buffer.alloc(5);
+    // packet[0] = 0xAC; packet[1] = id; packet[2] = s.inputMask; packet[3] = 0x00;
+    // packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
+    // client.send(packet, TARGET_PORT, TARGET_IP, (err) => { });
+
     if (ioRef) ioRef.emit('SIM_UPDATE', { id, ...s });
 }
 
 function sendHeartbeat(id) {
     if (!state[id].connected) return;
-    const packet = Buffer.alloc(4);
-    packet[0] = 0xAB; packet[1] = id; packet[2] = 0x00; packet[3] = packet[0] ^ packet[1] ^ packet[2];
-    client.send(packet, TARGET_PORT, TARGET_IP);
+    // ✅ FIX: No UDP Heartbeats either
+    // const packet = Buffer.alloc(4);
+    // packet[0] = 0xAB; packet[1] = id; packet[2] = 0x00; packet[3] = packet[0] ^ packet[1] ^ packet[2];
+    // client.send(packet, TARGET_PORT, TARGET_IP);
 }
 
 function heartbeatLoop() {
     if (!active) return;
-    for (let i = 0; i < 6; i++) sendHeartbeat(i);
+    // Still loop to trigger logic if needed, but sendFeedback handles the check
+    for (let i = 0; i < 6; i++) {
+        if (state[i].connected) {
+            // We can emit 'SIM_HEARTBEAT' via socket if needed by frontend, 
+            // but SIM_UPDATE usually carries enough info.
+        }
+    }
 }
 
 module.exports = {
-    init, setSimulationActive, togglePhysicalLink, forcePhysicalUnlink, isPhysicalLinked,
-    getOwner, getStatus, updateRelayConfig, updateInputConfig, setName,
-    toggleStationConnection, toggleManualInput, onCommandReceived, setVirtualRelay
+    init, setSimulationActive, getOwner, getStatus,
+    updateRelayConfig, updateInputConfig, setName: updateInputConfig,
+    toggleStationConnection, toggleManualInput, toggleSimSwitch
 };

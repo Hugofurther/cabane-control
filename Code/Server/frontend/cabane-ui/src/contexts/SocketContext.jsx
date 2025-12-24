@@ -30,6 +30,7 @@ export const SocketProvider = ({ children }) => {
     const [isConnected, setIsConnected] = useState(false);
     const [authLoading, setAuthLoading] = useState(true);
 
+    // Physical Hardware State
     const [realState, setRealState] = useState({
         controller: 'CABANE',
         currentUser: null,
@@ -50,9 +51,12 @@ export const SocketProvider = ({ children }) => {
     const [weatherData, setWeatherData] = useState([]);
 
     // Sim State
-    const [simMeta, setSimMeta] = useState({ active: false, physicalLink: false, owner: null });
+    const [simMeta, setSimMeta] = useState({ active: false, owner: null });
     const [simRuntime, setSimRuntime] = useState(null);
-    const [simExtra, setSimExtra] = useState(0); // ✅ NEW
+    const [simExtra, setSimExtra] = useState(0);
+
+    // ✅ NEW: Local "Opt-In" State for non-owners to view simulation
+    const [isSimViewer, setIsSimViewer] = useState(false);
 
     const [bannerHeight, setBannerHeight] = useState(0);
 
@@ -90,9 +94,14 @@ export const SocketProvider = ({ children }) => {
         newSocket.on('WEATHER_FULL_UPDATE', (data) => setWeatherData(Array.isArray(data) ? data : []));
 
         newSocket.on('SIM_STATUS', (data) => {
-            setSimMeta({ active: data.active, physicalLink: data.physicalLink, owner: data.owner });
+            setSimMeta({ active: data.active, owner: data.owner });
             setSimRuntime(data.state);
-            setSimExtra(data.extraState || 0); // ✅ Capture extra switches
+            setSimExtra(data.extraState || 0);
+
+            // ✅ AUTO-RESET: If Sim stops, force viewers back to reality
+            if (!data.active) {
+                setIsSimViewer(false);
+            }
         });
 
         newSocket.on('SIM_UPDATE', (update) => {
@@ -115,13 +124,16 @@ export const SocketProvider = ({ children }) => {
         return () => newSocket.close();
     }, []);
 
-    // ✅ DERIVED STATE
+    // ✅ DERIVED STATE (The "Parallel Universe")
     const systemState = useMemo(() => {
         const amISimOwner = user && simMeta.owner === user.username;
-        if (simMeta.active && !simMeta.physicalLink && amISimOwner && simRuntime) {
+        const amIViewer = isSimViewer && simMeta.active; // ✅ Check Opt-In
+
+        // If Sim Active AND (I am Owner OR I opted-in) -> Show Simulation
+        if ((amISimOwner || amIViewer) && simRuntime) {
             const fakeVirtual = new Array(24).fill(0);
 
-            // Map Standard Stations (0-20)
+            // Map Standard Stations
             INPUT_MAP.forEach(m => {
                 const stData = simRuntime[m.st];
                 if (stData) {
@@ -131,7 +143,7 @@ export const SocketProvider = ({ children }) => {
                 }
             });
 
-            // ✅ Map Extra Switches (21, 22, 23)
+            // Map Extra Switches
             if ((simExtra >> 21) & 1) fakeVirtual[21] = 1;
             if ((simExtra >> 22) & 1) fakeVirtual[22] = 1;
             if ((simExtra >> 23) & 1) fakeVirtual[23] = 1;
@@ -142,7 +154,7 @@ export const SocketProvider = ({ children }) => {
 
             return {
                 ...realState,
-                controller: 'USER',
+                controller: 'USER', // Fake User control
                 currentUser: user?.username,
                 virtualSwitches: fakeVirtual,
                 stationFeedback: fakeFeedback,
@@ -152,10 +164,9 @@ export const SocketProvider = ({ children }) => {
             };
         }
         return realState;
-    }, [realState, simMeta, simRuntime, simExtra, user]);
+    }, [realState, simMeta, simRuntime, simExtra, user, isSimViewer]);
 
-    // ... (rest of the file stays same, login/logout/etc) ...
-
+    // --- SESSION RESTORE ---
     useEffect(() => {
         const checkSession = async () => {
             try {
@@ -174,6 +185,7 @@ export const SocketProvider = ({ children }) => {
         checkSession();
     }, [token]);
 
+    // Update Language if changed in settings (removed i18n dep to fix loop)
     useEffect(() => {
         if (user && user.settings && user.settings.language) {
             if (i18n.language !== user.settings.language) {
@@ -209,7 +221,8 @@ export const SocketProvider = ({ children }) => {
     const releaseToCabane = async () => { if (token) try { await axios.post(`${API_URL}/api/control/release-cabane`, {}, { headers: { Authorization: `Bearer ${token}` } }); } catch (e) { } };
 
     const toggleSwitch = async (index, value) => {
-        if (!simMeta.active || simMeta.physicalLink) {
+        // Optimistic UI for Real State ONLY if Sim is NOT active (globally)
+        if (!simMeta.active) {
             setRealState(prev => {
                 const newVirtual = [...prev.virtualSwitches];
                 newVirtual[index] = value ? 1 : 0;
@@ -223,6 +236,7 @@ export const SocketProvider = ({ children }) => {
         <SocketContext.Provider value={{
             socket, isConnected, systemState, user, authLoading, onlineList, siteSettings, weatherData, simState: simMeta,
             bannerHeight, setBannerHeight,
+            isSimViewer, setIsSimViewer, // ✅ EXPOSE TO APP
             login, register, logout, updateSettings, updateSiteSettings, takeControl, releaseToServer, releaseToCabane, toggleSwitch
         }}>
             {children}

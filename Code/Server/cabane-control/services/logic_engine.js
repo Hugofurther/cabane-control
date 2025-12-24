@@ -1,9 +1,7 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - PRODUCTION v18 (Sim Isolation Fix)
+// 🧠 LOGIC ENGINE - PRODUCTION v22 (Pure Physical Truth)
 // ============================================================
 const udpService = require('./udp_service');
-const automationService = require('./automation_service');
-const simulationService = require('./simulation_service');
 const sqlite3 = require('sqlite3').verbose();
 const db = new sqlite3.Database('./cabane.db');
 
@@ -22,12 +20,10 @@ const state = {
     buzzerEnabled: false,
     buzzerStatus: 'OFF',
     timezone: 'UTC',
-    disabledStations: [],
-    simulationMode: false,
-    physicalLink: false // ✅ NEW: Track link state to filter feedback
+    disabledStations: []
+    // ❌ REMOVED: simulationMode (Logic Engine doesn't care anymore)
 };
 
-// ✅ HELPER: Defined early
 function getFullState() { return state; }
 
 let cachedConfig = { onSec: 5, offSec: 10, remMin: 2, burgSt: 0 };
@@ -100,8 +96,9 @@ function init(io) {
         }
     });
 
+    // Initialize Automation (but NOT Simulation, to keep dependencies clean)
+    const automationService = require('./automation_service');
     automationService.init(module.exports, io);
-    simulationService.init(io);
 
     setInterval(checkHeartbeats, 1000);
     setInterval(controlLoop, 100);
@@ -149,6 +146,9 @@ function applyThermostatOverrides() {
 }
 
 function updatePhysicalState(switchBytes, isOverrideActive) {
+    // ✅ ALWAYS PROCESS REALITY.
+    // If a Sim is running, the Frontend will hide this state for the Sim Owner,
+    // but the Backend must know the truth.
     state.lastMainHeartbeat = Date.now();
 
     if (!state.mainControllerOnline) {
@@ -162,7 +162,6 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         controlHandshakeConfirmed = false;
         isForcingRelease = true;
         udpService.sendOverrideCommand(0);
-        simulationService.forcePhysicalUnlink();
         pushUpdate();
         return;
     }
@@ -199,7 +198,6 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
                 state.controller = 'CABANE';
                 state.currentUser = null;
                 controlHandshakeConfirmed = false;
-                simulationService.forcePhysicalUnlink();
             }
         }
     }
@@ -207,9 +205,7 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
 }
 
 function updateStationHeartbeat(id) {
-    // ✅ ISOLATION: Ignore Physical Heartbeats in Sim-Only Mode
-    if (state.simulationMode && !state.physicalLink) return;
-
+    // ✅ ALWAYS PROCESS HEARTBEAT.
     if (id >= 0 && id < 6) {
         state.stationOnline[id] = true;
         state.stationLastSeen[id] = Date.now();
@@ -218,12 +214,8 @@ function updateStationHeartbeat(id) {
     }
 }
 
-// ✅ UDP FEEDBACK (Physical)
 function updateStationFeedback(id, bits) {
-    // ✅ ISOLATION: Ignore Physical Feedback in Sim-Only Mode
-    // This prevents the real hardware (which is OFF) from overwriting the Sim state (which is ON)
-    if (state.simulationMode && !state.physicalLink) return;
-
+    // ✅ ALWAYS PROCESS FEEDBACK.
     if (id >= 0 && id < 6) {
         state.stationFeedback[id] = bits;
         state.stationOnline[id] = true;
@@ -233,28 +225,9 @@ function updateStationFeedback(id, bits) {
     }
 }
 
-// ✅ SIMULATION FEEDBACK (Virtual)
-// Called directly by simulation_service.js
-function updateSimFeedback(id, bits) {
-    // Only accept Sim feedback if we are actually in Simulation Mode
-    if (state.simulationMode) {
-        state.stationFeedback[id] = bits;
-        state.stationOnline[id] = true;
-        state.stationLastSeen[id] = Date.now(); // Keep it "Alive"
-        if (id === 1) { state.stationOnline[0] = true; state.stationLastSeen[0] = Date.now(); }
-        pushUpdate();
-    }
-}
+// ❌ REMOVED: updateSimFeedback (Sim Service should not touch Logic Engine State)
 
 function takeControl(username) {
-    const simStatus = simulationService.getStatus();
-    const simOwner = simStatus.owner;
-
-    if (simStatus.physicalLink && username !== simOwner && username !== 'SIM_ADMIN') {
-        console.log(`[CONTROL] User '${username}' taking control. Forcing Simulation Unlink.`);
-        simulationService.forcePhysicalUnlink();
-    }
-
     state.controller = 'USER';
     state.currentUser = username;
     lastControlTakeTime = Date.now();
@@ -292,21 +265,13 @@ function releaseToCabane() {
 function toggleSwitch(idx, value, actor) {
     if (idx < 0 || idx > 23) return;
 
-    const simStatus = simulationService.getStatus();
-    const isSimOwner = simStatus.owner === actor;
+    // ✅ PURE PHYSICAL LOGIC.
+    // Simulator toggles are handled by simulation_service.js/toggleSimSwitch
+    if (state.controller === 'CABANE') return;
+    const isController = state.controller === 'SERVER' || (state.controller === 'USER' && state.currentUser === actor);
     const isAuto = actor === 'AUTO';
 
-    // ✅ SCENARIO 1: Sim Only
-    if (simStatus.active && !simStatus.physicalLink && (isSimOwner || isAuto)) {
-        simulationService.setVirtualRelay(idx, value);
-        return;
-    }
-
-    // ✅ SCENARIO 2: Real System
-    if (state.controller === 'CABANE' && !state.simulationMode) return;
-    const isController = state.controller === 'SERVER' || (state.controller === 'USER' && state.currentUser === actor);
-
-    if (isController || (simStatus.physicalLink && isSimOwner) || isAuto) {
+    if (isController || isAuto) {
         state.virtualSwitches[idx] = value ? 1 : 0;
         pushUpdate();
     }
@@ -334,6 +299,7 @@ function controlLoop() {
         stateChanged = true; alarmCycleStart = now;
     }
 
+    // Burglar Alarm
     let burgDetected = false;
     if (cachedConfig.burgSt === 2 && state.stationOnline[2]) {
         if ((state.stationFeedback[2] >> 4) & 1) burgDetected = true;
@@ -347,6 +313,7 @@ function controlLoop() {
         stateChanged = true;
     }
 
+    // Audio Logic
     const isSirenCondition = (state.globalVacuumAlarm || state.burglarAlarm) && state.buzzerEnabled;
     const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
     const isChirpCondition = !state.globalVacuumAlarm && !state.burglarAlarm && !state.buzzerEnabled && anyVacuumRunning;
@@ -366,14 +333,14 @@ function controlLoop() {
 
     if (stateChanged) pushUpdate();
 
+    // UDP Output (REAL ONLY)
+    // We ALWAYS send UDP if we are the controller. The Sim logic is completely separate.
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
             if (state.disabledStations.includes(m.st)) return;
             if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit);
         });
-
-        simulationService.onCommandReceived(stationBytes);
 
         udpService.sendGlobalBroadcast(stationBytes);
         udpService.sendRemoteData(virtualBytes(state.virtualSwitches));
@@ -392,9 +359,12 @@ function virtualBytes(switches) {
 }
 
 function checkHeartbeats() {
+    // ✅ ALWAYS CHECK.
     const now = Date.now();
+    let stateChanged = false;
+
     if (state.mainControllerOnline && (now - state.lastMainHeartbeat > 5000)) {
-        console.log("[FAILSAFE] Main Controller Timed Out. Marking OFFLINE.");
+        console.log("[FAILSAFE] Main Controller Timed Out.");
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
         state.mainControllerOnline = false;
         if (state.controller === 'CABANE') {
@@ -402,14 +372,15 @@ function checkHeartbeats() {
             state.currentUser = null;
             udpService.sendOverrideCommand(1);
         }
-        pushUpdate();
+        stateChanged = true;
     }
     for (let i = 0; i < 6; i++) {
         if (state.stationOnline[i] && (now - state.stationLastSeen[i] > 3000)) {
             state.stationOnline[i] = false;
-            pushUpdate();
+            stateChanged = true;
         }
     }
+    if (stateChanged) pushUpdate();
 }
 
 function pushUpdate() {
@@ -423,8 +394,5 @@ function pushUpdate() {
 
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback, updateStationHeartbeat,
-    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig,
-    setSimulationMode: (mode) => { state.simulationMode = mode; pushUpdate(); },
-    setPhysicalLink: (link) => { state.physicalLink = link; pushUpdate(); }, // ✅ EXPORTED
-    updateSimFeedback // ✅ EXPORTED
+    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig
 };

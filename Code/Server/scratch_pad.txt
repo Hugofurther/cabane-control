@@ -560,18 +560,42 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ In hardware simulation we should be able to toggle the Buzzer switch and the 2 thermostat switches. We used to be able to, but currently clicking on them is not doing anything. Can you please fix it.
 
+√ In Hardware Simulation, I want to remove the entire part where we can enable the physical hardware. When in Hardware simulation, the user should be entirely isolated from the rest of the physical hardware system. The only thing being controlled by the user in Hardware Simulation should be the Hardware Simulator and the only feedback the user in Hardware simulation is acknowledging are the feedbacks from the Hardware simulation. The StationCards enabled / disabled in Hardware simulation should be dictated by the Hardware simulation, not the physical system. The Hardware Simulation system should not affect the "regular" physical hardware network and its system, and the physical hardware network system should not affect the Hardware Simulation. They should be totally isolated. Please let me know you understand this request properly and if you have any questions, just ask them.
+
+√ When a station is disconnected, it should automatically show as "disconnected" on the app independently to what the Main Controller knows and even if the Main Controller is not connected. Currently, I have no station connected and the Main Controller is not connected either and all the stations show as being connected and that is not what we want.
+
+√ If there is a user who is in Hardware Simulation and another user wants to start a Hardware Simulation as well, should we have this user join the current hardware simulation or start a new instance of Hardware Simulator?
+
 ---
 
 REQUESTED
 
-- In Hardware Simulation, I want to remove the entire part where we can enable the physical hardware. When in Hardware simulation, the user should be entirely isolated from the rest of the physical hardware system. The only thing being controlled by the user in Hardware Simulation should be the Hardware Simulator and the only feedback the user in Hardware simulation is acknowledging are the feedbacks from the Hardware simulation. The StationCards enabled / disabled in Hardware simulation should be dictated by the Hardware simulation, not the physical system. The Hardware Simulation system should not affect the "regular" physical hardware network and its system, and the physical hardware network system should not affect the Hardware Simulation. They should be totally isolated. Please let me know you understand this request properly and if you have any questions, just ask them.
-
+- Where did we move the setting of the duration for the automation finish step timer?
 
 
 
 ---
 NEXT
 
+---
+
+---
+
+
+- The Server should read the state of the switches from whoever is in control and have its switches inherit of the state of the switches of whoever is controlling. It's not until the Main Station Reconnects and takes control that the Server takes the state of the Main Controller's switches. Currently, The Server keeps the state the Main Controller was in before being disconnected. We don't want that. We want the Server to take on the state of the switches changed by a user in control and keep it when the user releases control to the server.
+
+---
+
+
+
+---
+
+- Can you explain why, on the Main Controller, when toggling ST3 switch [idx 15] ON, then within a fraction of second toggling the ST3 Vacuum switch [idx 14], the virtual switch ST3 vacuum [idx 14] stays in OFF position on the app
+
+---
+
+
+- MAYBE NOT ... Two or more users can be in Hardware simulator and each of them have their own instance of the Hardware Simulator independent one from the other.
 
 
 

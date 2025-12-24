@@ -5,10 +5,18 @@ const db = require('../db');
 const checkDiskSpace = require('check-disk-space').default;
 const logicEngine = require('../services/logic_engine');
 const automationService = require('../services/automation_service');
-const simulationService = require('../services/simulation_service'); // ✅ Import
+const simulationService = require('../services/simulation_service');
 
+// Helper to Log
+const logAction = (io, userId, username, type, message) => {
+    const timestamp = new Date().toISOString();
+    db.run("INSERT INTO logs (user_id, type, message, timestamp) VALUES (?, ?, ?, ?)", [userId, type, message, timestamp]);
+    if (io) io.emit('NEW_LOG', { id: Date.now(), timestamp, user_id: userId, username, type, message });
+};
 
-// ... (Settings, Logs, Status routes same as before) ...
+// ============================================================
+// ⚙️ SYSTEM SETTINGS
+// ============================================================
 
 router.get('/system/settings', authenticateToken, (req, res) => {
     db.all("SELECT key, value FROM system_settings", [], (err, rows) => {
@@ -20,7 +28,6 @@ router.get('/system/settings', authenticateToken, (req, res) => {
 });
 
 router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
-    // ... (Same content as previous version) ...
     const settings = req.body;
     const keys = Object.keys(settings);
     if (keys.length === 0) return res.status(400).json({ error: "No settings" });
@@ -37,12 +44,11 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
             if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
             if (settings.drain_timer_min) automationService.reloadSettings();
 
-            // ... (Weather check) ...
             if (settings.weather_locations || settings.weather_update_interval || settings.weather_api_key) {
                 try { require('../services/weather_service').reloadSettings(); } catch (e) { }
             }
 
-            // ... (Buzzer check) ...
+            // Update Buzzer/Burglar Config in Firmware
             if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
                 db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min', 'burglar_station')", (err, rows) => {
                     let on = 5, off = 10, rem = 2, burg = 0;
@@ -55,38 +61,22 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                     logicEngine.updateConfig(on, off, rem, burg);
                 });
             }
+
+            logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
             res.json({ success: true });
         });
     });
 });
 
 // ============================================================
-// 🖥️ SYSTEM HARDWARE
+// 📊 STATUS & LOGS
 // ============================================================
 
 router.get('/system/status', authenticateToken, async (req, res) => {
     try {
         const space = await checkDiskSpace('/');
-        // ✅ ADD KIOSK STATUS TO RESPONSE
-        const kioskEnabled = await systemService.getKioskStatus();
-
-        res.json({
-            diskUsage: `${Math.round(((space.size - space.free) / space.size) * 100)}%`,
-            free: space.free,
-            size: space.size,
-            kioskEnabled
-        });
-    } catch (e) { res.json({ diskUsage: 'Unknown', free: 0, size: 0, kioskEnabled: false }); }
-});
-
-router.post('/system/kiosk', authenticateToken, requireAdmin, async (req, res) => {
-    const { enabled } = req.body;
-    try {
-        await systemService.setKioskMode(enabled);
-        res.json({ success: true, message: "System is rebooting..." });
-    } catch (e) {
-        res.status(500).json({ error: "Failed to configure Kiosk mode." });
-    }
+        res.json({ diskUsage: `${Math.round(((space.size - space.free) / space.size) * 100)}%`, free: space.free, size: space.size });
+    } catch (e) { res.json({ diskUsage: 'Unknown', free: 0, size: 0 }); }
 });
 
 router.get('/logs', authenticateToken, (req, res) => {
@@ -96,50 +86,67 @@ router.get('/logs', authenticateToken, (req, res) => {
     });
 });
 
+// ============================================================
+// 🏭 CONTROL (Intelligent Routing)
+// ============================================================
+
 router.post('/control/take', authenticateToken, (req, res) => {
     db.get("SELECT can_control FROM users WHERE id = ?", [req.user.id], (err, row) => {
         if (!row || !row.can_control) return res.status(403).json({ error: "Permission denied" });
+
+        // Note: Taking control of Real system automatically breaks Sim Physical Link if active
         logicEngine.takeControl(req.user.username);
+        logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Took Control');
         res.json({ success: true });
     });
 });
 
 router.post('/control/release-server', authenticateToken, (req, res) => {
     logicEngine.releaseToServer();
+    logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Released to Server (Hold)');
     res.json({ success: true });
 });
 
 router.post('/control/release-cabane', authenticateToken, (req, res) => {
     logicEngine.releaseToCabane();
+    logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Released to Cabane');
     res.json({ success: true });
 });
 
-// ✅ UPDATED TOGGLE ROUTE
+// ✅ INTELLIGENT TOGGLE ROUTER
 router.post('/control/toggle', authenticateToken, (req, res) => {
     const { index, value } = req.body;
+    const username = req.user.username;
 
-    // Normal check: Are we the controller?
-    const state = logicEngine.getFullState();
-    const isController = state.controller === 'SERVER' || state.currentUser === req.user.username;
-
-    // Simulation check:
     const simStatus = simulationService.getStatus();
-    const isSimActive = simStatus.active;
-    const isSimOwner = simStatus.owner === req.user.username;
-    const isUnlinked = !simStatus.physicalLink;
+    const isSimOwner = simStatus.active && simStatus.owner === username;
 
-    // Allow if:
-    // 1. User is the Active Controller (Real or Live Sim)
-    // 2. OR User is Sim Owner in Isolated Mode
-    if (isController || (isSimActive && isUnlinked && isSimOwner)) {
-        logicEngine.toggleSwitch(index, value, req.user.username);
-        res.json({ success: true });
-    } else {
-        return res.status(403).json({ error: "Not active controller" });
+    // 1. SIMULATION TARGET:
+    // If Sim is Active, allow ANYONE to toggle virtual switches (Collaboration).
+    // Previously: Restricted to isSimOwner.
+    if (simStatus.active) {
+        simulationService.toggleSimSwitch(index, value);
+        return res.json({ success: true });
     }
+
+    // 2. REAL TARGET:
+    // Only allow if User is the Real Controller
+    const state = logicEngine.getFullState();
+    const isController = state.controller === 'SERVER' || state.currentUser === username;
+
+    if (isController) {
+        logicEngine.toggleSwitch(index, value, username);
+        logAction(req.io, req.user.id, req.user.username, 'SWITCH', `Toggled Switch ${index} ${value ? 'ON' : 'OFF'}`);
+        return res.json({ success: true });
+    }
+
+    return res.status(403).json({ error: "Not active controller" });
 });
 
-// ... (User Mgmt same as before) ...
+// ============================================================
+// 👥 USER MANAGEMENT
+// ============================================================
+
 router.get('/users', authenticateToken, requireAdmin, (req, res) => {
     db.all("SELECT id, username, email, role, status, can_control, can_view_logs, created_at FROM users", [], (err, rows) => res.json(rows));
 });

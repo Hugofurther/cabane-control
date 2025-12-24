@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Link, Unlink, X, Cpu, Power, Save, ToggleLeft, ToggleRight, Wifi, WifiOff, Eye, EyeOff, Radio } from 'lucide-react';
+import { Settings, Link, Unlink, X, Cpu, Power, Save, ToggleLeft, ToggleRight, Wifi, WifiOff, Eye, EyeOff, Radio, Loader2 } from 'lucide-react'; // ✅ Imported Loader2
 import axios from 'axios';
 import { clsx } from 'clsx';
 import { useSocket } from '../contexts/SocketContext';
+import { useModal } from '../contexts/ModalContext';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
@@ -13,11 +14,14 @@ const SimToggle = ({ checked, onChange, disabled }) => (
 );
 
 export const SimulationPanel = ({ isOpen, onClose }) => {
-    // ✅ 1. Get bannerHeight from Context
     const { socket, bannerHeight } = useSocket();
+    const { showAlert } = useModal();
     const [simData, setSimData] = useState(null);
     const [tempName, setTempName] = useState("");
     const [editing, setEditing] = useState(null);
+
+    // ✅ NEW: Loading state for the master toggle
+    const [isToggling, setIsToggling] = useState(false);
 
     // Prevent Body Scroll
     useEffect(() => {
@@ -49,15 +53,44 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
 
     const fetchStatus = async () => {
         const token = localStorage.getItem('cabane_token');
-        try { const res = await axios.get(`${API_URL}/api/simulation/status`, { headers: { Authorization: `Bearer ${token}` } }); setSimData(res.data); } catch (e) { }
+        try {
+            const res = await axios.get(`${API_URL}/api/simulation/status`, { headers: { Authorization: `Bearer ${token}` } });
+            setSimData(res.data);
+        } catch (e) {
+            console.error("Fetch Status Error:", e);
+        }
     };
 
     if (!isOpen || !simData) return null;
     const token = localStorage.getItem('cabane_token');
-    const { active, config, state, physicalLink } = simData;
+    const { active, config, state } = simData;
 
-    const toggleGlobal = async () => { await axios.post(`${API_URL}/api/simulation/toggle`, { active: !active }, { headers: { Authorization: `Bearer ${token}` } }); };
-    const togglePhysical = async () => { await axios.post(`${API_URL}/api/simulation/physical`, { linked: !physicalLink }, { headers: { Authorization: `Bearer ${token}` } }); };
+    // ✅ BETTER WAY: Loading + Confirmation Pattern
+    const toggleGlobal = async () => {
+        if (isToggling) return; // Prevent double clicks
+        setIsToggling(true);
+
+        const nextState = !active;
+
+        try {
+            // 1. Send Request
+            await axios.post(`${API_URL}/api/simulation/toggle`,
+                { active: nextState },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+
+            // 2. Confirm Success locally (Immediate feedback without waiting for Socket)
+            setSimData(prev => ({ ...prev, active: nextState }));
+
+        } catch (e) {
+            console.error("[SimPanel] Toggle Failed:", e);
+            showAlert("Error", "Failed to toggle simulation.");
+            // No need to revert state because we never changed it
+        } finally {
+            setIsToggling(false);
+        }
+    };
+
     const toggleConnection = async (id) => { await axios.post(`${API_URL}/api/simulation/station/connection`, { id }, { headers: { Authorization: `Bearer ${token}` } }); };
     const updateRelay = async (stId, rIdx, updates) => {
         const newConfig = [...config];
@@ -68,7 +101,6 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
     const toggleManualInput = async (stId, bit) => { await axios.post(`${API_URL}/api/simulation/input/toggle`, { id: stId, bit }, { headers: { Authorization: `Bearer ${token}` } }); };
     const saveName = (stId, rIdx) => { if (tempName.trim()) updateRelay(stId, rIdx, { name: tempName }); setEditing(null); };
 
-    // ✅ 2. Calculate Spacer Height
     const spacerHeight = bannerHeight > 0 ? (bannerHeight + 10) : 10;
 
     return (
@@ -88,13 +120,16 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                     </div>
 
                     <div className="flex items-center gap-4">
-                        <div onClick={active ? togglePhysical : undefined} className={clsx("flex items-center gap-2 px-3 py-2 rounded border cursor-pointer transition-all", !active ? "opacity-30 cursor-not-allowed border-gray-700 text-gray-500" : physicalLink ? "bg-red-900/30 border-red-500 text-red-300 shadow-[0_0_10px_rgba(220,38,38,0.3)]" : "bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700")}>
-                            <Radio size={18} className={physicalLink ? "text-red-500 animate-pulse" : "text-gray-500"} />
-                            <span className="text-xs font-bold uppercase">{physicalLink ? "LIVE: SENDING TO HARDWARE" : "SIMULATION ONLY"}</span>
-                            <SimToggle checked={physicalLink} disabled={!active} onChange={() => { }} />
-                        </div>
-                        <div className="h-8 w-px bg-gray-700 mx-2"></div>
-                        <button onClick={toggleGlobal} className={`px-6 py-2 rounded font-bold flex items-center gap-2 ${active ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`}><Power size={18} /> {active ? "STOP SIMULATION" : "START SIMULATION"}</button>
+                        <button
+                            onClick={toggleGlobal}
+                            disabled={isToggling}
+                            className={`px-6 py-2 rounded font-bold flex items-center gap-2 transition-all ${isToggling ? 'bg-gray-600 cursor-wait opacity-80' :
+                                    active ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'
+                                }`}
+                        >
+                            {isToggling ? <Loader2 size={18} className="animate-spin" /> : <Power size={18} />}
+                            {active ? "STOP SIMULATION" : "START SIMULATION"}
+                        </button>
                         <button onClick={onClose} className="p-2 bg-gray-800 hover:bg-gray-700 rounded-full text-white"><X /></button>
                     </div>
                 </div>
@@ -149,7 +184,7 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                     })}
                 </div>
 
-                {/* ✅ 3. THE SPACER DIV: Guaranteed to take up space at bottom */}
+                {/* Spacer Div */}
                 <div style={{ height: `${spacerHeight}px`, width: '100%' }} />
 
             </div>

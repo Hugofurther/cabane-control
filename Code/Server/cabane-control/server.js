@@ -7,14 +7,14 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose(); // For Cleanup Task
+const sqlite3 = require('sqlite3').verbose();
 
 // Services
 const udpService = require('./services/udp_service');
 const logicEngine = require('./services/logic_engine');
-const apiRoutes = require('./routes'); // Import Routes ONCE
-const weatherService = require('./services/weather_service'); // <--- Import
-
+const apiRoutes = require('./routes');
+const weatherService = require('./services/weather_service');
+const simulationService = require('./services/simulation_service'); // ✅ NEW IMPORT
 
 // Configuration
 const PORT = process.env.PORT || 3000;
@@ -31,37 +31,26 @@ const io = new Server(server, {
 });
 
 // --- INITIALIZE SERVICES ---
-// 1. Start Logic Engine (needs IO to emit updates)
 logicEngine.init(io);
-
-// 2. Start UDP Service (needs Logic Engine to pass data)
 udpService.init(logicEngine);
-
-weatherService.init(io); // <--- Init
-
+weatherService.init(io);
+simulationService.init(io); // ✅ Ensure Init is called here too if needed, or just rely on module state
 
 // --- MIDDLEWARE ---
-// Inject 'io' into every API request so routes can emit logs
 app.use((req, res, next) => {
     req.io = io;
     next();
 });
 
 // --- ROUTING ---
-// 1. API Routes
 app.use('/api', apiRoutes);
-
-// 2. Serve Static Frontend (React App)
 app.use(express.static(path.join(__dirname, 'public')));
-
-// 3. SPA Fallback (Handle React Routing)
-// Any request not caught by API or Static Files gets index.html
 app.use((req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // --- ONLINE USER TRACKING ---
-const onlineUsers = new Map(); // Maps socket.id -> username
+const onlineUsers = new Map();
 
 // --- WEBSOCKETS ---
 io.on('connection', (socket) => {
@@ -69,8 +58,10 @@ io.on('connection', (socket) => {
 
     // Send immediate full state
     socket.emit('STATE_FULL', logicEngine.getFullState());
-    // Send current online list immediately
     socket.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
+
+    // ✅ FIX: Send Simulation Status immediately on connection
+    socket.emit('SIM_STATUS', simulationService.getStatus());
 
     weatherService.sendCurrentTo(socket);
 
@@ -78,7 +69,6 @@ io.on('connection', (socket) => {
     socket.on('IDENTIFY', (username) => {
         if (username) {
             onlineUsers.set(socket.id, username);
-            // Broadcast updated list to EVERYONE
             io.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
         }
     });
@@ -88,16 +78,12 @@ io.on('connection', (socket) => {
         console.log(`[WS] Client Disconnected: ${socket.id}`);
         if (onlineUsers.has(socket.id)) {
             onlineUsers.delete(socket.id);
-            // Broadcast updated list
             io.emit('ONLINE_USERS', Array.from(new Set(onlineUsers.values())));
         }
     });
-
-
 });
 
 // --- BACKGROUND TASKS ---
-// Auto-Cleanup: Delete unverified users older than 3 hours
 const cleanupDb = new sqlite3.Database('./cabane.db');
 setInterval(() => {
     console.log("[CLEANUP] Checking for expired accounts...");
@@ -106,7 +92,7 @@ setInterval(() => {
         if (err) console.error("[CLEANUP] Error:", err);
         else if (this.changes > 0) console.log(`[CLEANUP] Removed ${this.changes} expired users.`);
     });
-}, 3600000); // Run every 1 hour
+}, 3600000);
 
 // --- START SERVER ---
 server.listen(PORT, () => {

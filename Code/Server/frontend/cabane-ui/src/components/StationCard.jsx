@@ -4,7 +4,7 @@ import { RockerSwitch } from './controls/RockerSwitch';
 import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 import { useAutoLock } from '../contexts/AutoLockContext';
-import { useTranslation } from 'react-i18next'; // ✅ Import Hook
+import { useTranslation } from 'react-i18next';
 
 const formatDuration = (ms) => {
     if (!ms || ms < 0) return "00:00";
@@ -25,9 +25,9 @@ const formatDuration = (ms) => {
 };
 
 export const StationCard = ({ card, isRemote }) => {
-    const { systemState, siteSettings, toggleSwitch } = useSocket();
+    const { systemState, siteSettings, toggleSwitch, simState, user } = useSocket();
     const { isLocked } = useAutoLock();
-    const { t } = useTranslation(); // ✅ Hook
+    const { t } = useTranslation();
     const [, setTick] = useState(0);
 
     useEffect(() => {
@@ -35,9 +35,14 @@ export const StationCard = ({ card, isRemote }) => {
         return () => clearInterval(timer);
     }, []);
 
+    // ✅ ISOLATION LOGIC
+    // If I am the Sim Owner, ignore the global disabled list.
+    const isSimMode = simState?.active && simState?.owner === user?.username;
+
     const disabledList = useMemo(() => {
+        if (isSimMode) return []; // In Sim, nothing is disabled unless Sim says so (via connection toggle)
         try { return JSON.parse(siteSettings.disabled_stations || '[]'); } catch (e) { return []; }
-    }, [siteSettings.disabled_stations]);
+    }, [siteSettings.disabled_stations, isSimMode]);
 
     const offlineLabels = [];
     let isAnyOffline = false;
@@ -45,14 +50,12 @@ export const StationCard = ({ card, isRemote }) => {
     if (card.stationIds) {
         card.stationIds.forEach(id => {
             if (disabledList.includes(id)) {
-                // ✅ Translated Label
                 offlineLabels.push(`ST${id} ${t('common.disabled').toUpperCase()}`);
                 isAnyOffline = true;
             }
             else if (!systemState.stationOnline[id]) {
                 isAnyOffline = true;
                 const lastSeen = systemState.stationLastSeen[id];
-                // ✅ Translated Labels
                 let labelText = lastSeen === 0 ?
                     `ST${id} ${t('station.never_connected')}` :
                     `ST${id} ${t('station.offline')} ${formatDuration(Date.now() - lastSeen)}`;
@@ -100,7 +103,6 @@ export const StationCard = ({ card, isRemote }) => {
                 </div>
             )}
 
-            {/* ✅ TRANSLATED NAME */}
             <h3 className={clsx("font-black tracking-widest text-lg mb-0 border-b-2 pb-2 text-center whitespace-pre-line min-h-[3.5rem] flex items-center justify-center", textClass)}>
                 {t(card.name)}
             </h3>
@@ -139,7 +141,6 @@ export const StationCard = ({ card, isRemote }) => {
                                 )}
                             </div>
                             <div className="h-10 flex items-start justify-center">
-                                {/* ✅ TRANSLATED LABEL */}
                                 <span className={clsx("text-xs font-bold text-center leading-tight uppercase", (isRemote || (isLocked && isBuzzerCard)) ? "text-gray-800" : "text-gray-400")}>
                                     {t(ctrl.label)}
                                 </span>

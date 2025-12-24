@@ -149,7 +149,10 @@
     "enable_kiosk": "ACTIVER KIOSQUE HDMI",
     "confirm_kiosk_on": "Activer le Mode Kiosque ?",
     "confirm_kiosk_off": "Désactiver le Mode Kiosque ?",
-    "reboot_warn": "Le serveur va REDÉMARRER immédiatement. La connexion sera coupée pour ~60 secondes."
+    "reboot_warn": "Le serveur va REDÉMARRER immédiatement. La connexion sera coupée pour ~60 secondes.",
+    "automation_config": "Défauts Automatisation",
+    "drain_duration": "DURÉE DRAINAGE (MIN)",
+    "shutdown_default": "DÉFAUT ARRÊT (MIN)"
   },
   "logs": {
     "title": "Journaux Système",

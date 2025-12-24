@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock, User, Cloud, ScrollText, Zap, Sliders, Bell, Globe } from 'lucide-react';
+import { X, Save, Volume2, VolumeX, Smartphone, Clock, Layout, Users, Shield, LogOut, Lock, User, Cloud, ScrollText, Zap, Sliders, Bell, Globe, Cpu } from 'lucide-react';
 import { useSocket } from '../contexts/SocketContext';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
@@ -12,6 +12,7 @@ import { LogViewer } from './LogViewer';
 
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
+// ✅ ACCEPT onOpenSim
 export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
     const { user, updateSettings, logout } = useSocket();
     const { showAlert } = useModal();
@@ -66,7 +67,6 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
                 await axios.post(`${API_URL}/api/user/profile`, { newUsername: profile.username, newEmail: profile.email }, { headers: { Authorization: `Bearer ${token}` } });
             }
             const val = sessionVal > 0 ? sessionVal : 60;
-
             const finalSettings = {
                 ...localSettings,
                 language: i18n.language,
@@ -74,7 +74,6 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
                 appSirenSilence: parseFloat(appSirenSilence) || 5,
                 appChirpInterval: parseFloat(appChirpInterval) || 2
             };
-
             await updateSettings(finalSettings);
             onClose();
         } catch (e) { showAlert(t('common.error'), e.response?.data?.error || "Failed to save settings."); }
@@ -90,8 +89,6 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
     };
 
     const isWide = activeTab === 'ADMIN' || activeTab === 'LOGS';
-
-    // ✅ SAFE CHECK for Language State
     const currentLang = i18n.language || 'en';
 
     return (
@@ -124,7 +121,19 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
                     {activeTab === 'GENERAL' && (
                         <div className="p-6 space-y-8">
 
-                            {/* LANGUAGE */}
+                            {/* ✅ SIMULATION LAUNCHER (Accessible to All) */}
+                            <section className="space-y-3">
+                                <div className="flex justify-between items-center bg-purple-900/20 p-4 rounded-lg border border-purple-500/30">
+                                    <div>
+                                        <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2"><Cpu size={18} /> {t('simulation.title')}</h3>
+                                        <p className="text-[10px] text-gray-400 mt-1">Virtual environment for testing.</p>
+                                    </div>
+                                    <button onClick={onOpenSim} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded font-bold text-xs uppercase shadow-lg transition-colors">
+                                        Launch
+                                    </button>
+                                </div>
+                            </section>
+
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.language')}</h3>
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700">
@@ -141,7 +150,6 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
 
                             <section className="space-y-3">
                                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t('settings.interface_audio')}</h3>
-
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3">{localSettings.soundEnabled ? <Volume2 size={18} className="text-green-400" /> : <VolumeX size={18} className="text-gray-500" />}<span className="text-sm font-medium text-gray-200">{t('settings.master_sound')}</span></div>
                                     <Toggle checked={localSettings.soundEnabled ?? true} onChange={() => toggleSetting('soundEnabled')} />
@@ -150,8 +158,6 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
                                     <div className="flex items-center gap-3"><Zap size={18} className={localSettings.flashSoundEnabled !== false ? "text-yellow-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">{t('settings.flash_alert')}</span></div>
                                     <Toggle checked={localSettings.flashSoundEnabled !== false} onChange={() => toggleSetting('flashSoundEnabled')} />
                                 </div>
-
-                                {/* AUDIO SLIDERS */}
                                 <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 space-y-4">
                                     <div>
                                         <div className="flex items-center justify-between mb-2">
@@ -170,8 +176,6 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
                                         <p className="text-[10px] text-gray-500 mt-1 text-right">{t('settings.chirp_desc')}</p>
                                     </div>
                                 </div>
-
-                                {/* HAPTIC */}
                                 <div className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                                     <div className="flex items-center gap-3"><Smartphone size={18} className={localSettings.vibrationEnabled ? "text-purple-400" : "text-gray-500"} /><span className="text-sm font-medium text-gray-200">{t('settings.haptic')}</span></div>
                                     <Toggle checked={localSettings.vibrationEnabled ?? true} onChange={() => toggleSetting('vibrationEnabled')} />
@@ -246,8 +250,7 @@ export const UserSettings = ({ isOpen, onClose, onOpenSim }) => {
                             </section>
                         </div>
                     )}
-                    {/* ✅ PASS PROP to Embedded AdminPanel */}
-                    {activeTab === 'ADMIN' && <AdminPanel embedded={true} onOpenSim={onOpenSim} />}
+                    {activeTab === 'ADMIN' && <AdminPanel embedded={true} />}
                     {activeTab === 'LOGS' && <LogViewer embedded={true} />}
                 </div>
 

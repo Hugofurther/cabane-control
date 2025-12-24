@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock, Power, Cpu, Radio } from 'lucide-react';
+import { Settings, Mail, StickyNote, Activity, LogOut, Cloud, Clock, Power, Cpu, Radio, LogIn } from 'lucide-react';
 import axios from 'axios';
 import { useTranslation } from 'react-i18next';
 import { SocketProvider, useSocket } from './contexts/SocketContext';
@@ -29,21 +29,24 @@ const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'ht
 function Dashboard() {
   const { t } = useTranslation();
   const {
-    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings, simState, bannerHeight
+    socket, systemState, takeControl, releaseToServer, releaseToCabane, logout, isConnected, user, siteSettings, simState, bannerHeight,
+    isSimViewer, setIsSimViewer
   } = useSocket();
 
   const isController = systemState.controller === 'USER' && systemState.currentUser === user?.username;
   const isSimOwner = simState?.active && simState?.owner === user?.username;
-  const isSimIsolated = isSimOwner && !simState?.physicalLink;
-  const isSimLinked = isSimOwner && simState?.physicalLink;
 
+  // Simulation Display Mode: 
+  // You see the Sim if you are the Owner OR if you explicitly joined as a Viewer
+  const isSimIsolated = isSimOwner || (simState?.active && isSimViewer);
+
+  // Interaction Rights:
+  // You can click switches if you control the Real system OR if you are in the Collaborative Sim
   const canInteract = isController || isSimIsolated;
 
-  // UI State
+  // --- UI STATE ---
   const [showSettings, setShowSettings] = useState(false);
   const [showMessageDrawer, setShowMessageDrawer] = useState(false);
-
-  // Simulation Panel State
   const [showSimPanel, setShowSimPanel] = useState(false);
 
   // Automation & Shutdown UI
@@ -110,13 +113,6 @@ function Dashboard() {
     const token = localStorage.getItem('cabane_token');
     try {
       await axios.post(`${API_URL}/api/simulation/toggle`, { active: false }, { headers: { Authorization: `Bearer ${token}` } });
-    } catch (e) { console.error(e); }
-  };
-
-  const unlinkSim = async () => {
-    const token = localStorage.getItem('cabane_token');
-    try {
-      await axios.post(`${API_URL}/api/simulation/physical`, { linked: false }, { headers: { Authorization: `Bearer ${token}` } });
     } catch (e) { console.error(e); }
   };
 
@@ -308,8 +304,6 @@ function Dashboard() {
 
   // --- RENDER ---
   return (
-    // ✅ APPLY PADDING DYNAMICALLY TO MAIN APP
-    // Uses 'bannerHeight' from Context to push content up above the fixed footer
     <div
       className="min-h-screen bg-cabane-dark text-white p-4 md:p-8 pt-20"
       onClick={wakeAudio}
@@ -351,10 +345,10 @@ function Dashboard() {
       <AutomationModal isOpen={showAutomation} onClose={() => setShowAutomation(false)} />
       <ShutdownModal isOpen={showShutdown} onClose={() => setShowShutdown(false)} />
 
-      {/* ✅ AutomationBanner: Sets height in Context */}
+      {/* ✅ BANNER (Updates Height in Context) */}
       <AutomationBanner />
 
-      {/* ✅ SimulationPanel: Reads height from Context */}
+      {/* ✅ SIMULATION PANEL */}
       <SimulationPanel
         isOpen={showSimPanel}
         onClose={() => setShowSimPanel(false)}
@@ -370,10 +364,6 @@ function Dashboard() {
           {isSimIsolated ? (
             <div className="flex items-center gap-2 text-purple-400 font-bold text-sm tracking-wider animate-pulse bg-purple-900/10 px-2 py-1 rounded border border-purple-500/30">
               <Cpu size={16} /> SIMULATION (ISOLATED)
-            </div>
-          ) : isSimLinked ? (
-            <div className="flex items-center gap-2 text-red-400 font-bold text-sm tracking-wider animate-pulse bg-red-900/10 px-2 py-1 rounded border border-red-500/30">
-              <Radio size={16} /> LIVE: SENDING TO HARDWARE
             </div>
           ) : (
             <div className="flex items-center gap-3 text-xs font-bold tracking-wider uppercase">
@@ -399,7 +389,7 @@ function Dashboard() {
           )}
         </div>
 
-        {/* Center */}
+        {/* ✅ CENTER: WEATHER WIDGET */}
         <div className="flex-grow flex flex-col items-center justify-center gap-2">
           <DigitalClock />
           <Weather />
@@ -408,32 +398,39 @@ function Dashboard() {
         {/* Right Actions */}
         <div className="flex gap-3 items-center min-w-[250px] justify-end">
 
-          {/* SIMULATION STATE BUTTONS */}
-          {isSimIsolated ? (
-            <button onClick={stopSimulation} className="px-6 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg shadow-red-900/50 transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
-              <Power size={18} /> STOP SIMULATION
-            </button>
-          ) : isSimLinked ? (
-            <button onClick={unlinkSim} className="px-6 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-black font-bold uppercase shadow-lg transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
-              <Cpu size={18} /> SIMULATION ONLY
-            </button>
-          ) : (
+          {/* SIMULATION BUTTONS */}
+          {simState?.active ? (
+            isSimOwner ? (
+              <button onClick={stopSimulation} className="px-6 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg shadow-red-900/50 transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
+                <Power size={18} /> STOP SIMULATION
+              </button>
+            ) : isSimViewer ? (
+              <button onClick={() => setIsSimViewer(false)} className="px-6 py-3 rounded bg-gray-600 hover:bg-gray-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
+                <LogOut size={18} /> LEAVE SIMULATION
+              </button>
+            ) : (
+              <button onClick={() => setIsSimViewer(true)} className="px-6 py-3 rounded bg-purple-600 hover:bg-purple-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap shrink-0 flex items-center gap-2">
+                <LogIn size={18} /> JOIN SIMULATION
+              </button>
+            )
+          ) : null}
+
+          {/* PHYSICAL CONTROLS (Visible unless in Isolated Sim) */}
+          {!isSimIsolated && (
             <>
-              {/* Standard Controls */}
-              {systemState.currentUser !== user?.username && (
-                user?.can_control ?
+              {systemState.currentUser !== user?.username ? (
+                user?.can_control ? (
                   <button onClick={takeControl} className="px-6 py-3 rounded bg-blue-600 hover:bg-blue-500 text-white font-bold uppercase shadow-lg shadow-blue-900/50 transition-all whitespace-nowrap shrink-0">{t('dashboard.take_control')}</button>
-                  : <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">{t('dashboard.view_only')}</div>
+                ) : (
+                  <div className="px-4 py-3 rounded bg-gray-800 text-gray-500 font-bold text-xs uppercase border border-gray-700 cursor-not-allowed whitespace-nowrap shrink-0">{t('dashboard.view_only')}</div>
+                )
+              ) : (
+                <div className="flex gap-2 shrink-0">
+                  <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
+                  {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
+                </div>
               )}
             </>
-          )}
-
-          {/* HOLD / RELEASE CONTROLS */}
-          {!isSimIsolated && systemState.controller === 'USER' && systemState.currentUser === user?.username && (
-            <div className="flex gap-2 shrink-0">
-              <button onClick={releaseToServer} className="px-3 py-3 rounded bg-yellow-600 hover:bg-yellow-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ SERVER</button>
-              {systemState.mainControllerOnline && <button onClick={releaseToCabane} className="px-3 py-3 rounded bg-red-600 hover:bg-red-500 text-white font-bold uppercase shadow-lg transition-all whitespace-nowrap flex items-center gap-1 text-xs"><Cloud size={16} /> ➜ CABANE</button>}
-            </div>
           )}
 
           {/* AUTOMATION / SHUTDOWN */}
@@ -483,6 +480,32 @@ function Dashboard() {
   );
 }
 
-const SplashScreen = () => (<div className="min-h-screen bg-cabane-dark flex items-center justify-center"><div className="flex flex-col items-center gap-4"><div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div><h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2></div></div>);
-const MainLayout = () => { const { user, authLoading } = useSocket(); if (authLoading) return <SplashScreen />; if (!user) return <AuthPage />; return <Dashboard />; };
-export default function App() { return (<ModalProvider><SocketProvider><AutoLockProvider><MainLayout /><GlobalModal /><LockScreen /></AutoLockProvider></SocketProvider></ModalProvider>); }
+const SplashScreen = () => (
+  <div className="min-h-screen bg-cabane-dark flex items-center justify-center">
+    <div className="flex flex-col items-center gap-4">
+      <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+      <h2 className="text-gray-400 font-mono tracking-widest animate-pulse">CONNECTING...</h2>
+    </div>
+  </div>
+);
+
+const MainLayout = () => {
+  const { user, authLoading } = useSocket();
+  if (authLoading) return <SplashScreen />;
+  if (!user) return <AuthPage />;
+  return <Dashboard />;
+};
+
+export default function App() {
+  return (
+    <ModalProvider>
+      <SocketProvider>
+        <AutoLockProvider>
+          <MainLayout />
+          <GlobalModal />
+          <LockScreen />
+        </AutoLockProvider>
+      </SocketProvider>
+    </ModalProvider>
+  );
+}

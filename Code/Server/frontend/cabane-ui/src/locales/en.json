@@ -149,7 +149,10 @@
     "enable_kiosk": "ENABLE HDMI KIOSK",
     "confirm_kiosk_on": "Enable Kiosk Mode?",
     "confirm_kiosk_off": "Disable Kiosk Mode?",
-    "reboot_warn": "The server will REBOOT immediately to apply this change. Connection will be lost for ~60 seconds."
+    "reboot_warn": "The server will REBOOT immediately to apply this change. Connection will be lost for ~60 seconds.",
+    "automation_config": "Automation Defaults",
+    "drain_duration": "DRAIN DURATION (MIN)",
+    "shutdown_default": "SHUTDOWN DEFAULT (MIN)"
   },
   "logs": {
     "title": "System Logs",
