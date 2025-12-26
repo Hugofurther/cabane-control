@@ -566,16 +566,24 @@ The Main Controller did not change anything in its sketch, so the issue is on th
 
 √ If there is a user who is in Hardware Simulation and another user wants to start a Hardware Simulation as well, should we have this user join the current hardware simulation or start a new instance of Hardware Simulator?
 
+√ Where did we move the setting of the duration for the automation finish step timer?
+
+√ On the server, with pm2 status "watching" disabled, what does that mean? Should we enable that? Keep Disabled. -> would restart server every time a change is made to the files including the database.
+
 ---
 
 REQUESTED
 
-- Where did we move the setting of the duration for the automation finish step timer?
+
+
+
 
 
 
 ---
 NEXT
+
+- I would like to have a settings for each switches to invert the action of a HIGH / LOW state as well as the lights. The settings on the app would be propagated to the Hardware.
 
 ---
 
@@ -585,28 +593,9 @@ NEXT
 - The Server should read the state of the switches from whoever is in control and have its switches inherit of the state of the switches of whoever is controlling. It's not until the Main Station Reconnects and takes control that the Server takes the state of the Main Controller's switches. Currently, The Server keeps the state the Main Controller was in before being disconnected. We don't want that. We want the Server to take on the state of the switches changed by a user in control and keep it when the user releases control to the server.
 
 ---
+AUTOMATION
 
-
-
----
-
-- Can you explain why, on the Main Controller, when toggling ST3 switch [idx 15] ON, then within a fraction of second toggling the ST3 Vacuum switch [idx 14], the virtual switch ST3 vacuum [idx 14] stays in OFF position on the app
-
----
-
-
-- MAYBE NOT ... Two or more users can be in Hardware simulator and each of them have their own instance of the Hardware Simulator independent one from the other.
-
-
-
----
-
-- On the server, with pm2 status "watching" disabled, what does that mean? Should we enable that?
-
-
-
-
-- Can you verify the hardware simulator did not affect any of the regular operations when the Simulation is stopped.
+- When the Transport Pump stop in a station. Close its drain valve right away to avoid bacterias introduced in via the check valve.
 
 ---
 
@@ -614,7 +603,7 @@ NEXT
 
 - The OFFLINE label on Station Cards is a bit too close vertically from "Station x" title. Can we add a tiny bit of bottom padding to it, or whatever is the best thing to do.
 
-- ??? Fix the prompt ??? When toggling OFF the disabled station visibility, how can we bring Station Card up one row when possible?
+
 
 
 
@@ -726,7 +715,7 @@ NATIVE BROWSER ALERTS -> Should be Modal pop-up
 -----------------------------------
 LAYOUT
 
-
+- ??? Fix the prompt ??? When toggling OFF the disabled station visibility, how can we bring Station Card up one row when possible?
 
 
 -----------------------------------
