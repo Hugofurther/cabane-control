@@ -57,7 +57,8 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         burglar_station: '0',
         drain_timer_min: '15',
         shutdown_timer_min: '60',
-        switch_logic_mask: '0' // ✅ NEW: Inversion Mask
+        switch_logic_mask: '0',
+        led_logic_mask: '0' // ✅ NEW
     });
 
     const [locations, setLocations] = useState([]);
@@ -131,6 +132,15 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     const isSwitchInverted = (idx) => {
         return (parseInt(sysSettings.switch_logic_mask || '0') >> idx) & 1;
     };
+
+    // ✅ Toggle Helper
+    const toggleLedLogic = (idx) => {
+        let mask = parseInt(sysSettings.led_logic_mask || '0');
+        mask ^= (1 << idx);
+        setSysSettings(prev => ({ ...prev, led_logic_mask: mask.toString() }));
+    };
+
+    const isLedInverted = (idx) => (parseInt(sysSettings.led_logic_mask || '0') >> idx) & 1;
 
     const searchCity = async () => {
         if (!citySearch) return;
@@ -350,6 +360,38 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                                 }`}
                                         >
                                             <span className="text-xs font-mono font-bold">SW {idx}</span>
+                                            <span className="text-[9px] uppercase font-bold mt-1">
+                                                {inverted ? "INVERTED" : "NORMAL"}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* ✅ NEW: LED LOGIC CONFIGURATION */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <ToggleLeft size={20} className="text-green-500" /> LED Feedback Logic
+                            </h3>
+                            <p className="text-xs text-gray-400 mb-2">
+                                Toggle to invert LED colors (Default: <span className="text-green-400">Green=Low/Active</span>, <span className="text-red-400">Red=High/Inactive</span>).
+                                <br /> <span className="text-green-400 font-bold">Green = Inverted Logic</span> (High=Green).
+                            </p>
+
+                            <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
+                                {[2, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 17, 18, 20].map(idx => {
+                                    const inverted = isLedInverted(idx);
+                                    return (
+                                        <button
+                                            key={idx}
+                                            onClick={() => toggleLedLogic(idx)}
+                                            className={`p-2 rounded border flex flex-col items-center justify-center transition-all ${inverted
+                                                ? 'bg-green-900/30 border-green-500 text-green-200'
+                                                : 'bg-gray-900 border-gray-700 text-gray-500'
+                                                }`}
+                                        >
+                                            <span className="text-xs font-mono font-bold">LED {idx}</span>
                                             <span className="text-[9px] uppercase font-bold mt-1">
                                                 {inverted ? "INVERTED" : "NORMAL"}
                                             </span>

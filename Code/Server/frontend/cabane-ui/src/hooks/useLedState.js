@@ -4,7 +4,8 @@ import { useSocket } from '../contexts/SocketContext';
 const VACUUM_INDICES = [2, 3, 9, 14, 17];
 
 export function useLedState(idx, feedbackMap, specialType) {
-    const { systemState } = useSocket();
+    // ✅ ADDED: siteSettings to get the led_logic_mask
+    const { systemState, siteSettings } = useSocket();
     const { virtualSwitches, physicalSwitches, stationFeedback, stationLastSeen, controller, globalVacuumAlarm } = systemState;
 
     // --- 1. NEVER SEEN CHECK ---
@@ -29,8 +30,18 @@ export function useLedState(idx, feedbackMap, specialType) {
 
     if (feedbackMap) {
         const { st, bit } = feedbackMap;
-        // Read the raw bit from the feedback byte
-        const rawBit = (stationFeedback[st] >> bit) & 1;
+
+        // ✅ CHANGED: Read raw bit, then check for inversion
+        let rawBit = (stationFeedback[st] >> bit) & 1;
+
+        // Check Global LED Logic Mask (Loaded from DB/AdminPanel)
+        const ledMask = parseInt(siteSettings.led_logic_mask || '0');
+
+        // If the bit for this switch index is set, FLIP the raw feedback
+        if ((ledMask >> idx) & 1) {
+            rawBit = (rawBit === 1 ? 0 : 1);
+        }
+
         // Logic is Active Low (0 = ON/Running, 1 = OFF/Stopped)
         isFeedbackOn = (rawBit === 0);
     }
@@ -47,6 +58,8 @@ export function useLedState(idx, feedbackMap, specialType) {
     }
 
     // B. THERMOSTATS
+    // Note: Thermostats (22, 23) are not in your list of configurable inversions (2-20),
+    // so we leave their internal logic as-is (standard active-low check).
     if (specialType === 'TH1') { // ST0
         // Check Temp Sensor on ST0 Bit 3
         const thActive = ((stationFeedback[0] >> 3) & 1) === 0;
@@ -65,6 +78,7 @@ export function useLedState(idx, feedbackMap, specialType) {
 
     // --- 5. ALARM LOGIC (Vacuum Pumps) ---
     // If it's a Vacuum Switch AND Command is ON AND Feedback is OFF -> Alarm
+    // Note: isFeedbackOn now accounts for the inversion, so this alarm logic remains correct.
     if (VACUUM_INDICES.includes(idx)) {
         if (isSwitchOn && !isFeedbackOn) {
             return 'blink-red';

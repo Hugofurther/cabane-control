@@ -60,11 +60,17 @@ uint8_t cfgBurglarStation = 0;
 #define EEPROM_SW_INV_1 111 // Byte 1 (Idx 8-15)
 #define EEPROM_SW_INV_2 112 // Byte 2 (Idx 16-23)
 
+#define EEPROM_LED_INV_0 113
+#define EEPROM_LED_INV_1 114
+#define EEPROM_LED_INV_2 115
+
 uint32_t buzzerAlarmStart = 0;
 uint32_t buzzerReminderStart = 0;
 
 // ✅ NEW: Inversion Mask (3 Bytes = 24 Bits)
 uint32_t switchInvertMask = 0;
+
+uint32_t ledInvertMask = 0;
 
 bool anyVacuumAlert = false;
 bool burglarAlarmActive = false;
@@ -260,6 +266,17 @@ void loadConfig()
 
   switchInvertMask = ((uint32_t)i2 << 16) | ((uint32_t)i1 << 8) | i0;
 
+  uint8_t l0 = EEPROM.read(EEPROM_LED_INV_0);
+  uint8_t l1 = EEPROM.read(EEPROM_LED_INV_1);
+  uint8_t l2 = EEPROM.read(EEPROM_LED_INV_2);
+  if (l0 == 0xFF)
+    l0 = 0;
+  if (l1 == 0xFF)
+    l1 = 0;
+  if (l2 == 0xFF)
+    l2 = 0;
+  ledInvertMask = ((uint32_t)l2 << 16) | ((uint32_t)l1 << 8) | l0;
+
 #if DEBUG_SERIAL
   Serial.print(F("[CFG] Switch Mask: "));
   Serial.println(switchInvertMask, BIN);
@@ -390,6 +407,12 @@ void updateEthernetAndLEDs(uint32_t now)
       continue;
     }
     bool bitVal = (stationFeedback[m.station] >> m.bit) & 1;
+    // ✅ APPLY INVERSION
+    if (m.switchIndex >= 0 && ((ledInvertMask >> m.switchIndex) & 1))
+    {
+      bitVal = !bitVal;
+    }
+
     bool isCommandedOn = stableState[m.switchIndex];
 #if ENABLE_THERMOSTAT
     for (uint8_t t = 0; t < 2; t++)
@@ -660,6 +683,21 @@ void processHeartbeatAndFeedback(uint32_t now)
         UdpCmd.beginPacket(UdpCmd.remoteIP(), PORT_CMD);
         UdpCmd.write(buf, 5);
         UdpCmd.endPacket();
+      }
+    }
+
+    else if (buf[0] == 0xD1 && n >= 5)
+    {
+      uint8_t b0 = buf[1];
+      uint8_t b1 = buf[2];
+      uint8_t b2 = buf[3];
+      uint8_t cks = buf[0] ^ b0 ^ b1 ^ b2;
+      if (buf[4] == cks)
+      {
+        EEPROM.update(EEPROM_LED_INV_0, b0);
+        EEPROM.update(EEPROM_LED_INV_1, b1);
+        EEPROM.update(EEPROM_LED_INV_2, b2);
+        loadConfig();
       }
     }
 

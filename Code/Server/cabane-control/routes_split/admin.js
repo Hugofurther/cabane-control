@@ -48,13 +48,16 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 try { require('../services/weather_service').reloadSettings(); } catch (e) { }
             }
 
-            // ✅ NEW: Switch Logic Update
+            // ✅ SWITCH LOGIC
             if (settings.switch_logic_mask !== undefined) {
                 const mask = parseInt(settings.switch_logic_mask);
                 logicEngine.updateSwitchLogic(mask);
-
-                // ✅ UPDATE SIMULATION SERVICE TOO
                 simulationService.updateSwitchMask(mask);
+            }
+
+            // ✅ NEW: LED LOGIC
+            if (settings.led_logic_mask !== undefined) {
+                logicEngine.updateLedLogic(parseInt(settings.led_logic_mask));
             }
 
             if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
@@ -70,6 +73,7 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 });
             }
 
+            logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
             res.json({ success: true });
         });
     });

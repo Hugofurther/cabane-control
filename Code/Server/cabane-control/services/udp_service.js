@@ -1,5 +1,5 @@
 // ============================================================
-// 📡 UDP SERVICE (Network Bridge) - PRODUCTION v13 (Switch Logic)
+// 📡 UDP SERVICE (Network Bridge) - PRODUCTION v13 (Switch & LED Logic)
 // ============================================================
 const dgram = require('dgram');
 
@@ -111,19 +111,30 @@ function sendConfigPacket(alarmOnSec, alarmOffSec, reminderMin, burglarStation, 
     safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "ConfigUpdate");
 }
 
-// ✅ NEW: 0xD0 Switch Logic Packet
+// 0xD0 Switch Logic Packet
 function sendSwitchLogicPacket(mask) {
     const packet = Buffer.alloc(5);
     packet[0] = 0xD0;
-    packet[1] = mask & 0xFF;         // Byte 0
-    packet[2] = (mask >> 8) & 0xFF;  // Byte 1
-    packet[3] = (mask >> 16) & 0xFF; // Byte 2
-    packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3]; // Checksum
-
+    packet[1] = mask & 0xFF;
+    packet[2] = (mask >> 8) & 0xFF;
+    packet[3] = (mask >> 16) & 0xFF;
+    packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
     safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "SwitchLogic");
 }
 
+// ✅ NEW: 0xD1 LED Logic Packet
+function sendLedLogicPacket(mask) {
+    const packet = Buffer.alloc(5);
+    packet[0] = 0xD1;
+    packet[1] = mask & 0xFF;
+    packet[2] = (mask >> 8) & 0xFF;
+    packet[3] = (mask >> 16) & 0xFF;
+    packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3];
+    safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "LedLogic");
+}
+
 module.exports = {
-    init, sendGlobalBroadcast, sendOverrideCommand, sendRemoteData, sendConfigPacket, sendSwitchLogicPacket,
+    init, sendGlobalBroadcast, sendOverrideCommand, sendRemoteData, sendConfigPacket,
+    sendSwitchLogicPacket, sendLedLogicPacket, // ✅ Export
     updateStationHeartbeat: (id) => logicEngine?.updateStationHeartbeat(id)
 };

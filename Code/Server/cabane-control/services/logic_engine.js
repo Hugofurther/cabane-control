@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - PRODUCTION v23 (Switch Logic Sync)
+// 🧠 LOGIC ENGINE - PRODUCTION v24 (Switch + LED Logic Sync)
 // ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
@@ -25,7 +25,8 @@ const state = {
 
 function getFullState() { return state; }
 
-let cachedConfig = { onSec: 5, offSec: 10, remMin: 2, burgSt: 0, switchMask: 0 }; // ✅ Added switchMask
+// ✅ ADDED ledMask
+let cachedConfig = { onSec: 5, offSec: 10, remMin: 2, burgSt: 0, switchMask: 0, ledMask: 0 };
 let lastPushedStateStr = "";
 let controlHandshakeConfirmed = false;
 let lastControlTakeTime = 0;
@@ -91,13 +92,14 @@ function init(io) {
                 if (row.key === 'buzzer_alarm_off') cachedConfig.offSec = parseInt(row.value) || 10;
                 if (row.key === 'buzzer_reminder_min') cachedConfig.remMin = parseInt(row.value) || 2;
                 if (row.key === 'burglar_station') cachedConfig.burgSt = parseInt(row.value) || 0;
-                // ✅ Load Switch Logic Mask
                 if (row.key === 'switch_logic_mask') cachedConfig.switchMask = parseInt(row.value) || 0;
+                // ✅ Load LED Mask
+                if (row.key === 'led_logic_mask') cachedConfig.ledMask = parseInt(row.value) || 0;
             });
-            // ✅ Sync Switch Logic Immediately on Startup
-            if (cachedConfig.switchMask > 0) {
-                udpService.sendSwitchLogicPacket(cachedConfig.switchMask);
-            }
+
+            // ✅ Sync Both Logic Settings
+            if (cachedConfig.switchMask > 0) udpService.sendSwitchLogicPacket(cachedConfig.switchMask);
+            if (cachedConfig.ledMask > 0) udpService.sendLedLogicPacket(cachedConfig.ledMask);
         }
     });
 
@@ -126,11 +128,16 @@ function updateConfig(onSec, offSec, remMin, burgSt) {
     }
 }
 
-// ✅ NEW: Update Switch Logic
 function updateSwitchLogic(mask) {
     cachedConfig.switchMask = mask;
     udpService.sendSwitchLogicPacket(mask);
-    console.log(`[LOGIC] Sent Switch Mask: ${mask.toString(2)}`);
+    pushUpdate();
+}
+
+// ✅ NEW: Update LED Logic
+function updateLedLogic(mask) {
+    cachedConfig.ledMask = mask;
+    udpService.sendLedLogicPacket(mask);
     pushUpdate();
 }
 
@@ -166,8 +173,9 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         logSystemEvent('SYSTEM', "Main Controller Online.");
         pushConfigToArduino();
 
-        // ✅ CRITICAL: Re-Sync Switch Logic on Reconnect
+        // ✅ CRITICAL: Re-Sync Logic on Reconnect
         udpService.sendSwitchLogicPacket(cachedConfig.switchMask);
+        udpService.sendLedLogicPacket(cachedConfig.ledMask);
 
         state.controller = 'CABANE';
         state.currentUser = null;
@@ -276,7 +284,6 @@ function toggleSwitch(idx, value, actor) {
     if (state.controller === 'CABANE') return;
     const isController = state.controller === 'SERVER' || (state.controller === 'USER' && state.currentUser === actor);
     const isAuto = actor === 'AUTO';
-
     if (isController || isAuto) {
         state.virtualSwitches[idx] = value ? 1 : 0;
         pushUpdate();
@@ -287,7 +294,6 @@ function controlLoop() {
     const now = Date.now();
     let stateChanged = false;
     state.buzzerEnabled = !!state.virtualSwitches[21];
-
     if (applyThermostatOverrides()) stateChanged = true;
 
     // Vacuum Alarms
@@ -335,7 +341,6 @@ function controlLoop() {
         if (now - lastChirpTime >= 300000) { newBuzzerStatus = 'CHIRP'; if (now - lastChirpTime > 301000) lastChirpTime = now; }
     }
     if (state.buzzerStatus !== newBuzzerStatus) { state.buzzerStatus = newBuzzerStatus; stateChanged = true; }
-
     if (stateChanged) pushUpdate();
 
     if (state.controller === 'USER' || state.controller === 'SERVER') {
@@ -344,10 +349,8 @@ function controlLoop() {
             if (state.disabledStations.includes(m.st)) return;
             if (state.virtualSwitches[m.idx]) stationBytes[m.st] |= (1 << m.bit);
         });
-
         udpService.sendGlobalBroadcast(stationBytes);
         udpService.sendRemoteData(virtualBytes(state.virtualSwitches));
-
         if (!controlHandshakeConfirmed) {
             overrideAssertCounter++;
             if (overrideAssertCounter >= 5) { udpService.sendOverrideCommand(1); overrideAssertCounter = 0; }
@@ -395,5 +398,5 @@ function pushUpdate() {
 
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback, updateStationHeartbeat,
-    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig, updateSwitchLogic
+    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig, updateSwitchLogic, updateLedLogic // ✅
 };

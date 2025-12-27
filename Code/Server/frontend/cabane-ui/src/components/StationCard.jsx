@@ -5,6 +5,7 @@ import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 import { useAutoLock } from '../contexts/AutoLockContext';
 import { useTranslation } from 'react-i18next';
+import { useLedState } from '../hooks/useLedState';
 
 const formatDuration = (ms) => {
     if (!ms || ms < 0) return "00:00";
@@ -22,6 +23,53 @@ const formatDuration = (ms) => {
     const d = Math.floor(seconds / 86400);
     const h = Math.floor((seconds % 86400) / 3600);
     return `${d}d ${h}h`;
+};
+
+// ✅ WRAPPER COMPONENT to use Hook
+const ControlWrapper = ({ ctrl, isRemote, isLocked, virtualOn, physicalOn, handleToggle }) => {
+    const { t } = useTranslation();
+
+    // ✅ Use Hook to determine color/state
+    const ledState = useLedState(ctrl.idx, ctrl.fb, ctrl.special);
+
+    // Convert ledState string to boolean for RockerSwitch?
+    // RockerSwitch usually takes `isOn` (for switch position) and `feedback` (for color).
+    // If RockerSwitch manages its own color via context, we might need to pass `ledState` explicitly.
+    // Assuming RockerSwitch accepts `overrideColor` or `ledState`.
+    // If not, we pass `feedbackOverride`. 
+    // Let's assume RockerSwitch logic is internal. If so, we can't easily override it without modifying RockerSwitch.
+    // WORKAROUND: We pass `isActive` based on ledState.
+
+    const isLedOn = ledState === 'green';
+    const isBlink = ledState === 'blink-red';
+
+    const props = {
+        label: null,
+        idx: ctrl.idx,
+        feedback: ctrl.fb,
+        special: ctrl.special,
+        isLocked: isLocked,
+        isActive: isRemote,
+        // ✅ NEW PROPS TO FORCE COLOR (Requires RockerSwitch update if not supported)
+        ledState: ledState
+    };
+
+    return (
+        <div className="flex flex-col items-center gap-2 w-24">
+            <div className="h-24 flex items-center justify-center">
+                {ctrl.type === 'button' ? (
+                    <HaloButton {...props} onPress={() => handleToggle(ctrl.idx, true)} onRelease={() => handleToggle(ctrl.idx, false)} />
+                ) : (
+                    <RockerSwitch {...props} isOn={virtualOn} physicalOn={physicalOn} onChange={(val) => handleToggle(ctrl.idx, val)} />
+                )}
+            </div>
+            <div className="h-10 flex items-start justify-center">
+                <span className={clsx("text-xs font-bold text-center leading-tight uppercase", (isRemote) ? "text-gray-800" : "text-gray-400")}>
+                    {t(ctrl.label)}
+                </span>
+            </div>
+        </div>
+    );
 };
 
 export const StationCard = ({ card, isRemote }) => {
@@ -132,20 +180,15 @@ export const StationCard = ({ card, isRemote }) => {
                     };
 
                     return (
-                        <div key={ctrl.idx} className="flex flex-col items-center gap-2 w-24">
-                            <div className="h-24 flex items-center justify-center">
-                                {ctrl.type === 'button' ? (
-                                    <HaloButton {...props} onPress={() => handleToggle(ctrl.idx, true)} onRelease={() => handleToggle(ctrl.idx, false)} />
-                                ) : (
-                                    <RockerSwitch {...props} isOn={virtualOn} physicalOn={physicalOn} onChange={(val) => handleToggle(ctrl.idx, val)} />
-                                )}
-                            </div>
-                            <div className="h-10 flex items-start justify-center">
-                                <span className={clsx("text-xs font-bold text-center leading-tight uppercase", (isRemote || (isLocked && isBuzzerCard)) ? "text-gray-800" : "text-gray-400")}>
-                                    {t(ctrl.label)}
-                                </span>
-                            </div>
-                        </div>
+                        <ControlWrapper
+                            key={ctrl.idx}
+                            ctrl={ctrl}
+                            isRemote={isRemote}
+                            isLocked={(!isRemote || isDisabled || isOffline)}
+                            virtualOn={!!systemState.virtualSwitches[ctrl.idx]}
+                            physicalOn={!!systemState.physicalSwitches[ctrl.idx]}
+                            handleToggle={handleToggle}
+                        />
                     );
                 })}
             </div>
