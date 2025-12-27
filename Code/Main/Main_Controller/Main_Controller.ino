@@ -7,7 +7,7 @@
   ==========================================================================================
 */
 
-#define FIRMWARE_VERSION "v5.2-ConflictCheck"
+#define FIRMWARE_VERSION "v5.3-LogicInvert"
 #define DEBUG_SERIAL 1
 #define DEBUG_LEVEL 3
 #define BUZZER_REMINDER 1
@@ -55,9 +55,16 @@ uint8_t cfgBurglarStation = 0;
 #define EEPROM_ALARM_OFF 101
 #define EEPROM_REMINDER 102
 #define EEPROM_BURGLAR_STATION 103
+// ✅ NEW: EEPROM Addresses for Switch Logic
+#define EEPROM_SW_INV_0 110 // Byte 0 (Idx 0-7)
+#define EEPROM_SW_INV_1 111 // Byte 1 (Idx 8-15)
+#define EEPROM_SW_INV_2 112 // Byte 2 (Idx 16-23)
 
 uint32_t buzzerAlarmStart = 0;
 uint32_t buzzerReminderStart = 0;
+
+// ✅ NEW: Inversion Mask (3 Bytes = 24 Bits)
+uint32_t switchInvertMask = 0;
 
 bool anyVacuumAlert = false;
 bool burglarAlarmActive = false;
@@ -238,6 +245,25 @@ void loadConfig()
   cfgAlarmOffMs = (aOff == 0xFF) ? 10000 : (uint32_t)aOff * 1000;
   cfgReminderPeriodMs = (remMin == 0xFF) ? 120000 : (uint32_t)remMin * 60000;
   cfgBurglarStation = (burgSt == 0xFF) ? 0 : burgSt;
+
+  // ✅ NEW: Load Switch Inversion Logic
+  uint8_t i0 = EEPROM.read(EEPROM_SW_INV_0);
+  uint8_t i1 = EEPROM.read(EEPROM_SW_INV_1);
+  uint8_t i2 = EEPROM.read(EEPROM_SW_INV_2);
+
+  if (i0 == 0xFF)
+    i0 = 0;
+  if (i1 == 0xFF)
+    i1 = 0;
+  if (i2 == 0xFF)
+    i2 = 0;
+
+  switchInvertMask = ((uint32_t)i2 << 16) | ((uint32_t)i1 << 8) | i0;
+
+#if DEBUG_SERIAL
+  Serial.print(F("[CFG] Switch Mask: "));
+  Serial.println(switchInvertMask, BIN);
+#endif
 }
 
 void loadStationStatesFromEEPROM()
@@ -614,6 +640,29 @@ void processHeartbeatAndFeedback(uint32_t now)
         UdpCmd.endPacket();
       }
     }
+
+    // ✅ NEW: 0xD0 SWITCH LOGIC CONFIG [D0] [B0] [B1] [B2] [Cks]
+    else if (buf[0] == 0xD0 && n >= 5)
+    {
+      uint8_t b0 = buf[1];
+      uint8_t b1 = buf[2];
+      uint8_t b2 = buf[3];
+      uint8_t calcCks = buf[0] ^ b0 ^ b1 ^ b2;
+
+      if (buf[4] == calcCks)
+      {
+        EEPROM.update(EEPROM_SW_INV_0, b0);
+        EEPROM.update(EEPROM_SW_INV_1, b1);
+        EEPROM.update(EEPROM_SW_INV_2, b2);
+        loadConfig(); // Reload immediately
+
+        // Optional Ack
+        UdpCmd.beginPacket(UdpCmd.remoteIP(), PORT_CMD);
+        UdpCmd.write(buf, 5);
+        UdpCmd.endPacket();
+      }
+    }
+
     // ✅ ARBITER LOGIC (Check Request from Station)
     // 0xAD: Conflict Check [AD] [ID] [Cks]
     else if (buf[0] == 0xAD && n >= 3)
@@ -629,184 +678,192 @@ void processHeartbeatAndFeedback(uint32_t now)
         UdpCmd.endPacket();
       }
     }
-  }
 
-  // 2. FEEDBACK PORT (8889) - Receive Station Data
-  count = 0;
-  while (UdpFb.parsePacket() > 0 && count < 10)
-  {
-    count++;
-    uint8_t buf[16];
-    int n = UdpFb.read(buf, sizeof(buf));
-    if (n < 3)
-      continue;
+    // 2. FEEDBACK PORT (8889) - Receive Station Data
+    count = 0;
+    while (UdpFb.parsePacket() > 0 && count < 10)
+    {
+      count++;
+      uint8_t buf[16];
+      int n = UdpFb.read(buf, sizeof(buf));
+      if (n < 3)
+        continue;
 
-    if (buf[0] == 0xAB && n >= 4)
-    { // Heartbeat
-      uint8_t id = buf[1];
-      if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
-      {
-        lastHeartbeatMs[id] = now;
-        stationOffline[id] = false;
-        if (!firstHeartbeatSeen[id])
-          firstHeartbeatSeen[id] = true;
-      }
-    }
-    else if (buf[0] == 0xAC && n >= 5)
-    { // Feedback
-      uint8_t id = buf[1];
-      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
-      {
-        stationFeedback[id] = buf[2];
-        lastHeartbeatMs[id] = now;
-        stationOffline[id] = false;
-      }
-    }
-  }
-}
-
-void handleStationEnableLongPress(uint32_t now)
-{
-  for (uint8_t id = 0; id < NUM_STATIONS; id++)
-  {
-    uint8_t idx = stationButtonIndex[id];
-    bool pressed = stableState[idx];
-    if (pressed && !pressActive[id])
-    {
-      pressActive[id] = true;
-      pressStart[id] = now;
-    }
-    else if (!pressed && pressActive[id])
-    {
-      pressActive[id] = false;
-    }
-    else if (pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS))
-    {
-      stationEnabled[id] = !stationEnabled[id];
-      pressActive[id] = false;
-      saveStationStateToEEPROM(id);
-    }
-  }
-}
-
-void setup()
-{
-  wdt_disable();
-  delay(1000);
-  pinMode(PIN_BUZZER, OUTPUT);
-  digitalWrite(PIN_BUZZER, LOW);
-  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
-  {
-    pinMode(LED_A[i], OUTPUT);
-    pinMode(LED_B[i], OUTPUT);
-    LED_PAIR(i, LOW, LOW);
-  }
-  initEthernet();
-  mcp.begin_I2C(MCP_I2C_ADDR);
-  for (uint8_t p = 0; p < 8; p++)
-  {
-    mcp.pinMode(p, INPUT_PULLUP);
-    mcp.pinMode(p + 8, INPUT_PULLUP);
-  }
-  mcp.setupInterrupts(false, false, LOW);
-  for (uint8_t p = 0; p < 16; p++)
-    mcp.setupInterruptPin(p, CHANGE);
-  pinMode(MCP_INTA_PIN, INPUT_PULLUP);
-  pinMode(MCP_INTB_PIN, INPUT_PULLUP);
-  mcpStateA = mcp.readGPIO(0);
-  mcpStateB = mcp.readGPIO(1);
-  attachInterrupt(digitalPinToInterrupt(MCP_INTA_PIN), []()
-                  { mcpIntA_Flag = true; }, FALLING);
-  attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
-                  { mcpIntB_Flag = true; }, FALLING);
-  for (uint8_t i = 0; i < NUM_INPUTS; i++)
-  {
-    pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
-    stableState[i] = !digitalRead(PHYS_SW_PINS[i]);
-  }
-  for (uint8_t b = 0; b < 8; b++)
-  {
-    stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
-    stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
-  }
-  if (ENABLE_VEGAS_MODE)
-    runVegasMode();
-  loadStationStatesFromEEPROM();
-  loadConfig();
-  wdt_enable(WDTO_8S);
-}
-
-void loop()
-{
-  wdt_reset();
-  uint32_t now = millis();
-  if (mcpIntA_Flag)
-    readMcpA();
-  if (mcpIntB_Flag)
-    readMcpB();
-  for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
-  {
-    const InputMap &m = INPUT_MAP[i];
-    bool curr = readInputByMap(m);
-    if (curr != rawState[m.index])
-    {
-      rawState[m.index] = curr;
-      lastChange[m.index] = now;
-    }
-    if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
-      stableState[m.index] = rawState[m.index];
-  }
-  processHeartbeatAndFeedback(now);
-  for (uint8_t id = 0; id < NUM_STATIONS; id++)
-  {
-    if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
-      stationOffline[id] = true;
-  }
-  handleStationEnableLongPress(now);
-  if (remoteOverrideActive && (now - lastServerPacketMs > SERVER_TIMEOUT_MS))
-    remoteOverrideActive = false;
-  static uint32_t emergStart = 0;
-  if (remoteOverrideActive)
-  {
-    if (!digitalRead(62) && !digitalRead(63))
-    {
-      if (emergStart == 0)
-        emergStart = now;
-      else if (now - emergStart > 2000)
-      {
-        remoteOverrideActive = false;
-        emergStart = 0;
-        for (int k = 0; k < 5; k++)
+      if (buf[0] == 0xAB && n >= 4)
+      { // Heartbeat
+        uint8_t id = buf[1];
+        if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
         {
-          digitalWriteAll(LED_B, NUM_LED_PAIRS, HIGH);
-          delay(100);
-          wdt_reset();
-          digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);
-          delay(100);
-          wdt_reset();
+          lastHeartbeatMs[id] = now;
+          stationOffline[id] = false;
+          if (!firstHeartbeatSeen[id])
+            firstHeartbeatSeen[id] = true;
+        }
+      }
+      else if (buf[0] == 0xAC && n >= 5)
+      { // Feedback
+        uint8_t id = buf[1];
+        if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
+        {
+          stationFeedback[id] = buf[2];
+          lastHeartbeatMs[id] = now;
+          stationOffline[id] = false;
         }
       }
     }
-    else
-      emergStart = 0;
   }
-  updateEthernetAndLEDs(now);
-  updateBuzzerLED(now);
-  updateThermostatStatus();
-  static uint32_t tPhys = 0;
-  if (now - tPhys >= 200)
+
+  void handleStationEnableLongPress(uint32_t now)
   {
-    tPhys = now;
-    sendPhysicalState();
+    for (uint8_t id = 0; id < NUM_STATIONS; id++)
+    {
+      uint8_t idx = stationButtonIndex[id];
+      bool pressed = stableState[idx];
+      if (pressed && !pressActive[id])
+      {
+        pressActive[id] = true;
+        pressStart[id] = now;
+      }
+      else if (!pressed && pressActive[id])
+      {
+        pressActive[id] = false;
+      }
+      else if (pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS))
+      {
+        stationEnabled[id] = !stationEnabled[id];
+        pressActive[id] = false;
+        saveStationStateToEEPROM(id);
+      }
+    }
   }
-  if (!remoteOverrideActive && (now - tSend >= 100))
+
+  void setup()
   {
-    tSend = now;
-    sendGlobalCommands();
+    wdt_disable();
+    delay(1000);
+    pinMode(PIN_BUZZER, OUTPUT);
+    digitalWrite(PIN_BUZZER, LOW);
+    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+    {
+      pinMode(LED_A[i], OUTPUT);
+      pinMode(LED_B[i], OUTPUT);
+      LED_PAIR(i, LOW, LOW);
+    }
+    initEthernet();
+    mcp.begin_I2C(MCP_I2C_ADDR);
+    for (uint8_t p = 0; p < 8; p++)
+    {
+      mcp.pinMode(p, INPUT_PULLUP);
+      mcp.pinMode(p + 8, INPUT_PULLUP);
+    }
+    mcp.setupInterrupts(false, false, LOW);
+    for (uint8_t p = 0; p < 16; p++)
+      mcp.setupInterruptPin(p, CHANGE);
+    pinMode(MCP_INTA_PIN, INPUT_PULLUP);
+    pinMode(MCP_INTB_PIN, INPUT_PULLUP);
+    mcpStateA = mcp.readGPIO(0);
+    mcpStateB = mcp.readGPIO(1);
+    attachInterrupt(digitalPinToInterrupt(MCP_INTA_PIN), []()
+                    { mcpIntA_Flag = true; }, FALLING);
+    attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
+                    { mcpIntB_Flag = true; }, FALLING);
+    for (uint8_t i = 0; i < NUM_INPUTS; i++)
+    {
+      pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
+      stableState[i] = !digitalRead(PHYS_SW_PINS[i]);
+    }
+    for (uint8_t b = 0; b < 8; b++)
+    {
+      stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
+      stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
+    }
+    if (ENABLE_VEGAS_MODE)
+      runVegasMode();
+    loadStationStatesFromEEPROM();
+    loadConfig();
+    wdt_enable(WDTO_8S);
   }
-  if (now - tBlink >= BLINK_INTERVAL_MS)
+
+  void loop()
   {
-    tBlink = now;
-    blinkPhase = !blinkPhase;
+    wdt_reset();
+    uint32_t now = millis();
+    if (mcpIntA_Flag)
+      readMcpA();
+    if (mcpIntB_Flag)
+      readMcpB();
+    for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+    {
+      const InputMap &m = INPUT_MAP[i];
+      bool physicalVal = readInputByMap(m);
+
+      // ✅ NEW: Apply Inversion Logic HERE
+      // If the bit in the mask is 1, flip the physical reading
+      if ((switchInvertMask >> m.index) & 1)
+      {
+        physicalVal = !physicalVal;
+      }
+
+      if (physicalVal != rawState[m.index])
+      {
+        rawState[m.index] = physicalVal;
+        lastChange[m.index] = now;
+      }
+      if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
+        stableState[m.index] = rawState[m.index];
+    }
+
+    processHeartbeatAndFeedback(now);
+    for (uint8_t id = 0; id < NUM_STATIONS; id++)
+    {
+      if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
+        stationOffline[id] = true;
+    }
+    handleStationEnableLongPress(now);
+    if (remoteOverrideActive && (now - lastServerPacketMs > SERVER_TIMEOUT_MS))
+      remoteOverrideActive = false;
+    static uint32_t emergStart = 0;
+    if (remoteOverrideActive)
+    {
+      if (!digitalRead(62) && !digitalRead(63))
+      {
+        if (emergStart == 0)
+          emergStart = now;
+        else if (now - emergStart > 2000)
+        {
+          remoteOverrideActive = false;
+          emergStart = 0;
+          for (int k = 0; k < 5; k++)
+          {
+            digitalWriteAll(LED_B, NUM_LED_PAIRS, HIGH);
+            delay(100);
+            wdt_reset();
+            digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);
+            delay(100);
+            wdt_reset();
+          }
+        }
+      }
+      else
+        emergStart = 0;
+    }
+    updateEthernetAndLEDs(now);
+    updateBuzzerLED(now);
+    updateThermostatStatus();
+    static uint32_t tPhys = 0;
+    if (now - tPhys >= 200)
+    {
+      tPhys = now;
+      sendPhysicalState();
+    }
+    if (!remoteOverrideActive && (now - tSend >= 100))
+    {
+      tSend = now;
+      sendGlobalCommands();
+    }
+    if (now - tBlink >= BLINK_INTERVAL_MS)
+    {
+      tBlink = now;
+      blinkPhase = !blinkPhase;
+    }
   }
-}

@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - PRODUCTION v22 (Pure Physical Truth)
+// 🧠 LOGIC ENGINE - PRODUCTION v23 (Switch Logic Sync)
 // ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
@@ -21,12 +21,11 @@ const state = {
     buzzerStatus: 'OFF',
     timezone: 'UTC',
     disabledStations: []
-    // ❌ REMOVED: simulationMode (Logic Engine doesn't care anymore)
 };
 
 function getFullState() { return state; }
 
-let cachedConfig = { onSec: 5, offSec: 10, remMin: 2, burgSt: 0 };
+let cachedConfig = { onSec: 5, offSec: 10, remMin: 2, burgSt: 0, switchMask: 0 }; // ✅ Added switchMask
 let lastPushedStateStr = "";
 let controlHandshakeConfirmed = false;
 let lastControlTakeTime = 0;
@@ -92,11 +91,16 @@ function init(io) {
                 if (row.key === 'buzzer_alarm_off') cachedConfig.offSec = parseInt(row.value) || 10;
                 if (row.key === 'buzzer_reminder_min') cachedConfig.remMin = parseInt(row.value) || 2;
                 if (row.key === 'burglar_station') cachedConfig.burgSt = parseInt(row.value) || 0;
+                // ✅ Load Switch Logic Mask
+                if (row.key === 'switch_logic_mask') cachedConfig.switchMask = parseInt(row.value) || 0;
             });
+            // ✅ Sync Switch Logic Immediately on Startup
+            if (cachedConfig.switchMask > 0) {
+                udpService.sendSwitchLogicPacket(cachedConfig.switchMask);
+            }
         }
     });
 
-    // Initialize Automation (but NOT Simulation, to keep dependencies clean)
     const automationService = require('./automation_service');
     automationService.init(module.exports, io);
 
@@ -116,10 +120,18 @@ function updateDisabled(jsonStr) {
 
 function updateConfig(onSec, offSec, remMin, burgSt) {
     if (onSec > 0 && offSec > 0 && remMin > 0) {
-        cachedConfig = { onSec, offSec, remMin, burgSt };
+        cachedConfig = { ...cachedConfig, onSec, offSec, remMin, burgSt };
         pushConfigToArduino();
         pushUpdate();
     }
+}
+
+// ✅ NEW: Update Switch Logic
+function updateSwitchLogic(mask) {
+    cachedConfig.switchMask = mask;
+    udpService.sendSwitchLogicPacket(mask);
+    console.log(`[LOGIC] Sent Switch Mask: ${mask.toString(2)}`);
+    pushUpdate();
 }
 
 function pushConfigToArduino() {
@@ -146,9 +158,6 @@ function applyThermostatOverrides() {
 }
 
 function updatePhysicalState(switchBytes, isOverrideActive) {
-    // ✅ ALWAYS PROCESS REALITY.
-    // If a Sim is running, the Frontend will hide this state for the Sim Owner,
-    // but the Backend must know the truth.
     state.lastMainHeartbeat = Date.now();
 
     if (!state.mainControllerOnline) {
@@ -156,6 +165,10 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         console.log("[SYNC] 🟢 Main Controller RECONNECTED.");
         logSystemEvent('SYSTEM', "Main Controller Online.");
         pushConfigToArduino();
+
+        // ✅ CRITICAL: Re-Sync Switch Logic on Reconnect
+        udpService.sendSwitchLogicPacket(cachedConfig.switchMask);
+
         state.controller = 'CABANE';
         state.currentUser = null;
         lastReleaseTime = Date.now();
@@ -205,7 +218,6 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
 }
 
 function updateStationHeartbeat(id) {
-    // ✅ ALWAYS PROCESS HEARTBEAT.
     if (id >= 0 && id < 6) {
         state.stationOnline[id] = true;
         state.stationLastSeen[id] = Date.now();
@@ -215,7 +227,6 @@ function updateStationHeartbeat(id) {
 }
 
 function updateStationFeedback(id, bits) {
-    // ✅ ALWAYS PROCESS FEEDBACK.
     if (id >= 0 && id < 6) {
         state.stationFeedback[id] = bits;
         state.stationOnline[id] = true;
@@ -224,8 +235,6 @@ function updateStationFeedback(id, bits) {
         pushUpdate();
     }
 }
-
-// ❌ REMOVED: updateSimFeedback (Sim Service should not touch Logic Engine State)
 
 function takeControl(username) {
     state.controller = 'USER';
@@ -264,9 +273,6 @@ function releaseToCabane() {
 
 function toggleSwitch(idx, value, actor) {
     if (idx < 0 || idx > 23) return;
-
-    // ✅ PURE PHYSICAL LOGIC.
-    // Simulator toggles are handled by simulation_service.js/toggleSimSwitch
     if (state.controller === 'CABANE') return;
     const isController = state.controller === 'SERVER' || (state.controller === 'USER' && state.currentUser === actor);
     const isAuto = actor === 'AUTO';
@@ -313,7 +319,6 @@ function controlLoop() {
         stateChanged = true;
     }
 
-    // Audio Logic
     const isSirenCondition = (state.globalVacuumAlarm || state.burglarAlarm) && state.buzzerEnabled;
     const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
     const isChirpCondition = !state.globalVacuumAlarm && !state.burglarAlarm && !state.buzzerEnabled && anyVacuumRunning;
@@ -333,8 +338,6 @@ function controlLoop() {
 
     if (stateChanged) pushUpdate();
 
-    // UDP Output (REAL ONLY)
-    // We ALWAYS send UDP if we are the controller. The Sim logic is completely separate.
     if (state.controller === 'USER' || state.controller === 'SERVER') {
         const stationBytes = new Array(6).fill(0);
         INPUT_MAP.forEach(m => {
@@ -359,10 +362,8 @@ function virtualBytes(switches) {
 }
 
 function checkHeartbeats() {
-    // ✅ ALWAYS CHECK.
     const now = Date.now();
     let stateChanged = false;
-
     if (state.mainControllerOnline && (now - state.lastMainHeartbeat > 5000)) {
         console.log("[FAILSAFE] Main Controller Timed Out.");
         logSystemEvent('ALARM', "Main Controller LOST! Switching to Headless.");
@@ -394,5 +395,5 @@ function pushUpdate() {
 
 module.exports = {
     init, getFullState, updatePhysicalState, updateStationFeedback, updateStationHeartbeat,
-    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig
+    takeControl, releaseToServer, releaseToCabane, toggleSwitch, updateTimezone, updateDisabled, updateConfig, updateSwitchLogic
 };

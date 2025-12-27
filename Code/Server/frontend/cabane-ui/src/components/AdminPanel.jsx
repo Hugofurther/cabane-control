@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
     X, Check, Trash2, Shield, Globe, MapPin, Search, Save,
     HardDrive, Power, Clock, RefreshCw, Calculator, User,
-    Lock, Crown, Volume2, Workflow // ✅ Added Workflow Icon
+    Lock, Crown, Volume2, Workflow, ToggleLeft
 } from 'lucide-react';
 import { useModal } from '../contexts/ModalContext';
 import { clsx } from 'clsx';
@@ -55,9 +55,9 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         buzzer_alarm_off: '10',
         buzzer_reminder_min: '2',
         burglar_station: '0',
-        // ✅ NEW DEFAULTS
         drain_timer_min: '15',
-        shutdown_timer_min: '60'
+        shutdown_timer_min: '60',
+        switch_logic_mask: '0' // ✅ NEW: Inversion Mask
     });
 
     const [locations, setLocations] = useState([]);
@@ -66,6 +66,9 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
 
     const [citySearch, setCitySearch] = useState('');
     const [cityResults, setCityResults] = useState([]);
+
+    // Specific switches allowed to be inverted
+    const CONFIGURABLE_SWITCHES = [2, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 17, 18, 20];
 
     const timezones = [
         { label: "Montréal, QC (EST)", value: "America/Montreal" },
@@ -116,6 +119,17 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     // --- LOGIC ---
     const toggleStation = (id) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
+    };
+
+    // ✅ Switch Logic Helper
+    const toggleSwitchLogic = (idx) => {
+        let mask = parseInt(sysSettings.switch_logic_mask || '0');
+        mask ^= (1 << idx); // Flip bit
+        setSysSettings(prev => ({ ...prev, switch_logic_mask: mask.toString() }));
+    };
+
+    const isSwitchInverted = (idx) => {
+        return (parseInt(sysSettings.switch_logic_mask || '0') >> idx) & 1;
     };
 
     const searchCity = async () => {
@@ -313,6 +327,38 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
+                        {/* ✅ NEW: SWITCH LOGIC CONFIGURATION */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <ToggleLeft size={20} className="text-orange-500" /> Switch Input Logic
+                            </h3>
+                            <p className="text-xs text-gray-400 mb-2">
+                                Toggle to invert physical switch behavior (e.g. if UP registers as OFF).
+                                <br /> <span className="text-orange-400 font-bold">Orange = Inverted Logic</span>.
+                            </p>
+
+                            <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
+                                {CONFIGURABLE_SWITCHES.map(idx => {
+                                    const inverted = (parseInt(sysSettings.switch_logic_mask || '0') >> idx) & 1;
+                                    return (
+                                        <button
+                                            key={idx}
+                                            onClick={() => toggleSwitchLogic(idx)}
+                                            className={`p-2 rounded border flex flex-col items-center justify-center transition-all ${inverted
+                                                ? 'bg-orange-900/30 border-orange-500 text-orange-200'
+                                                : 'bg-gray-900 border-gray-700 text-gray-500'
+                                                }`}
+                                        >
+                                            <span className="text-xs font-mono font-bold">SW {idx}</span>
+                                            <span className="text-[9px] uppercase font-bold mt-1">
+                                                {inverted ? "INVERTED" : "NORMAL"}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
                         {/* Weather Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-6">
                             <div className="flex justify-between items-center"><h3 className="text-lg font-bold text-white flex items-center gap-2"><MapPin size={20} className="text-green-500" /> {t('admin.weather_services')}</h3></div>
@@ -340,7 +386,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                             </div>
                         </div>
 
-                        {/* ✅ NEW: AUTOMATION DEFAULTS */}
+                        {/* Automation Config */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
                             <h3 className="text-lg font-bold text-white flex items-center gap-2"><Workflow size={20} className="text-purple-400" /> {t('admin.automation_config')}</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

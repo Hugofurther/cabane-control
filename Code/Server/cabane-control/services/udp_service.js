@@ -1,5 +1,5 @@
 // ============================================================
-// 📡 UDP SERVICE (Network Bridge) - PRODUCTION v11 (No Filter)
+// 📡 UDP SERVICE (Network Bridge) - PRODUCTION v13 (Switch Logic)
 // ============================================================
 const dgram = require('dgram');
 
@@ -26,11 +26,7 @@ function setupSocket(sock, port, label) {
     });
 
     sock.on('message', (msg, rinfo) => {
-        try {
-            parsePacket(msg, rinfo);
-        } catch (e) {
-            console.error(`[UDP-${label}] Parse Error:`, e.message);
-        }
+        try { parsePacket(msg, rinfo); } catch (e) { console.error(`[UDP-${label}] Parse Error:`, e.message); }
     });
 
     sock.on('listening', () => {
@@ -39,43 +35,24 @@ function setupSocket(sock, port, label) {
         console.log(`[UDP-${label}] Listening on ${address.address}:${address.port}`);
     });
 
-    try {
-        sock.bind(port, '0.0.0.0');
-    } catch (e) {
-        console.error(`[UDP-${label}] Bind Error:`, e);
-    }
+    try { sock.bind(port, '0.0.0.0'); } catch (e) { console.error(`[UDP-${label}] Bind Error:`, e); }
 }
 
 function parsePacket(msg, rinfo) {
     if (msg.length < 3) return;
-
-    // ✅ REMOVED: Source Filtering logic.
-    // The Backend ALWAYS needs to know the truth from the real hardware.
-    // The Frontend (via Derived State) decides whether to show Real or Sim.
-
     const header = msg[0];
 
-    // 0xAC: STATION FEEDBACK
     if (header === 0xAC && msg.length >= 4) {
-        const id = msg[1];
-        const bits = msg[2];
-        if (logicEngine) logicEngine.updateStationFeedback(id, bits);
+        if (logicEngine) logicEngine.updateStationFeedback(msg[1], msg[2]);
     }
-
-    // 0xAB: HEARTBEAT
     else if (header === 0xAB && msg.length >= 2) {
-        const id = msg[1];
-        if (logicEngine) logicEngine.updateStationHeartbeat(id);
+        if (logicEngine) logicEngine.updateStationHeartbeat(msg[1]);
     }
-
-    // 0xB1: MAIN CONTROLLER PHYSICAL STATE
     else if (header === 0xB1 && msg.length >= 7) {
         const switchBytes = [msg[2], msg[3], msg[4]];
         const isOverrideActive = (msg[5] === 0x01);
         if (logicEngine) logicEngine.updatePhysicalState(switchBytes, isOverrideActive);
     }
-
-    // 0xAD: CONFLICT CHECK
     else if (header === 0xAD && msg.length >= 3) {
         checkAndDenyConflict(msg[1]);
     }
@@ -134,7 +111,19 @@ function sendConfigPacket(alarmOnSec, alarmOffSec, reminderMin, burglarStation, 
     safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "ConfigUpdate");
 }
 
+// ✅ NEW: 0xD0 Switch Logic Packet
+function sendSwitchLogicPacket(mask) {
+    const packet = Buffer.alloc(5);
+    packet[0] = 0xD0;
+    packet[1] = mask & 0xFF;         // Byte 0
+    packet[2] = (mask >> 8) & 0xFF;  // Byte 1
+    packet[3] = (mask >> 16) & 0xFF; // Byte 2
+    packet[4] = packet[0] ^ packet[1] ^ packet[2] ^ packet[3]; // Checksum
+
+    safeSend(socketCmd, packet, MAIN_CONTROLLER_IP, PORT_CMD, "SwitchLogic");
+}
+
 module.exports = {
-    init, sendGlobalBroadcast, sendOverrideCommand, sendRemoteData, sendConfigPacket,
+    init, sendGlobalBroadcast, sendOverrideCommand, sendRemoteData, sendConfigPacket, sendSwitchLogicPacket,
     updateStationHeartbeat: (id) => logicEngine?.updateStationHeartbeat(id)
 };

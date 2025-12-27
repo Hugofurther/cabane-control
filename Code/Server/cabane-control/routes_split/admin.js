@@ -48,7 +48,15 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 try { require('../services/weather_service').reloadSettings(); } catch (e) { }
             }
 
-            // Update Buzzer/Burglar Config in Firmware
+            // ✅ NEW: Switch Logic Update
+            if (settings.switch_logic_mask !== undefined) {
+                const mask = parseInt(settings.switch_logic_mask);
+                logicEngine.updateSwitchLogic(mask);
+
+                // ✅ UPDATE SIMULATION SERVICE TOO
+                simulationService.updateSwitchMask(mask);
+            }
+
             if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
                 db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min', 'burglar_station')", (err, rows) => {
                     let on = 5, off = 10, rem = 2, burg = 0;
@@ -62,11 +70,11 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 });
             }
 
-            logAction(req.io, req.user.id, req.user.username, 'SYSTEM', 'Updated System Settings');
             res.json({ success: true });
         });
     });
 });
+
 
 // ============================================================
 // 📊 STATUS & LOGS
