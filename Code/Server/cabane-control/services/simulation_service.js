@@ -1,43 +1,57 @@
 // ============================================================
-// 🎮 SIMULATION SERVICE - TOTALLY ISOLATED (v24 - Inversion Support)
+// 🎮 SIMULATION SERVICE - TOTALLY ISOLATED (v28 - Full Source)
 // ============================================================
-const dgram = require('dgram');
 const db = require('../db');
 
+// Internal State
 let ioRef = null;
 let active = false;
 let owner = null;
 let heartbeatInterval = null;
 
+// ✅ PHYSICAL LINK: Determines if Sim drives Real Hardware
+let physicalLink = false;
+
+// ✅ EXTRA STATE: Holds bits for Buzzer (21), TH1 (22), TH2 (23)
 let extraState = 0;
 
-// ✅ NEW: Inversion Mask
+// ✅ INVERSION MASK: Loaded from DB to match Physical/App settings
 let switchMask = 0;
 
-let config = Array(6).fill(null).map((_, i) => ({
-    id: i,
-    relays: Array(6).fill(null).map((__, r) => ({
+// --- CONFIGURATION ---
+// Default configuration generator
+let config = Array(6).fill(null).map((_, i) => {
+    let relays = Array(6).fill(null).map((__, r) => ({
         name: `Device ${r + 1}`,
         linked: true, enabled: true, targetSt: i, targetBit: r < 7 ? r : 0
-    })),
-    inputs: Array(7).fill(null).map((__, b) => ({ name: `Input ${b + 1}` }))
-}));
+    }));
 
-let state = Array(6).fill(null).map((_, i) => ({
-    id: i,
-    connected: true,
-    relayMask: 0,
-    manualInputs: 0x7F,
-    inputMask: 0x7F
-}));
+    // ✅ ST4 CONFIG (Merged ST5)
+    if (i === 4) {
+        relays[0].name = "ST4 Transp";
+        relays[1].name = "ST4 Vac";
+        relays[2].name = "ST4 Vid";
+        relays[3].enabled = false; // Unused
+        relays[4] = { name: "ST5 Transp", linked: true, enabled: true, targetSt: 4, targetBit: 4 }; // Merged
+        relays[5] = { name: "ST5 Vid", linked: true, enabled: true, targetSt: 4, targetBit: 5 };    // Merged
+    }
 
-const THERMOSTATS = [
-    { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
-    { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
-];
+    // ✅ DISABLE ST5 (Hardware Removed)
+    if (i === 5) {
+        relays.forEach(r => r.enabled = false);
+    }
 
+    return {
+        id: i,
+        relays,
+        inputs: Array(7).fill(null).map((__, b) => ({ name: `Input ${b + 1}` }))
+    };
+});
+
+// --- INPUT MAPPING (Matches Logic Engine) ---
 const INPUT_MAP = [
-    { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 }, { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
+    { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
+    { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
     { idx: 4, st: 1, bit: 2 }, { idx: 5, st: 1, bit: 3 },
     { idx: 6, st: 1, bit: 4 }, { idx: 7, st: 1, bit: 5 },
     { idx: 8, st: 2, bit: 0 }, { idx: 9, st: 2, bit: 1 },
@@ -46,8 +60,25 @@ const INPUT_MAP = [
     { idx: 14, st: 3, bit: 2 }, { idx: 15, st: 3, bit: 3 },
     { idx: 16, st: 4, bit: 0 }, { idx: 17, st: 4, bit: 1 },
     { idx: 18, st: 4, bit: 2 },
-    { idx: 19, st: 5, bit: 0 }, { idx: 20, st: 5, bit: 1 }
+    // ✅ ST5 -> ST4
+    { idx: 19, st: 4, bit: 4 }, { idx: 20, st: 4, bit: 5 },
+    // Global
+    { idx: 21, st: 255, bit: 0 }, { idx: 22, st: 255, bit: 0 }, { idx: 23, st: 255, bit: 0 }
 ];
+
+const THERMOSTATS = [
+    { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
+    { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
+];
+
+// --- RUNTIME STATE ---
+let state = Array(6).fill(null).map((_, i) => ({
+    id: i,
+    connected: true,
+    relayMask: 0,
+    manualInputs: 0x7F, // Default inputs High (Inactive)
+    inputMask: 0x7F
+}));
 
 function init(io) {
     ioRef = io;
@@ -62,9 +93,8 @@ function loadConfig() {
                     try {
                         const saved = JSON.parse(r.value);
                         if (Array.isArray(saved) && saved.length === 6) config = saved;
-                    } catch (e) { }
+                    } catch (e) { console.error("[SIM] Config Parse Error", e); }
                 }
-                // ✅ Load Mask
                 if (r.key === 'switch_logic_mask') switchMask = parseInt(r.value) || 0;
             });
         }
@@ -76,7 +106,6 @@ function saveConfig() {
     db.run("INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)", ['simulation_config', json]);
 }
 
-// ✅ NEW: Update mask when Admin Panel saves
 function updateSwitchMask(mask) {
     switchMask = mask;
     if (active) calculatePhysics();
@@ -85,15 +114,19 @@ function updateSwitchMask(mask) {
 function setSimulationActive(isActive, username) {
     active = isActive;
     owner = isActive ? username : null;
+
+    // Safety: If turning off, kill link
+    if (!isActive) physicalLink = false;
+
     if (active) {
-        // Reset state
+        // Reset state on start
         state.forEach(s => { s.relayMask = 0; s.inputMask = 0x7F; });
         extraState = 0;
+
         if (!heartbeatInterval) heartbeatInterval = setInterval(heartbeatLoop, 1000);
 
-        // Reload mask to be safe
+        // Ensure fresh config
         loadConfig();
-
         calculatePhysics();
     } else {
         if (heartbeatInterval) { clearInterval(heartbeatInterval); heartbeatInterval = null; }
@@ -101,11 +134,43 @@ function setSimulationActive(isActive, username) {
     emitStatus();
 }
 
-function getStatus() { return { active, owner, config, state, extraState }; }
+// ✅ PHYSICAL LINK TOGGLE
+function togglePhysicalLink(shouldLink, requestUser) {
+    if (!active) return;
+
+    physicalLink = shouldLink;
+    console.log(`[SIM] Physical Link: ${physicalLink ? 'CONNECTED' : 'DISCONNECTED'}`);
+
+    try {
+        const logicEngine = require('./logic_engine');
+        if (physicalLink) {
+            // Take Real Control
+            logicEngine.takeControl(owner || 'SIM_ADMIN');
+        } else {
+            // If unwiring, release control if we hold it
+            const engState = logicEngine.getFullState();
+            if (engState.currentUser === owner || engState.currentUser === 'SIM_ADMIN') {
+                logicEngine.releaseToCabane();
+            }
+        }
+    } catch (e) { console.error(e); }
+
+    emitStatus();
+}
+
+function forcePhysicalUnlink() {
+    if (physicalLink) {
+        physicalLink = false;
+        emitStatus();
+    }
+}
+
+function getStatus() { return { active, owner, config, state, extraState, physicalLink }; }
 function emitStatus() { if (ioRef) ioRef.emit('SIM_STATUS', getStatus()); }
 function getOwner() { return owner; }
+function isPhysicalLinked() { return physicalLink; }
 
-// --- ACTIONS ---
+// --- API ACTIONS ---
 
 function toggleStationConnection(id) {
     if (!state[id]) return;
@@ -135,28 +200,28 @@ function toggleManualInput(stId, inputIdx) {
     calculatePhysics();
 }
 
-// ✅ TOGGLE LOGIC: Apply Inversion Here
+// ✅ TOGGLE SWITCH: Handles Inversion Logic
+// This is called when user clicks a toggle in "Sim Only" mode
 function toggleSimSwitch(idx, value) {
     if (!active) return;
 
     // "value" is LOGICAL (from App). true = ON, false = OFF.
     // If Inverted, Logical ON means Physical OFF (0).
-
     let physicalValue = value ? 1 : 0;
 
     if ((switchMask >> idx) & 1) {
-        // Inverted: Flip it
         physicalValue = physicalValue === 1 ? 0 : 1;
     }
 
     const map = INPUT_MAP.find(m => m.idx === idx);
-    if (map) {
+    if (map && map.st < 6) {
         if (physicalValue === 1) state[map.st].relayMask |= (1 << map.bit);
         else state[map.st].relayMask &= ~(1 << map.bit);
         emitStatus();
         setTimeout(calculatePhysics, 50);
     }
     else if (idx >= 21 && idx <= 23) {
+        // Extra switches (Buzzer, Thermostats)
         if (physicalValue === 1) extraState |= (1 << idx);
         else extraState &= ~(1 << idx);
         emitStatus();
@@ -164,27 +229,53 @@ function toggleSimSwitch(idx, value) {
     }
 }
 
+// ✅ GLOBAL COMMAND HOOK
+// Called by LogicEngine when it broadcasts relay states.
+// Used in "Live Mode" to keep the Simulator GUI in sync with reality.
+function onCommandReceived(stationBytes) {
+    if (!active) return;
+
+    // If Isolated, we ignore external commands to prevent jitter/reverting
+    if (!physicalLink) return;
+
+    for (let i = 0; i < 6; i++) {
+        const cmd = stationBytes[i] || 0;
+        const maskedCmd = cmd & 0x3F; // Mask out config bits
+        state[i].relayMask = maskedCmd;
+    }
+    emitStatus();
+    setTimeout(calculatePhysics, 50);
+}
+
 // --- PHYSICS ENGINE ---
 
 function calculatePhysics() {
     if (!active) return;
+
+    // 1. Resolve Links (Relay -> Input)
     const resolveInputs = () => {
         let nextInputs = state.map(s => s.manualInputs);
+
         config.forEach((stConfig, sourceStId) => {
             if (!state[sourceStId].connected) return;
             const sourceRelays = state[sourceStId].relayMask;
+
             stConfig.relays.forEach((rConfig, rIdx) => {
                 if (rConfig.enabled === false) return;
+
                 const isRelayOn = (sourceRelays >> rIdx) & 1;
+
                 if (isRelayOn && rConfig.linked) {
                     const tSt = rConfig.targetSt;
                     const tBit = rConfig.targetBit;
                     if (tSt >= 0 && tSt < 6 && tBit >= 0 && tBit < 7) {
+                        // Pull Input Low (Active)
                         nextInputs[tSt] &= ~(1 << tBit);
                     }
                 }
             });
         });
+
         let changed = false;
         for (let i = 0; i < 6; i++) {
             if (!state[i].connected) continue;
@@ -198,12 +289,16 @@ function calculatePhysics() {
 
     resolveInputs();
 
+    // 2. Thermostat Logic (Virtual)
+    // If Thermostat Switch is ON, and Temp Feedback is Cold (0),
+    // override the mapped relays to ON.
     let relayChanged = false;
     THERMOSTATS.forEach(th => {
         const isEnabled = (extraState >> th.swIdx) & 1;
         if (isEnabled) {
             const currentInputs = state[th.feedbackSt].inputMask;
             const rawBit = (currentInputs >> th.feedbackBit) & 1;
+            // Active Low Input = Thermostat calling for heat
             if (rawBit === 0) {
                 th.overrides.forEach(targetIdx => {
                     const map = INPUT_MAP.find(m => m.idx === targetIdx);
@@ -220,9 +315,10 @@ function calculatePhysics() {
 
     if (relayChanged) {
         emitStatus();
-        resolveInputs();
+        resolveInputs(); // Recalculate physics if relays changed
     }
 
+    // 3. Send Feedback
     for (let i = 0; i < 6; i++) {
         if (state[i].connected) sendFeedback(i);
     }
@@ -230,16 +326,20 @@ function calculatePhysics() {
 
 function sendFeedback(id) {
     if (!state[id].connected) return;
+
+    // ✅ NO UDP PACKET SENT (Isolated)
+    // Only emit to Frontend via Socket.io to update the "Parallel Universe"
     if (ioRef) ioRef.emit('SIM_UPDATE', { id, ...state[id] });
 }
 
 function heartbeatLoop() {
     if (!active) return;
-    for (let i = 0; i < 6; i++) { if (state[i].connected) { } }
+    // Keep alive logic if needed
 }
 
 module.exports = {
     init, setSimulationActive, getOwner, getStatus,
     updateRelayConfig, updateInputConfig, setName: updateInputConfig,
-    toggleStationConnection, toggleManualInput, toggleSimSwitch, updateSwitchMask // ✅ Exported
+    toggleStationConnection, toggleManualInput, toggleSimSwitch, updateSwitchMask,
+    onCommandReceived, togglePhysicalLink, forcePhysicalUnlink, isPhysicalLinked
 };

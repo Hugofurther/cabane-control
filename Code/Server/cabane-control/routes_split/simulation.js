@@ -1,25 +1,28 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth'); // ✅ No requireAdmin
+const { authenticateToken } = require('../middleware/auth');
 const simulationService = require('../services/simulation_service');
 
-// ============================================================
-// 🎮 SIMULATION API ROUTES
-// ============================================================
-
-// 1. GET STATUS (Full Config + State)
+// 1. GET STATUS
 router.get('/simulation/status', authenticateToken, (req, res) => {
     res.json(simulationService.getStatus());
 });
 
-// 2. TOGGLE SIMULATION (Master Switch) - ✅ Available to All Users
+// 2. TOGGLE SIMULATION
 router.post('/simulation/toggle', authenticateToken, (req, res) => {
     const { active } = req.body;
-    simulationService.setSimulationActive(active, req.user.username); // ✅ Pass User
+    simulationService.setSimulationActive(active, req.user.username);
     res.json({ success: true });
 });
 
-// 4. TOGGLE STATION CONNECTION (Virtual Cable Pull)
+// 3. ✅ RESTORED: TOGGLE PHYSICAL LINK
+router.post('/simulation/physical', authenticateToken, (req, res) => {
+    const { linked } = req.body;
+    simulationService.togglePhysicalLink(linked, req.user.username);
+    res.json({ success: true });
+});
+
+// 4. TOGGLE STATION CONNECTION
 router.post('/simulation/station/connection', authenticateToken, (req, res) => {
     const { id } = req.body;
     simulationService.toggleStationConnection(id);
@@ -40,7 +43,7 @@ router.post('/simulation/input/toggle', authenticateToken, (req, res) => {
     res.json({ success: true });
 });
 
-// 9. UPDATE INPUT CONFIG
+// 7. UPDATE INPUT CONFIG
 router.post('/simulation/input/config', authenticateToken, (req, res) => {
     const { id, bit, updates } = req.body;
     simulationService.updateInputConfig(id, bit, updates);

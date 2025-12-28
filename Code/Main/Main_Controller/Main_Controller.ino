@@ -1,13 +1,19 @@
 /*
   ==========================================================================================
-  MAIN CONTROLLER — FIRMWARE v5.2-ConflictCheck
+  MAIN CONTROLLER — FIRMWARE v5.6-FullProduction
 
-  UPDATES:
-  - Added Conflict Arbiter Logic (0xAD Request -> 0xAE Denial)
+  FEATURES:
+  - Dual Master Architecture (Physical Panel + Node.js Server)
+  - Split UDP Ports: 8888 (Commands), 8889 (Feedback) to prevent collisions
+  - Station 5 Logic Merged into Station 4 Hardware (Bits 4 & 5)
+  - Configurable "Switch Logic Inversion" (Packet 0xD0)
+  - Configurable "LED Logic Inversion" (Packet 0xD1)
+  - Conflict Arbiter (Denies duplicate Station IDs via 0xAD/0xAE)
+  - Dynamic Burglar Alarm (Configurable via App)
   ==========================================================================================
 */
 
-#define FIRMWARE_VERSION "v5.3-LogicInvert"
+#define FIRMWARE_VERSION "v5.6-FullProduction"
 #define DEBUG_SERIAL 1
 #define DEBUG_LEVEL 3
 #define BUZZER_REMINDER 1
@@ -21,62 +27,80 @@
 #include <Adafruit_MCP23X17.h>
 #include <avr/wdt.h>
 
-// --- HARDWARE CONFIG ---
+// ============================================================
+// 🧩 SECTION: HARDWARE CONFIGURATION
+// ============================================================
+
+// --- MCP23017 ---
 #define MCP_I2C_ADDR 0x27
 #define MCP_INTA_PIN 18
 #define MCP_INTB_PIN 19
+
 Adafruit_MCP23X17 mcp;
 
+// --- ETHERNET ---
 #define ETH_CS 48
 #define ETH_RESET 49
 
 // ✅ SPLIT PORTS
-const uint16_t PORT_CMD = 8888;
-const uint16_t PORT_FB = 8889;
+const uint16_t PORT_CMD = 8888; // Send Commands / Receive Config & Override
+const uint16_t PORT_FB = 8889;  // Receive Station Feedback
 
 EthernetUDP UdpCmd;
 EthernetUDP UdpFb;
 
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
+
 IPAddress ipBroadcast(192, 168, 1, 255);
 IPAddress ipMain(192, 168, 1, 220);
 
-// --- BUZZER ---
+// ============================================================
+// 🔔 BUZZER & CONFIGURATION
+// ============================================================
 #define PIN_BUZZER 2
 #define BUZZER_ALERT_MODE 1
 
+// EEPROM Addresses
+#define EEPROM_ALARM_ON 100
+#define EEPROM_ALARM_OFF 101
+#define EEPROM_REMINDER 102
+#define EEPROM_BURGLAR_STATION 103
+
+// ✅ Inversion Masks Addresses
+#define EEPROM_SW_INV_0 110
+#define EEPROM_SW_INV_1 111
+#define EEPROM_SW_INV_2 112
+
+#define EEPROM_LED_INV_0 113
+#define EEPROM_LED_INV_1 114
+#define EEPROM_LED_INV_2 115
+
+// Config Variables (Loaded from EEPROM)
 uint32_t cfgAlarmOnMs = 5000;
 uint32_t cfgAlarmOffMs = 10000;
 uint32_t cfgReminderPeriodMs = 120000;
 const uint32_t REMINDER_ON_MS = 500;
 uint8_t cfgBurglarStation = 0;
 
-#define EEPROM_ALARM_ON 100
-#define EEPROM_ALARM_OFF 101
-#define EEPROM_REMINDER 102
-#define EEPROM_BURGLAR_STATION 103
-// ✅ NEW: EEPROM Addresses for Switch Logic
-#define EEPROM_SW_INV_0 110 // Byte 0 (Idx 0-7)
-#define EEPROM_SW_INV_1 111 // Byte 1 (Idx 8-15)
-#define EEPROM_SW_INV_2 112 // Byte 2 (Idx 16-23)
+// Logic Masks
+uint32_t switchInvertMask = 0;
+uint32_t ledInvertMask = 0;
 
-#define EEPROM_LED_INV_0 113
-#define EEPROM_LED_INV_1 114
-#define EEPROM_LED_INV_2 115
-
+// Runtime State
 uint32_t buzzerAlarmStart = 0;
 uint32_t buzzerReminderStart = 0;
-
-// ✅ NEW: Inversion Mask (3 Bytes = 24 Bits)
-uint32_t switchInvertMask = 0;
-
-uint32_t ledInvertMask = 0;
 
 bool anyVacuumAlert = false;
 bool burglarAlarmActive = false;
 bool st2_intruder = false;
 bool st3_intruder = false;
 
+const uint8_t BUZZER_SWITCH_IDX = 21;
+#define BUZZER_LED_PAIR 21
+
+// ============================================================
+// 🧩 INPUT / OUTPUT DEFINITIONS
+// ============================================================
 #define NUM_STATIONS 6
 #define NUM_INPUTS 8
 #define NUM_LED_PAIRS 24
@@ -93,9 +117,20 @@ uint32_t lastServerPacketMs = 0;
 const uint32_t SERVER_TIMEOUT_MS = 3000;
 
 const uint8_t PHYS_SW_PINS[NUM_INPUTS] = {62, 63, 64, 65, 66, 67, 68, 69};
-const uint8_t LED_A[NUM_LED_PAIRS] = {4, 6, 8, 10, 12, 14, 16, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 54, 56, 58, 60};
-const uint8_t LED_B[NUM_LED_PAIRS] = {5, 7, 9, 11, 13, 15, 17, 23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47, 55, 57, 59, 61};
 
+const uint8_t LED_A[NUM_LED_PAIRS] = {
+    4, 6, 8, 10, 12, 14, 16,
+    22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46,
+    54, 56, 58, 60};
+
+const uint8_t LED_B[NUM_LED_PAIRS] = {
+    5, 7, 9, 11, 13, 15, 17,
+    23, 25, 27, 29, 31, 33, 35, 37, 39, 41, 43, 45, 47,
+    55, 57, 59, 61};
+
+// ============================================================
+// 📘 UNIFIED INPUT MAP TABLE
+// ============================================================
 struct InputMap
 {
   uint8_t index;
@@ -105,10 +140,46 @@ struct InputMap
   uint8_t station;
   uint8_t bit;
 };
+
 const InputMap INPUT_MAP[] = {
-    {0, false, 62, 0, 1, 0}, {1, false, 63, 0, 1, 1}, {2, false, 64, 0, 0, 0}, {3, false, 65, 0, 0, 1}, {4, false, 66, 0, 1, 2}, {5, false, 67, 0, 1, 3}, {6, false, 68, 0, 1, 4}, {7, false, 69, 0, 1, 5}, {8, true, 0, 0, 2, 0}, {9, true, 1, 0, 2, 1}, {10, true, 2, 0, 2, 2}, {11, true, 3, 0, 2, 3}, {12, true, 4, 0, 3, 0}, {13, true, 5, 0, 3, 1}, {14, true, 6, 0, 3, 2}, {15, true, 7, 0, 3, 3}, {16, true, 0, 1, 4, 0}, {17, true, 1, 1, 4, 1}, {18, true, 2, 1, 4, 2}, {19, true, 3, 1, 5, 0}, {20, true, 4, 1, 5, 1}, {21, true, 5, 1, 255, 0}, {22, true, 6, 1, 255, 0}, {23, true, 7, 1, 255, 0}};
+    // --- Physical pins (0-7) ---
+    {0, false, 62, 0, 1, 0}, // Switch 0
+    {1, false, 63, 0, 1, 1}, // Switch 1
+    {2, false, 64, 0, 0, 0}, // Switch 2
+    {3, false, 65, 0, 0, 1}, // Switch 3
+    {4, false, 66, 0, 1, 2}, // Switch 4
+    {5, false, 67, 0, 1, 3}, // Switch 5
+    {6, false, 68, 0, 1, 4}, // Switch 6
+    {7, false, 69, 0, 1, 5}, // Switch 7
+
+    // --- MCP Port A (8-15) ---
+    {8, true, 0, 0, 2, 0},  // Switch 8
+    {9, true, 1, 0, 2, 1},  // Switch 9
+    {10, true, 2, 0, 2, 2}, // Switch 10
+    {11, true, 3, 0, 2, 3}, // Switch 11
+    {12, true, 4, 0, 3, 0}, // Switch 12
+    {13, true, 5, 0, 3, 1}, // Switch 13
+    {14, true, 6, 0, 3, 2}, // Switch 14
+    {15, true, 7, 0, 3, 3}, // Switch 15
+
+    // --- MCP Port B (16-23) ---
+    {16, true, 0, 1, 4, 0}, // Switch 16 (ST4)
+    {17, true, 1, 1, 4, 1}, // Switch 17 (ST4)
+    {18, true, 2, 1, 4, 2}, // Switch 18 (ST4)
+
+    // ✅ MERGED ST5 INTO ST4 HARDWARE
+    {19, true, 3, 1, 4, 4}, // Switch 19 (Old ST5 Transp -> ST4 Bit 4)
+    {20, true, 4, 1, 4, 5}, // Switch 20 (Old ST5 Vid    -> ST4 Bit 5)
+
+    {21, true, 5, 1, 255, 0}, // Buzzer
+    {22, true, 6, 1, 255, 0}, // TH1
+    {23, true, 7, 1, 255, 0}  // TH2
+};
 const uint8_t INPUT_MAP_COUNT = sizeof(INPUT_MAP) / sizeof(INPUT_MAP[0]);
 
+// ============================================================
+// 🎛️ LED MAP TABLE
+// ============================================================
 struct LedMap
 {
   uint8_t ledPair;
@@ -118,6 +189,7 @@ struct LedMap
   bool isVacuum;
   int8_t switchIndex;
 };
+
 const LedMap LED_MAP[] = {
     {0, 1, 0, 0, 0, 0},
     {1, 1, 1, 1, 0, 1},
@@ -138,11 +210,14 @@ const LedMap LED_MAP[] = {
     {16, 4, 0, 4, 0, 16},
     {17, 4, 1, 4, 1, 17},
     {18, 4, 2, 4, 0, 18},
-    {19, 5, 0, 5, 0, 19},
-    {20, 5, 1, 5, 0, 20},
+
+    // ✅ MERGED ST5 FEEDBACK INTO ST4
+    {19, 4, 4, 4, 0, 19}, // ST4 Bit 4
+    {20, 4, 5, 4, 0, 20}, // ST4 Bit 5
 };
 const uint8_t LED_MAP_COUNT = sizeof(LED_MAP) / sizeof(LED_MAP[0]);
 
+// --- MACROS ---
 #define LED_RED(idx, on) digitalWrite(LED_A[idx], (on))
 #define LED_GREEN(idx, on) digitalWrite(LED_B[idx], (on))
 #define LED_PAIR(idx, redOn, greenOn)    \
@@ -163,6 +238,7 @@ bool pressActive[NUM_STATIONS] = {false};
 uint32_t pressStart[NUM_STATIONS] = {0};
 const uint8_t stationButtonIndex[NUM_STATIONS] = {0, 1, 8, 12, 16, 19};
 
+// --- THERMOSTAT ---
 #define ENABLE_THERMOSTAT true
 const uint8_t TH_SWITCH_IDX[2] = {22, 23};
 const uint8_t TH_LED_PAIR[2] = {22, 23};
@@ -174,9 +250,6 @@ const uint8_t *TH_OVERRIDE_IDX[2] = {TH1_OVERRIDE_IDX, TH2_OVERRIDE_IDX};
 const uint8_t TH_OVERRIDE_COUNT[2] = {3, 1};
 bool thermostatEnabled[2] = {false, false};
 bool thermostatActive[2] = {false, false};
-
-const uint8_t BUZZER_SWITCH_IDX = 21;
-#define BUZZER_LED_PAIR 21
 
 volatile bool mcpIntA_Flag = false;
 volatile bool mcpIntB_Flag = false;
@@ -192,7 +265,9 @@ uint32_t lastLinkCheck = 0;
 uint32_t tBlink = 0;
 bool blinkPhase = false;
 
-// ... [UTILS SAME] ...
+// ============================================================
+// 🧩 UTILS
+// ============================================================
 void readMcpA()
 {
   while (digitalRead(MCP_INTA_PIN) == LOW)
@@ -202,6 +277,7 @@ void readMcpA()
   }
   mcpIntA_Flag = false;
 }
+
 void readMcpB()
 {
   while (digitalRead(MCP_INTB_PIN) == LOW)
@@ -211,6 +287,7 @@ void readMcpB()
   }
   mcpIntB_Flag = false;
 }
+
 bool readInputByMap(const InputMap &m)
 {
   if (m.isMCP)
@@ -223,11 +300,13 @@ bool readInputByMap(const InputMap &m)
     return !digitalRead(m.pinOrBit);
   }
 }
+
 void digitalWriteAll(const uint8_t *pins, uint8_t count, bool state)
 {
   for (uint8_t i = 0; i < count; i++)
     digitalWrite(pins[i], state);
 }
+
 bool isSystemRunning()
 {
   if (((stationFeedback[1] >> 2) & 1) == 0 && stationEnabled[1])
@@ -241,31 +320,43 @@ bool isSystemRunning()
   return false;
 }
 
+// ============================================================
+// 💾 CONFIG LOADING
+// ============================================================
 void loadConfig()
 {
   uint8_t aOn = EEPROM.read(EEPROM_ALARM_ON);
   uint8_t aOff = EEPROM.read(EEPROM_ALARM_OFF);
   uint8_t remMin = EEPROM.read(EEPROM_REMINDER);
   uint8_t burgSt = EEPROM.read(EEPROM_BURGLAR_STATION);
+
   cfgAlarmOnMs = (aOn == 0xFF) ? 5000 : (uint32_t)aOn * 1000;
   cfgAlarmOffMs = (aOff == 0xFF) ? 10000 : (uint32_t)aOff * 1000;
   cfgReminderPeriodMs = (remMin == 0xFF) ? 120000 : (uint32_t)remMin * 60000;
   cfgBurglarStation = (burgSt == 0xFF) ? 0 : burgSt;
 
-  // ✅ NEW: Load Switch Inversion Logic
+  if (cfgAlarmOnMs < 1000)
+    cfgAlarmOnMs = 1000;
+  if (cfgAlarmOffMs < 1000)
+    cfgAlarmOffMs = 1000;
+  if (cfgReminderPeriodMs < 60000)
+    cfgReminderPeriodMs = 60000;
+  if (cfgBurglarStation != 0 && cfgBurglarStation != 2 && cfgBurglarStation != 3)
+    cfgBurglarStation = 0;
+
+  // ✅ LOAD SWITCH LOGIC
   uint8_t i0 = EEPROM.read(EEPROM_SW_INV_0);
   uint8_t i1 = EEPROM.read(EEPROM_SW_INV_1);
   uint8_t i2 = EEPROM.read(EEPROM_SW_INV_2);
-
   if (i0 == 0xFF)
     i0 = 0;
   if (i1 == 0xFF)
     i1 = 0;
   if (i2 == 0xFF)
     i2 = 0;
-
   switchInvertMask = ((uint32_t)i2 << 16) | ((uint32_t)i1 << 8) | i0;
 
+  // ✅ LOAD LED LOGIC
   uint8_t l0 = EEPROM.read(EEPROM_LED_INV_0);
   uint8_t l1 = EEPROM.read(EEPROM_LED_INV_1);
   uint8_t l2 = EEPROM.read(EEPROM_LED_INV_2);
@@ -276,11 +367,6 @@ void loadConfig()
   if (l2 == 0xFF)
     l2 = 0;
   ledInvertMask = ((uint32_t)l2 << 16) | ((uint32_t)l1 << 8) | l0;
-
-#if DEBUG_SERIAL
-  Serial.print(F("[CFG] Switch Mask: "));
-  Serial.println(switchInvertMask, BIN);
-#endif
 }
 
 void loadStationStatesFromEEPROM()
@@ -291,12 +377,16 @@ void loadStationStatesFromEEPROM()
     stationEnabled[i] = (val != 0xFF && val <= 1) ? val : true;
   }
 }
+
 void saveStationStateToEEPROM(uint8_t id)
 {
   if (id < NUM_STATIONS)
     EEPROM.update(id, stationEnabled[id]);
 }
 
+// ============================================================
+// 🔔 BUZZER LOGIC
+// ============================================================
 void updateBuzzerLED(uint32_t now)
 {
   if (Ethernet.linkStatus() != LinkON)
@@ -304,12 +394,15 @@ void updateBuzzerLED(uint32_t now)
     digitalWrite(PIN_BUZZER, LOW);
     return;
   }
+
   bool switchOn = stableState[BUZZER_SWITCH_IDX];
   bool alert = anyVacuumAlert || burglarAlarmActive;
+
   if (alert)
   {
     buzzerReminderStart = 0;
     LED_PAIR(BUZZER_LED_PAIR, blinkPhase ? HIGH : LOW, LOW);
+
     if (switchOn)
     {
       if (buzzerAlarmStart == 0)
@@ -330,9 +423,11 @@ void updateBuzzerLED(uint32_t now)
     }
     return;
   }
+
   buzzerAlarmStart = 0;
   digitalWrite(PIN_BUZZER, LOW);
   LED_PAIR(BUZZER_LED_PAIR, switchOn ? LOW : HIGH, switchOn ? HIGH : LOW);
+
 #if BUZZER_REMINDER
   if (!switchOn && isSystemRunning())
   {
@@ -360,6 +455,9 @@ void updateBuzzerLED(uint32_t now)
   buzzerReminderStart = 0;
 }
 
+// ============================================================
+// 🌐 ETHERNET LED LOGIC (WITH INVERSION)
+// ============================================================
 void updateEthernetAndLEDs(uint32_t now)
 {
   static bool linkDown = false;
@@ -374,10 +472,12 @@ void updateEthernetAndLEDs(uint32_t now)
     digitalWriteAll(LED_A, NUM_LED_PAIRS, blinkPhase);
     return;
   }
+
   anyVacuumAlert = false;
   burglarAlarmActive = false;
   st2_intruder = false;
   st3_intruder = false;
+
   if (cfgBurglarStation == 2 && stationEnabled[2] && ((stationFeedback[2] >> 4) & 1))
   {
     st2_intruder = true;
@@ -388,6 +488,7 @@ void updateEthernetAndLEDs(uint32_t now)
     st3_intruder = true;
     burglarAlarmActive = true;
   }
+
   for (uint8_t i = 0; i < LED_MAP_COUNT; i++)
   {
     const LedMap &m = LED_MAP[i];
@@ -401,19 +502,24 @@ void updateEthernetAndLEDs(uint32_t now)
       LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, blinkPhase ? LOW : HIGH);
       continue;
     }
+
     if ((st2_intruder && m.station == 2) || (st3_intruder && m.station == 3))
     {
       LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, LOW);
       continue;
     }
+
     bool bitVal = (stationFeedback[m.station] >> m.bit) & 1;
-    // ✅ APPLY INVERSION
+
+    // ✅ APPLY LED INVERSION
+    // If bit is set in mask, FLIP the feedback bit for LED logic
     if (m.switchIndex >= 0 && ((ledInvertMask >> m.switchIndex) & 1))
     {
       bitVal = !bitVal;
     }
 
     bool isCommandedOn = stableState[m.switchIndex];
+
 #if ENABLE_THERMOSTAT
     for (uint8_t t = 0; t < 2; t++)
     {
@@ -430,12 +536,15 @@ void updateEthernetAndLEDs(uint32_t now)
       }
     }
 #endif
+
     if (m.isVacuum && isCommandedOn && bitVal)
     {
       anyVacuumAlert = true;
       LED_PAIR(m.ledPair, blinkPhase ? HIGH : LOW, LOW);
       continue;
     }
+
+    // Standard: bitVal 1=RED (Off/Error), 0=GREEN (On/OK)
     LED_PAIR(m.ledPair, bitVal ? HIGH : LOW, bitVal ? LOW : HIGH);
   }
 }
@@ -529,7 +638,10 @@ inline uint8_t packBitsLSB(const bool *arr, uint8_t n)
   return v;
 }
 
+// ============================================================
 // 📡 PACKET PROCESSING
+// ============================================================
+
 void sendGlobalCommands()
 {
   uint8_t packet[10] = {0xBB, 0x00, 0x01};
@@ -596,7 +708,6 @@ void sendPhysicalState()
   }
   uint8_t packet[7] = {0xB1, 0x01, payload[0], payload[1], payload[2], (uint8_t)(remoteOverrideActive ? 1 : 0), 0};
   packet[6] = xorChecksum(packet, 6);
-  // Send to 8888 (Command Port)
   UdpCmd.beginPacket(ipBroadcast, PORT_CMD);
   UdpCmd.write(packet, 7);
   UdpCmd.endPacket();
@@ -685,13 +796,14 @@ void processHeartbeatAndFeedback(uint32_t now)
         UdpCmd.endPacket();
       }
     }
-
+    // ✅ NEW: 0xD1 LED LOGIC CONFIG
     else if (buf[0] == 0xD1 && n >= 5)
     {
       uint8_t b0 = buf[1];
       uint8_t b1 = buf[2];
       uint8_t b2 = buf[3];
       uint8_t cks = buf[0] ^ b0 ^ b1 ^ b2;
+
       if (buf[4] == cks)
       {
         EEPROM.update(EEPROM_LED_INV_0, b0);
@@ -700,7 +812,6 @@ void processHeartbeatAndFeedback(uint32_t now)
         loadConfig();
       }
     }
-
     // ✅ ARBITER LOGIC (Check Request from Station)
     // 0xAD: Conflict Check [AD] [ID] [Cks]
     else if (buf[0] == 0xAD && n >= 3)
@@ -716,192 +827,193 @@ void processHeartbeatAndFeedback(uint32_t now)
         UdpCmd.endPacket();
       }
     }
+  }
 
-    // 2. FEEDBACK PORT (8889) - Receive Station Data
-    count = 0;
-    while (UdpFb.parsePacket() > 0 && count < 10)
-    {
-      count++;
-      uint8_t buf[16];
-      int n = UdpFb.read(buf, sizeof(buf));
-      if (n < 3)
-        continue;
+  // 2. FEEDBACK PORT (8889) - Receive Station Data
+  count = 0;
+  while (UdpFb.parsePacket() > 0 && count < 10)
+  {
+    count++;
+    uint8_t buf[16];
+    int n = UdpFb.read(buf, sizeof(buf));
+    if (n < 3)
+      continue;
 
-      if (buf[0] == 0xAB && n >= 4)
-      { // Heartbeat
-        uint8_t id = buf[1];
-        if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
-        {
-          lastHeartbeatMs[id] = now;
-          stationOffline[id] = false;
-          if (!firstHeartbeatSeen[id])
-            firstHeartbeatSeen[id] = true;
-        }
+    if (buf[0] == 0xAB && n >= 4)
+    { // Heartbeat
+      uint8_t id = buf[1];
+      if (((buf[0] ^ buf[1] ^ buf[2]) == buf[3]) && id < NUM_STATIONS)
+      {
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
+        if (!firstHeartbeatSeen[id])
+          firstHeartbeatSeen[id] = true;
       }
-      else if (buf[0] == 0xAC && n >= 5)
-      { // Feedback
-        uint8_t id = buf[1];
-        if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
-        {
-          stationFeedback[id] = buf[2];
-          lastHeartbeatMs[id] = now;
-          stationOffline[id] = false;
-        }
+    }
+    else if (buf[0] == 0xAC && n >= 5)
+    { // Feedback
+      uint8_t id = buf[1];
+      if (((buf[0] ^ buf[1] ^ buf[2] ^ buf[3]) == buf[4]) && id < NUM_STATIONS)
+      {
+        stationFeedback[id] = buf[2];
+        lastHeartbeatMs[id] = now;
+        stationOffline[id] = false;
       }
     }
   }
+}
 
-  void handleStationEnableLongPress(uint32_t now)
+void handleStationEnableLongPress(uint32_t now)
+{
+  for (uint8_t id = 0; id < NUM_STATIONS; id++)
   {
-    for (uint8_t id = 0; id < NUM_STATIONS; id++)
+    uint8_t idx = stationButtonIndex[id];
+    bool pressed = stableState[idx];
+    if (pressed && !pressActive[id])
     {
-      uint8_t idx = stationButtonIndex[id];
-      bool pressed = stableState[idx];
-      if (pressed && !pressActive[id])
-      {
-        pressActive[id] = true;
-        pressStart[id] = now;
-      }
-      else if (!pressed && pressActive[id])
-      {
-        pressActive[id] = false;
-      }
-      else if (pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS))
-      {
-        stationEnabled[id] = !stationEnabled[id];
-        pressActive[id] = false;
-        saveStationStateToEEPROM(id);
-      }
+      pressActive[id] = true;
+      pressStart[id] = now;
+    }
+    else if (!pressed && pressActive[id])
+    {
+      pressActive[id] = false;
+    }
+    else if (pressed && pressActive[id] && (now - pressStart[id] >= LONGPRESS_MS))
+    {
+      stationEnabled[id] = !stationEnabled[id];
+      pressActive[id] = false;
+      saveStationStateToEEPROM(id);
     }
   }
+}
 
-  void setup()
+void setup()
+{
+  wdt_disable();
+  delay(1000);
+  pinMode(PIN_BUZZER, OUTPUT);
+  digitalWrite(PIN_BUZZER, LOW);
+  for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
   {
-    wdt_disable();
-    delay(1000);
-    pinMode(PIN_BUZZER, OUTPUT);
-    digitalWrite(PIN_BUZZER, LOW);
-    for (uint8_t i = 0; i < NUM_LED_PAIRS; i++)
+    pinMode(LED_A[i], OUTPUT);
+    pinMode(LED_B[i], OUTPUT);
+    LED_PAIR(i, LOW, LOW);
+  }
+  initEthernet();
+  mcp.begin_I2C(MCP_I2C_ADDR);
+  for (uint8_t p = 0; p < 8; p++)
+  {
+    mcp.pinMode(p, INPUT_PULLUP);
+    mcp.pinMode(p + 8, INPUT_PULLUP);
+  }
+  mcp.setupInterrupts(false, false, LOW);
+  for (uint8_t p = 0; p < 16; p++)
+    mcp.setupInterruptPin(p, CHANGE);
+  pinMode(MCP_INTA_PIN, INPUT_PULLUP);
+  pinMode(MCP_INTB_PIN, INPUT_PULLUP);
+  mcpStateA = mcp.readGPIO(0);
+  mcpStateB = mcp.readGPIO(1);
+  attachInterrupt(digitalPinToInterrupt(MCP_INTA_PIN), []()
+                  { mcpIntA_Flag = true; }, FALLING);
+  attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
+                  { mcpIntB_Flag = true; }, FALLING);
+  for (uint8_t i = 0; i < NUM_INPUTS; i++)
+  {
+    pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
+    stableState[i] = !digitalRead(PHYS_SW_PINS[i]);
+  }
+  for (uint8_t b = 0; b < 8; b++)
+  {
+    stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
+    stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
+  }
+  if (ENABLE_VEGAS_MODE)
+    runVegasMode();
+  loadStationStatesFromEEPROM();
+  loadConfig();
+  wdt_enable(WDTO_8S);
+}
+
+void loop()
+{
+  wdt_reset();
+  uint32_t now = millis();
+  if (mcpIntA_Flag)
+    readMcpA();
+  if (mcpIntB_Flag)
+    readMcpB();
+  for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+  {
+    const InputMap &m = INPUT_MAP[i];
+    bool curr = readInputByMap(m);
+
+    // ✅ APPLY SWITCH INVERSION LOGIC
+    // If the bit in the mask is 1, flip the physical reading
+    if ((switchInvertMask >> m.index) & 1)
     {
-      pinMode(LED_A[i], OUTPUT);
-      pinMode(LED_B[i], OUTPUT);
-      LED_PAIR(i, LOW, LOW);
+      curr = !curr;
     }
-    initEthernet();
-    mcp.begin_I2C(MCP_I2C_ADDR);
-    for (uint8_t p = 0; p < 8; p++)
+
+    if (curr != rawState[m.index])
     {
-      mcp.pinMode(p, INPUT_PULLUP);
-      mcp.pinMode(p + 8, INPUT_PULLUP);
+      rawState[m.index] = curr;
+      lastChange[m.index] = now;
     }
-    mcp.setupInterrupts(false, false, LOW);
-    for (uint8_t p = 0; p < 16; p++)
-      mcp.setupInterruptPin(p, CHANGE);
-    pinMode(MCP_INTA_PIN, INPUT_PULLUP);
-    pinMode(MCP_INTB_PIN, INPUT_PULLUP);
-    mcpStateA = mcp.readGPIO(0);
-    mcpStateB = mcp.readGPIO(1);
-    attachInterrupt(digitalPinToInterrupt(MCP_INTA_PIN), []()
-                    { mcpIntA_Flag = true; }, FALLING);
-    attachInterrupt(digitalPinToInterrupt(MCP_INTB_PIN), []()
-                    { mcpIntB_Flag = true; }, FALLING);
-    for (uint8_t i = 0; i < NUM_INPUTS; i++)
-    {
-      pinMode(PHYS_SW_PINS[i], INPUT_PULLUP);
-      stableState[i] = !digitalRead(PHYS_SW_PINS[i]);
-    }
-    for (uint8_t b = 0; b < 8; b++)
-    {
-      stableState[NUM_INPUTS + b] = ((mcpStateA & (1 << b)) == 0);
-      stableState[NUM_INPUTS + 8 + b] = ((mcpStateB & (1 << b)) == 0);
-    }
-    if (ENABLE_VEGAS_MODE)
-      runVegasMode();
-    loadStationStatesFromEEPROM();
-    loadConfig();
-    wdt_enable(WDTO_8S);
+    if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
+      stableState[m.index] = rawState[m.index];
   }
 
-  void loop()
+  processHeartbeatAndFeedback(now);
+  for (uint8_t id = 0; id < NUM_STATIONS; id++)
   {
-    wdt_reset();
-    uint32_t now = millis();
-    if (mcpIntA_Flag)
-      readMcpA();
-    if (mcpIntB_Flag)
-      readMcpB();
-    for (uint8_t i = 0; i < INPUT_MAP_COUNT; i++)
+    if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
+      stationOffline[id] = true;
+  }
+  handleStationEnableLongPress(now);
+  if (remoteOverrideActive && (now - lastServerPacketMs > SERVER_TIMEOUT_MS))
+    remoteOverrideActive = false;
+  static uint32_t emergStart = 0;
+  if (remoteOverrideActive)
+  {
+    if (!digitalRead(62) && !digitalRead(63))
     {
-      const InputMap &m = INPUT_MAP[i];
-      bool physicalVal = readInputByMap(m);
-
-      // ✅ NEW: Apply Inversion Logic HERE
-      // If the bit in the mask is 1, flip the physical reading
-      if ((switchInvertMask >> m.index) & 1)
+      if (emergStart == 0)
+        emergStart = now;
+      else if (now - emergStart > 2000)
       {
-        physicalVal = !physicalVal;
-      }
-
-      if (physicalVal != rawState[m.index])
-      {
-        rawState[m.index] = physicalVal;
-        lastChange[m.index] = now;
-      }
-      if (!remoteOverrideActive && (now - lastChange[m.index] > DEBOUNCE_MS))
-        stableState[m.index] = rawState[m.index];
-    }
-
-    processHeartbeatAndFeedback(now);
-    for (uint8_t id = 0; id < NUM_STATIONS; id++)
-    {
-      if (now - lastHeartbeatMs[id] > HEARTBEAT_TIMEOUT_MS)
-        stationOffline[id] = true;
-    }
-    handleStationEnableLongPress(now);
-    if (remoteOverrideActive && (now - lastServerPacketMs > SERVER_TIMEOUT_MS))
-      remoteOverrideActive = false;
-    static uint32_t emergStart = 0;
-    if (remoteOverrideActive)
-    {
-      if (!digitalRead(62) && !digitalRead(63))
-      {
-        if (emergStart == 0)
-          emergStart = now;
-        else if (now - emergStart > 2000)
-        {
-          remoteOverrideActive = false;
-          emergStart = 0;
-          for (int k = 0; k < 5; k++)
-          {
-            digitalWriteAll(LED_B, NUM_LED_PAIRS, HIGH);
-            delay(100);
-            wdt_reset();
-            digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);
-            delay(100);
-            wdt_reset();
-          }
-        }
-      }
-      else
+        remoteOverrideActive = false;
         emergStart = 0;
+        for (int k = 0; k < 5; k++)
+        {
+          digitalWriteAll(LED_B, NUM_LED_PAIRS, HIGH);
+          delay(100);
+          wdt_reset();
+          digitalWriteAll(LED_B, NUM_LED_PAIRS, LOW);
+          delay(100);
+          wdt_reset();
+        }
+      }
     }
-    updateEthernetAndLEDs(now);
-    updateBuzzerLED(now);
-    updateThermostatStatus();
-    static uint32_t tPhys = 0;
-    if (now - tPhys >= 200)
-    {
-      tPhys = now;
-      sendPhysicalState();
-    }
-    if (!remoteOverrideActive && (now - tSend >= 100))
-    {
-      tSend = now;
-      sendGlobalCommands();
-    }
-    if (now - tBlink >= BLINK_INTERVAL_MS)
-    {
-      tBlink = now;
-      blinkPhase = !blinkPhase;
-    }
+    else
+      emergStart = 0;
   }
+  updateEthernetAndLEDs(now);
+  updateBuzzerLED(now);
+  updateThermostatStatus();
+  static uint32_t tPhys = 0;
+  if (now - tPhys >= 200)
+  {
+    tPhys = now;
+    sendPhysicalState();
+  }
+  if (!remoteOverrideActive && (now - tSend >= 100))
+  {
+    tSend = now;
+    sendGlobalCommands();
+  }
+  if (now - tBlink >= BLINK_INTERVAL_MS)
+  {
+    tBlink = now;
+    blinkPhase = !blinkPhase;
+  }
+}

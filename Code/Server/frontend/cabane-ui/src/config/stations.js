@@ -68,7 +68,7 @@ export const PANEL_LAYOUT = [
         cols: 'grid-cols-2 lg:grid-cols-6',
         cards: [
             {
-                name: "station_names.st4", // ✅ Key
+                name: "station_names.st4",
                 span: 'col-span-2',
                 stationIds: [4],
                 controls: [
@@ -78,7 +78,7 @@ export const PANEL_LAYOUT = [
                 ]
             },
             {
-                name: "station_names.th_45", // ✅ Key
+                name: "station_names.th_45",
                 span: 'col-span-1',
                 stationIds: [4],
                 controls: [
@@ -86,12 +86,14 @@ export const PANEL_LAYOUT = [
                 ]
             },
             {
-                name: "station_names.st5", // ✅ Key
+                name: "station_names.st5",
                 span: 'col-span-2',
-                stationIds: [5],
+                // ✅ CHANGED: This card now monitors Station 4 for offline status
+                stationIds: [4],
                 controls: [
-                    { idx: 19, label: "labels.transp", type: 'button', fb: { st: 5, bit: 0 } },
-                    { idx: 20, label: "labels.vid_st5", type: 'rocker', fb: { st: 5, bit: 1 } },
+                    // ✅ CHANGED: Feedback now comes from Station 4
+                    { idx: 19, label: "labels.transp", type: 'button', fb: { st: 4, bit: 4 } },
+                    { idx: 20, label: "labels.vid_st5", type: 'rocker', fb: { st: 4, bit: 5 } },
                 ]
             },
             {

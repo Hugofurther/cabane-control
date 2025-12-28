@@ -40,6 +40,7 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
         });
 
         db.run("COMMIT", () => {
+            // Update Services
             if (settings.timezone) logicEngine.updateTimezone(settings.timezone);
             if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
             if (settings.drain_timer_min) automationService.reloadSettings();
@@ -48,18 +49,19 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
                 try { require('../services/weather_service').reloadSettings(); } catch (e) { }
             }
 
-            // ✅ SWITCH LOGIC
+            // ✅ Switch Logic Updates
             if (settings.switch_logic_mask !== undefined) {
                 const mask = parseInt(settings.switch_logic_mask);
                 logicEngine.updateSwitchLogic(mask);
-                simulationService.updateSwitchMask(mask);
+                simulationService.updateSwitchMask(mask); // Sync Sim
             }
 
-            // ✅ NEW: LED LOGIC
+            // ✅ LED Logic Updates
             if (settings.led_logic_mask !== undefined) {
                 logicEngine.updateLedLogic(parseInt(settings.led_logic_mask));
             }
 
+            // Firmware Config Updates
             if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
                 db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min', 'burglar_station')", (err, rows) => {
                     let on = 5, off = 10, rem = 2, burg = 0;
@@ -78,7 +80,6 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
         });
     });
 });
-
 
 // ============================================================
 // 📊 STATUS & LOGS
@@ -105,8 +106,6 @@ router.get('/logs', authenticateToken, (req, res) => {
 router.post('/control/take', authenticateToken, (req, res) => {
     db.get("SELECT can_control FROM users WHERE id = ?", [req.user.id], (err, row) => {
         if (!row || !row.can_control) return res.status(403).json({ error: "Permission denied" });
-
-        // Note: Taking control of Real system automatically breaks Sim Physical Link if active
         logicEngine.takeControl(req.user.username);
         logAction(req.io, req.user.id, req.user.username, 'CONTROL', 'Took Control');
         res.json({ success: true });
@@ -131,23 +130,24 @@ router.post('/control/toggle', authenticateToken, (req, res) => {
     const username = req.user.username;
 
     const simStatus = simulationService.getStatus();
-    const isSimOwner = simStatus.active && simStatus.owner === username;
 
-    // 1. SIMULATION TARGET:
-    // If Sim is Active, allow ANYONE to toggle virtual switches (Collaboration).
-    // Previously: Restricted to isSimOwner.
-    if (simStatus.active) {
+    // 1. ISOLATED SIMULATION:
+    // If Sim is Active AND NOT Linked, toggle the Virtual Switch.
+    // This allows the switch to change state locally in the Sim.
+    if (simStatus.active && !simStatus.physicalLink) {
         simulationService.toggleSimSwitch(index, value);
         return res.json({ success: true });
     }
 
-    // 2. REAL TARGET:
-    // Only allow if User is the Real Controller
+    // 2. LIVE CONTROL (Real or Linked Sim):
+    // If we are the controller, send to Logic Engine (which updates real UDP).
     const state = logicEngine.getFullState();
     const isController = state.controller === 'SERVER' || state.currentUser === username;
 
     if (isController) {
         logicEngine.toggleSwitch(index, value, username);
+        // Note: LogicEngine will then call sim.onCommandReceived via the hook in logic_engine.js,
+        // which keeps the Sim UI in sync with reality.
         logAction(req.io, req.user.id, req.user.username, 'SWITCH', `Toggled Switch ${index} ${value ? 'ON' : 'OFF'}`);
         return res.json({ success: true });
     }
@@ -180,6 +180,7 @@ router.post('/users/transfer-admin', authenticateToken, requireAdmin, (req, res)
     const { newAdminId } = req.body;
     const currentAdminId = req.user.id;
     if (String(currentAdminId) === String(newAdminId)) return res.status(400).json({ error: "Cannot transfer to yourself." });
+
     db.serialize(() => {
         db.run("BEGIN TRANSACTION");
         db.run("UPDATE users SET role = 'ADMIN', can_control = 1, can_view_logs = 1 WHERE id = ?", [newAdminId]);

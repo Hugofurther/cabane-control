@@ -5,6 +5,7 @@ import { HaloButton } from './controls/HaloButton';
 import { useSocket } from '../contexts/SocketContext';
 import { useAutoLock } from '../contexts/AutoLockContext';
 import { useTranslation } from 'react-i18next';
+// ✅ IMPORT HOOK
 import { useLedState } from '../hooks/useLedState';
 
 const formatDuration = (ms) => {
@@ -25,23 +26,9 @@ const formatDuration = (ms) => {
     return `${d}d ${h}h`;
 };
 
-// ✅ WRAPPER COMPONENT to use Hook
 const ControlWrapper = ({ ctrl, isRemote, isLocked, virtualOn, physicalOn, handleToggle }) => {
     const { t } = useTranslation();
-
-    // ✅ Use Hook to determine color/state
     const ledState = useLedState(ctrl.idx, ctrl.fb, ctrl.special);
-
-    // Convert ledState string to boolean for RockerSwitch?
-    // RockerSwitch usually takes `isOn` (for switch position) and `feedback` (for color).
-    // If RockerSwitch manages its own color via context, we might need to pass `ledState` explicitly.
-    // Assuming RockerSwitch accepts `overrideColor` or `ledState`.
-    // If not, we pass `feedbackOverride`. 
-    // Let's assume RockerSwitch logic is internal. If so, we can't easily override it without modifying RockerSwitch.
-    // WORKAROUND: We pass `isActive` based on ledState.
-
-    const isLedOn = ledState === 'green';
-    const isBlink = ledState === 'blink-red';
 
     const props = {
         label: null,
@@ -50,7 +37,6 @@ const ControlWrapper = ({ ctrl, isRemote, isLocked, virtualOn, physicalOn, handl
         special: ctrl.special,
         isLocked: isLocked,
         isActive: isRemote,
-        // ✅ NEW PROPS TO FORCE COLOR (Requires RockerSwitch update if not supported)
         ledState: ledState
     };
 
@@ -83,12 +69,10 @@ export const StationCard = ({ card, isRemote }) => {
         return () => clearInterval(timer);
     }, []);
 
-    // ✅ ISOLATION LOGIC
-    // If I am the Sim Owner, ignore the global disabled list.
     const isSimMode = simState?.active && simState?.owner === user?.username;
 
     const disabledList = useMemo(() => {
-        if (isSimMode) return []; // In Sim, nothing is disabled unless Sim says so (via connection toggle)
+        if (isSimMode) return [];
         try { return JSON.parse(siteSettings.disabled_stations || '[]'); } catch (e) { return []; }
     }, [siteSettings.disabled_stations, isSimMode]);
 
@@ -167,26 +151,21 @@ export const StationCard = ({ card, isRemote }) => {
                     const isControlUnavailable = isDisabled || isOffline;
 
                     const virtualOn = !!systemState.virtualSwitches[ctrl.idx];
-                    const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
-                    const isLockedControl = (!isRemote || isControlUnavailable);
 
-                    const props = {
-                        label: null,
-                        idx: ctrl.idx,
-                        feedback: ctrl.fb,
-                        special: ctrl.special,
-                        isLocked: isLockedControl,
-                        isActive: isRemote && !isControlUnavailable,
-                    };
+                    // ✅ FIXED: Backend now corrects physicalSwitches to POSITION
+                    // So we use it directly without flipping it in frontend
+                    const physicalOn = !!systemState.physicalSwitches[ctrl.idx];
+
+                    const isLockedControl = (!isRemote || isControlUnavailable);
 
                     return (
                         <ControlWrapper
                             key={ctrl.idx}
                             ctrl={ctrl}
                             isRemote={isRemote}
-                            isLocked={(!isRemote || isDisabled || isOffline)}
-                            virtualOn={!!systemState.virtualSwitches[ctrl.idx]}
-                            physicalOn={!!systemState.physicalSwitches[ctrl.idx]}
+                            isLocked={isLockedControl}
+                            virtualOn={virtualOn}
+                            physicalOn={physicalOn}
                             handleToggle={handleToggle}
                         />
                     );
