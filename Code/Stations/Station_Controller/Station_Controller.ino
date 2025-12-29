@@ -1,15 +1,15 @@
 /*
   ==============================================================
-  STATION CONTROLLER — FIRMWARE v5.2-ConflictCheck
+  STATION CONTROLLER — FIRMWARE v5.7-VegasFix
 
   UPDATES:
-  - Auto-Increment ID on conflict (Arbiter Logic)
-  - Uses Port 8888 for Handshake (Command Port)
-  - Uses Port 8889 for Feedback
+  - Re-enabled Vegas Mode (9999 -> 0000 boot sequence)
+  - Fixed "Scroll Back" logic: If user cycles back to original ID,
+    skip conflict check to prevent self-lockout.
   ==============================================================
 */
 
-#define FIRMWARE_VERSION "v5.2-ConflictCheck"
+#define FIRMWARE_VERSION "v5.7-VegasFix"
 #define HAS_TM1637 1
 #define DEBUG_SERIAL 1
 
@@ -36,9 +36,9 @@ const uint8_t IN_PINS[5] = {A1, A2, A3, A4, A5};
 byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0x02, 0x10};
 IPAddress ipBroadcast(192, 168, 1, 255);
 
-// ✅ PORTS
-const uint16_t PORT_CMD = 8888; // Listen here, Send Handshake here
-const uint16_t PORT_FB = 8889;  // Send Feedback here
+// PORTS
+const uint16_t PORT_CMD = 8888;
+const uint16_t PORT_FB = 8889;
 
 EthernetUDP Udp;
 
@@ -89,26 +89,23 @@ void initEthernet(bool fullReset, uint8_t tempId)
   mac[5] = 0x10 + tempId;
   Ethernet.init(ETH_CS);
   Ethernet.begin(mac, localIp);
-  Udp.begin(PORT_CMD); // Listen on 8888 for Commands & Conflict Responses
+  Udp.begin(PORT_CMD);
 }
 
-// ✅ NEW: Conflict Check Logic
-// Returns TRUE if ID is taken (Conflict)
+// Conflict Check Logic
 bool isIdTaken(uint8_t candidate)
 {
 #if HAS_TM1637
   display.clear();
-  uint8_t seg[] = {0x50, 0x50, 0x50, 0x50}; // "r r r r" (Scanning)
+  uint8_t seg[] = {0x50, 0x50, 0x50, 0x50}; // "r r r r"
   display.setSegments(seg);
 #endif
 
-  // 1. Send Check Request [0xAD, ID, Cks]
   uint8_t req[3] = {0xAD, candidate, (uint8_t)(0xAD ^ candidate)};
-  Udp.beginPacket(ipBroadcast, PORT_CMD); // Send to 8888
+  Udp.beginPacket(ipBroadcast, PORT_CMD);
   Udp.write(req, 3);
   Udp.endPacket();
 
-  // 2. Wait for Denial (200ms window)
   uint32_t tStart = millis();
   while (millis() - tStart < 200)
   {
@@ -116,17 +113,15 @@ bool isIdTaken(uint8_t candidate)
     {
       uint8_t buf[10];
       int n = Udp.read(buf, 10);
-      // Expect Denial: [0xAE, ID, ..., Cks]
       if (n >= 2 && buf[0] == 0xAE && buf[1] == candidate)
       {
-        return true; // Conflict Confirmed!
+        return true; // Conflict Confirmed
       }
     }
   }
-  return false; // No denial = Safe
+  return false;
 }
 
-// ✅ WRAPPER: Find Next Free ID
 void findAndApplyID(uint8_t startId)
 {
   uint8_t current = startId;
@@ -135,8 +130,8 @@ void findAndApplyID(uint8_t startId)
 
   while (!found && attempts < 6)
   {
-    initEthernet(false, current); // Init with candidate IP
-    delay(50);                    // Let link settle
+    initEthernet(false, current);
+    delay(50);
 
     if (!isIdTaken(current))
     {
@@ -249,6 +244,21 @@ void updateDisplay(uint32_t now)
 #endif
 }
 
+// ✅ VEGAS MODE
+void runVegasMode()
+{
+#if HAS_TM1637
+  for (int i = 9; i >= 0; i--)
+  {
+    // Show 9999, 8888, ... 0000
+    display.showNumberDec(i * 1111, true, 4, 0);
+    delay(80);
+  }
+  display.clear();
+  delay(200);
+#endif
+}
+
 void setup()
 {
   wdt_disable();
@@ -262,10 +272,12 @@ void setup()
 
 #if HAS_TM1637
   display.setBrightness(0x0F);
+  // ✅ Run Vegas
+  runVegasMode();
   display.showNumberDec(STATION_ID, false, 1, 3);
 #endif
 
-  // ✅ INITIAL CONFLICT CHECK (Full Reset)
+  // Initial Conflict Check (Full Reset)
   initEthernet(true, STATION_ID);
   delay(100);
   findAndApplyID(STATION_ID);
@@ -291,8 +303,19 @@ void loop()
   }
   else if (reconfigPending && (now - lastButtonTime > 1500))
   {
-    // ✅ MANUAL CHANGE CONFLICT CHECK
-    findAndApplyID(pendingID);
+    // ✅ FIX: If we circled back to the CURRENT ID, don't check conflict.
+    // The Server likely still thinks WE are online (since we just were),
+    // so checking would result in a false positive denial.
+    if (pendingID == STATION_ID)
+    {
+      // Just re-init to be safe and clear flag
+      initEthernet(false, STATION_ID);
+    }
+    else
+    {
+      // New ID, perform full check
+      findAndApplyID(pendingID);
+    }
     reconfigPending = false;
   }
 
@@ -309,7 +332,6 @@ void loop()
       uint8_t buf[32];
       int n = Udp.read(buf, sizeof(buf));
 
-      // Global Command (0xBB)
       if (n >= 10 && buf[0] == 0xBB && xorChecksum(buf, n - 1) == buf[n - 1])
       {
         if ((3 + STATION_ID) < (n - 1))
@@ -328,7 +350,7 @@ void loop()
         }
       }
     }
-    // Watchdog
+
     if (displayMode != DISP_DISABLED && (now - lastCmdMs > CMD_WATCHDOG_MS))
     {
       displayMode = DISP_ERROR;
@@ -350,7 +372,7 @@ void loop()
     uint8_t fb[5] = {0xAC, STATION_ID, invBits, 0x00, 0};
     fb[4] = xorChecksum(fb, 4);
 
-    // ✅ SEND TO FEEDBACK PORT (8889)
+    // Send Feedback to 8889
     Udp.beginPacket(ipBroadcast, PORT_FB);
     Udp.write(fb, 5);
     Udp.endPacket();
