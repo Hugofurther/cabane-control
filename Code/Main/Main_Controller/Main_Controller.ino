@@ -556,8 +556,22 @@ void updateThermostatStatus()
   for (uint8_t i = 0; i < 2; i++)
   {
     thermostatEnabled[i] = stableState[TH_SWITCH_IDX[i]];
-    bool bitLow = ((stationFeedback[TH_FEEDBACK_STATION[i]] & (1 << TH_FEEDBACK_BIT[i])) == 0);
-    thermostatActive[i] = bitLow;
+
+    // Read raw sensor bit
+    bool rawBit = (stationFeedback[TH_FEEDBACK_STATION[i]] >> TH_FEEDBACK_BIT[i]) & 1;
+
+    // ✅ APPLY SENSOR INVERSION
+    // If mask bit set, flip logic
+    if ((ledInvertMask >> TH_SWITCH_IDX[i]) & 1)
+    {
+      rawBit = !rawBit;
+    }
+
+    // Standard Logic: 0 = Active/Cold (Call for Heat)
+    bool isActive = (rawBit == 0);
+
+    thermostatActive[i] = isActive;
+
     if (remoteOverrideActive)
     {
       LED_PAIR(TH_LED_PAIR[i], LOW, blinkPhase);
@@ -565,13 +579,13 @@ void updateThermostatStatus()
     else if (thermostatEnabled[i])
     {
       if (thermostatActive[i])
-        LED_PAIR(TH_LED_PAIR[i], LOW, HIGH);
+        LED_PAIR(TH_LED_PAIR[i], LOW, HIGH); // Green (Active)
       else
-        LED_PAIR(TH_LED_PAIR[i], HIGH, LOW);
+        LED_PAIR(TH_LED_PAIR[i], HIGH, LOW); // Red (Idle)
     }
     else
     {
-      LED_PAIR(TH_LED_PAIR[i], LOW, LOW);
+      LED_PAIR(TH_LED_PAIR[i], LOW, LOW); // Off
     }
   }
 }
@@ -657,17 +671,33 @@ void sendGlobalCommands()
         if (m.station == st)
         {
           bool val = stableState[m.index];
+
 #if ENABLE_THERMOSTAT
           for (uint8_t t = 0; t < 2; t++)
           {
-            if (thermostatEnabled[t] && thermostatActive[t])
+            // Check if Thermostat is Enabled (Switch ON)
+            if (thermostatEnabled[t])
             {
-              for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
+              // Get Feedback Bit for Thermostat Sensor
+              bool bitLow = ((stationFeedback[TH_FEEDBACK_STATION[t]] & (1 << TH_FEEDBACK_BIT[t])) == 0);
+
+              // ✅ APPLY LED INVERSION TO SENSOR
+              // If mask bit set, flip the logic
+              if ((ledInvertMask >> TH_SWITCH_IDX[t]) & 1)
               {
-                if (m.index == TH_OVERRIDE_IDX[t][k])
+                bitLow = !bitLow;
+              }
+
+              // If Sensor is Active (bitLow == true after inversion), apply Override
+              if (bitLow)
+              {
+                for (uint8_t k = 0; k < TH_OVERRIDE_COUNT[t]; k++)
                 {
-                  val = true;
-                  break;
+                  if (m.index == TH_OVERRIDE_IDX[t][k])
+                  {
+                    val = true;
+                    break;
+                  }
                 }
               }
             }

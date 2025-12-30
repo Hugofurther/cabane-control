@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Settings, Link, Unlink, X, Cpu, Power, Save, ToggleLeft, ToggleRight, Wifi, WifiOff, Eye, EyeOff, Radio, Loader2 } from 'lucide-react'; // ✅ Imported Loader2
+import { Settings, Link, Unlink, X, Cpu, Power, Save, ToggleLeft, ToggleRight, Wifi, WifiOff, Eye, EyeOff, Radio, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import { clsx } from 'clsx';
 import { useSocket } from '../contexts/SocketContext';
@@ -8,8 +8,14 @@ import { useModal } from '../contexts/ModalContext';
 const API_URL = import.meta.env.PROD ? '' : (import.meta.env.VITE_API_URL || 'http://localhost:3000');
 
 const SimToggle = ({ checked, onChange, disabled }) => (
-    <div onClick={() => !disabled && onChange(!checked)} className={clsx("w-8 h-4 rounded-full p-0.5 cursor-pointer transition-colors relative", disabled ? "opacity-50 cursor-not-allowed bg-gray-700" : (checked ? "bg-green-500" : "bg-gray-600"))}>
-        <div className={clsx("w-3 h-3 bg-white rounded-full shadow-sm transform transition-transform", checked ? "translate-x-4" : "translate-x-0")} />
+    <div
+        onClick={() => !disabled && onChange(!checked)}
+        className={clsx(
+            "w-8 h-4 rounded-full p-0.5 cursor-pointer transition-colors relative",
+            disabled ? "opacity-50 cursor-not-allowed bg-gray-700" : (checked ? "bg-green-500" : "bg-gray-600")
+        )}
+    >
+        <div className={clsx("w-3 h-3 bg-white rounded-full shadow-sm transform transition-transform duration-200", checked ? "translate-x-4" : "translate-x-0")} />
     </div>
 );
 
@@ -19,8 +25,6 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
     const [simData, setSimData] = useState(null);
     const [tempName, setTempName] = useState("");
     const [editing, setEditing] = useState(null);
-
-    // ✅ NEW: Loading state for the master toggle
     const [isToggling, setIsToggling] = useState(false);
 
     // Prevent Body Scroll
@@ -63,43 +67,48 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
 
     if (!isOpen || !simData) return null;
     const token = localStorage.getItem('cabane_token');
-    const { active, config, state } = simData;
+    const { active, config, state, physicalLink } = simData;
 
-    // ✅ BETTER WAY: Loading + Confirmation Pattern
     const toggleGlobal = async () => {
-        if (isToggling) return; // Prevent double clicks
+        if (isToggling) return;
         setIsToggling(true);
-
         const nextState = !active;
-
         try {
-            // 1. Send Request
             await axios.post(`${API_URL}/api/simulation/toggle`,
                 { active: nextState },
                 { headers: { Authorization: `Bearer ${token}` } }
             );
-
-            // 2. Confirm Success locally (Immediate feedback without waiting for Socket)
             setSimData(prev => ({ ...prev, active: nextState }));
-
         } catch (e) {
-            console.error("[SimPanel] Toggle Failed:", e);
             showAlert("Error", "Failed to toggle simulation.");
-            // No need to revert state because we never changed it
         } finally {
             setIsToggling(false);
         }
     };
 
-    const toggleConnection = async (id) => { await axios.post(`${API_URL}/api/simulation/station/connection`, { id }, { headers: { Authorization: `Bearer ${token}` } }); };
+    const togglePhysical = async () => {
+        await axios.post(`${API_URL}/api/simulation/physical`, { linked: !physicalLink }, { headers: { Authorization: `Bearer ${token}` } });
+    };
+
+    const toggleConnection = async (id) => {
+        await axios.post(`${API_URL}/api/simulation/station/connection`, { id }, { headers: { Authorization: `Bearer ${token}` } });
+    };
+
     const updateRelay = async (stId, rIdx, updates) => {
         const newConfig = [...config];
         Object.assign(newConfig[stId].relays[rIdx], updates);
         setSimData(prev => ({ ...prev, config: newConfig }));
         await axios.post(`${API_URL}/api/simulation/relay/config`, { id: stId, bit: rIdx, updates }, { headers: { Authorization: `Bearer ${token}` } });
     };
-    const toggleManualInput = async (stId, bit) => { await axios.post(`${API_URL}/api/simulation/input/toggle`, { id: stId, bit }, { headers: { Authorization: `Bearer ${token}` } }); };
-    const saveName = (stId, rIdx) => { if (tempName.trim()) updateRelay(stId, rIdx, { name: tempName }); setEditing(null); };
+
+    const toggleManualInput = async (stId, bit) => {
+        await axios.post(`${API_URL}/api/simulation/input/toggle`, { id: stId, bit }, { headers: { Authorization: `Bearer ${token}` } });
+    };
+
+    const saveName = (stId, rIdx) => {
+        if (tempName.trim()) updateRelay(stId, rIdx, { name: tempName });
+        setEditing(null);
+    };
 
     const spacerHeight = bannerHeight > 0 ? (bannerHeight + 10) : 10;
 
@@ -120,11 +129,25 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                     </div>
 
                     <div className="flex items-center gap-4">
+                        <div
+                            onClick={active ? togglePhysical : undefined}
+                            className={clsx("flex items-center gap-2 px-3 py-2 rounded border cursor-pointer transition-all",
+                                !active ? "opacity-30 cursor-not-allowed border-gray-700 text-gray-500" :
+                                    physicalLink ? "bg-red-900/30 border-red-500 text-red-300 shadow-[0_0_10px_rgba(220,38,38,0.3)]" : "bg-gray-800 border-gray-600 text-gray-400 hover:bg-gray-700"
+                            )}
+                        >
+                            <Radio size={18} className={physicalLink ? "text-red-500 animate-pulse" : "text-gray-500"} />
+                            <span className="text-xs font-bold uppercase">{physicalLink ? "LIVE: SENDING TO HARDWARE" : "SIMULATION ONLY"}</span>
+                            <SimToggle checked={physicalLink} disabled={!active} onChange={() => { }} />
+                        </div>
+
+                        <div className="h-8 w-px bg-gray-700 mx-2"></div>
+
                         <button
                             onClick={toggleGlobal}
                             disabled={isToggling}
                             className={`px-6 py-2 rounded font-bold flex items-center gap-2 transition-all ${isToggling ? 'bg-gray-600 cursor-wait opacity-80' :
-                                    active ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'
+                                active ? 'bg-red-600 hover:bg-red-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'
                                 }`}
                         >
                             {isToggling ? <Loader2 size={18} className="animate-spin" /> : <Power size={18} />}
@@ -151,9 +174,16 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                                         <tbody className="divide-y divide-gray-700">
                                             {stConfig.relays.map((r, rIdx) => {
                                                 const relayOn = (stState.relayMask >> rIdx) & 1;
+
+                                                // ✅ VISUAL FIX: 
+                                                // Read Input Mask
                                                 const targetInputState = state[r.targetSt] || { inputMask: 0xFF };
-                                                const inputOff = (targetInputState.inputMask >> r.targetBit) & 1;
-                                                const inputActive = !inputOff;
+                                                const inputBit = (targetInputState.inputMask >> r.targetBit) & 1;
+
+                                                // 0 = Active (Green/Connected to Ground)
+                                                // 1 = Inactive (Gray/Open)
+                                                const inputActive = (inputBit === 0);
+
                                                 const isEditing = editing?.stId === stIdx && editing?.rIdx === rIdx;
                                                 const isEn = r.enabled !== false;
                                                 return (
@@ -172,6 +202,8 @@ export const SimulationPanel = ({ isOpen, onClose }) => {
                                                             </div>
                                                         </td>
                                                         <td className="p-2 text-center"><button disabled={!isEn} onClick={() => updateRelay(stIdx, rIdx, { linked: !r.linked })}>{r.linked ? <Link size={14} className="text-blue-400" /> : <Unlink size={14} className="text-gray-600" />}</button></td>
+
+                                                        {/* ✅ TOGGLE: Reflects 'inputActive' (0=Green) */}
                                                         <td className="p-2 flex justify-center"><SimToggle checked={inputActive} disabled={r.linked || !isConnected} onChange={() => toggleManualInput(r.targetSt, r.targetBit)} /></td>
                                                     </tr>
                                                 );

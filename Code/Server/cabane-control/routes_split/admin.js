@@ -40,28 +40,32 @@ router.post('/system/settings', authenticateToken, requireAdmin, (req, res) => {
         });
 
         db.run("COMMIT", () => {
-            // Update Services
+            // 1. General Config
             if (settings.timezone) logicEngine.updateTimezone(settings.timezone);
             if (settings.disabled_stations) logicEngine.updateDisabled(settings.disabled_stations);
             if (settings.drain_timer_min) automationService.reloadSettings();
 
+            // 2. Weather
             if (settings.weather_locations || settings.weather_update_interval || settings.weather_api_key) {
                 try { require('../services/weather_service').reloadSettings(); } catch (e) { }
             }
 
-            // ✅ Switch Logic Updates
+            // 3. Switch Logic Update (Input Inversion)
             if (settings.switch_logic_mask !== undefined) {
                 const mask = parseInt(settings.switch_logic_mask);
                 logicEngine.updateSwitchLogic(mask);
-                simulationService.updateSwitchMask(mask); // Sync Sim
+                simulationService.updateSwitchMask(mask);
             }
 
-            // ✅ LED Logic Updates
+            // 4. ✅ LED Logic Update (Output Inversion)
             if (settings.led_logic_mask !== undefined) {
-                logicEngine.updateLedLogic(parseInt(settings.led_logic_mask));
+                const mask = parseInt(settings.led_logic_mask);
+                logicEngine.updateLedLogic(mask);
+                // Also update simulator so it renders virtual thermostat feedback correctly
+                simulationService.updateLedMask(mask);
             }
 
-            // Firmware Config Updates
+            // 5. Firmware Config (Buzzer/Burglar)
             if (settings.buzzer_alarm_on || settings.buzzer_alarm_off || settings.buzzer_reminder_min || settings.burglar_station) {
                 db.all("SELECT key, value FROM system_settings WHERE key IN ('buzzer_alarm_on', 'buzzer_alarm_off', 'buzzer_reminder_min', 'burglar_station')", (err, rows) => {
                     let on = 5, off = 10, rem = 2, burg = 0;

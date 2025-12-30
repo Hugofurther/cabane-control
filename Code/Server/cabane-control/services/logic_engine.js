@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - PRODUCTION v26 (Map Fix & Hardened)
+// 🧠 LOGIC ENGINE - PRODUCTION v28 (Non-Latching Thermostat)
 // ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
@@ -38,7 +38,6 @@ let overrideAssertCounter = 0;
 let isForcingRelease = false;
 let ioRef = null;
 
-// ✅ CORRECTED INPUT MAP (ST5 Merged to ST4)
 const INPUT_MAP = [
     { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
     { idx: 2, st: 0, bit: 0 }, { idx: 3, st: 0, bit: 1 },
@@ -48,23 +47,10 @@ const INPUT_MAP = [
     { idx: 10, st: 2, bit: 2 }, { idx: 11, st: 2, bit: 3 },
     { idx: 12, st: 3, bit: 0 }, { idx: 13, st: 3, bit: 1 },
     { idx: 14, st: 3, bit: 2 }, { idx: 15, st: 3, bit: 3 },
-
-    // Station 4 Original
-    { idx: 16, st: 4, bit: 0 },
-    { idx: 17, st: 4, bit: 1 },
+    { idx: 16, st: 4, bit: 0 }, { idx: 17, st: 4, bit: 1 },
     { idx: 18, st: 4, bit: 2 },
-
-    // ✅ Station 5 Merged into Station 4
-    { idx: 19, st: 4, bit: 4 },
-    { idx: 20, st: 4, bit: 5 },
-
-    // Global
-    { idx: 21, st: 5, bit: 0 }, { idx: 22, st: 5, bit: 1 }, { idx: 23, st: 5, bit: 2 }
-    // Note: 21-23 map to MCP B5-B7 on Main, the 'st' here is for dummy mapping in stationBytes 
-    // if we wanted to send them, but they are usually handled by Main directly via 0xB0.
-    // Actually, for consistency with firmware logic, Main Controller reads these from 0xB0 packet directly.
-    // The INPUT_MAP here is primarily for constructing the 0xBB broadcast for STATIONS.
-    // Stations don't need 21, 22, 23.
+    { idx: 19, st: 4, bit: 4 }, { idx: 20, st: 4, bit: 5 },
+    { idx: 21, st: 255, bit: 0 }, { idx: 22, st: 255, bit: 0 }, { idx: 23, st: 255, bit: 0 }
 ];
 
 const THERMOSTATS = [
@@ -159,22 +145,24 @@ function pushConfigToArduino() {
     udpService.sendConfigPacket(cachedConfig.onSec, cachedConfig.offSec, cachedConfig.remMin, cachedConfig.burgSt, mask);
 }
 
-function applyThermostatOverrides() {
-    let changed = false;
-    THERMOSTATS.forEach(th => {
+// ✅ NEW: Non-mutating check. Returns true if ANY thermostat forces 'idx' ON.
+function getThermostatOverride(idx) {
+    for (const th of THERMOSTATS) {
         if (state.virtualSwitches[th.swIdx]) {
-            const rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
+            let rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
+
+            // Apply LED Inversion (Sensor Logic)
+            if ((cachedConfig.ledMask >> th.swIdx) & 1) {
+                rawBit = rawBit === 1 ? 0 : 1;
+            }
+
+            // If Active (0), check overrides
             if (rawBit === 0) {
-                th.overrides.forEach(targetIdx => {
-                    if (state.virtualSwitches[targetIdx] === 0) {
-                        state.virtualSwitches[targetIdx] = 1;
-                        changed = true;
-                    }
-                });
+                if (th.overrides.includes(idx)) return true;
             }
         }
-    });
-    return changed;
+    }
+    return false;
 }
 
 function updatePhysicalState(switchBytes, isOverrideActive) {
@@ -218,7 +206,9 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
 
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
-        applyThermostatOverrides();
+        // Note: We don't apply overrides here because Physical Controller handles it internally.
+        // We just mirror what we see.
+
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
             state.controller = 'SERVER';
             state.currentUser = null;
@@ -230,9 +220,7 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         } else {
             if (!controlHandshakeConfirmed) udpService.sendOverrideCommand(1);
             else {
-                // ⚠️ CRITICAL: This is where Control is lost.
-                // It means we sent 0xAF (Override=1), but Main Controller says Override=0.
-                console.log("[SYNC] Main Controller reclaimed control (or packet lost).");
+                console.log("[SYNC] Main Controller reclaimed control manually.");
                 logSystemEvent('CONTROL', "Physical Override Reclaim Detected.");
                 state.controller = 'CABANE';
                 state.currentUser = null;
@@ -313,12 +301,17 @@ function controlLoop() {
     let stateChanged = false;
     state.buzzerEnabled = !!state.virtualSwitches[21];
 
-    if (applyThermostatOverrides()) stateChanged = true;
+    // ✅ NOTE: Removed applyThermostatOverrides() check from here.
+    // We don't want to mutate state, we just want to send the correct command below.
 
+    // Vacuum Alarms
     let alarmDetected = false;
     VACUUM_CHECKS.forEach(chk => {
         if (!state.stationOnline[chk.st] || state.disabledStations.includes(chk.st)) return;
-        const commandedOn = state.virtualSwitches[chk.swIdx];
+
+        // Calculate Command (Virtual Switch OR Thermostat Override)
+        const commandedOn = state.virtualSwitches[chk.swIdx] || getThermostatOverride(chk.swIdx);
+
         const rawFb = (state.stationFeedback[chk.st] >> chk.bit) & 1;
         if (commandedOn && rawFb === 1) alarmDetected = true;
     });
@@ -343,7 +336,7 @@ function controlLoop() {
     }
 
     const isSirenCondition = (state.globalVacuumAlarm || state.burglarAlarm) && state.buzzerEnabled;
-    const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx]);
+    const anyVacuumRunning = VACUUM_CHECKS.some(chk => state.virtualSwitches[chk.swIdx] || getThermostatOverride(chk.swIdx));
     const isChirpCondition = !state.globalVacuumAlarm && !state.burglarAlarm && !state.buzzerEnabled && anyVacuumRunning;
 
     if (isSirenCondition && !prevSirenCondition) alarmCycleStart = now;
@@ -366,8 +359,16 @@ function controlLoop() {
         INPUT_MAP.forEach(m => {
             if (state.disabledStations.includes(m.st)) return;
 
-            // ✅ APPLY OUTPUT INVERSION (For Station Command 0xBB)
+            // ✅ CALCULATE EFFECTIVE COMMAND
+            // Start with Virtual Switch (User Intent)
             let val = state.virtualSwitches[m.idx];
+
+            // ✅ APPLY OVERRIDE (Thermostat Logic)
+            if (getThermostatOverride(m.idx)) {
+                val = 1; // Force ON
+            }
+
+            // ✅ APPLY OUTPUT INVERSION
             if ((cachedConfig.switchMask >> m.idx) & 1) {
                 val = val ? 0 : 1;
             }
@@ -380,9 +381,12 @@ function controlLoop() {
 
         udpService.sendGlobalBroadcast(stationBytes);
 
-        // ✅ SEND 0xB0 REMOTE DATA to Main Controller
-        // Note: We use virtualBytes() which also applies the mask, 
-        // so the Main Controller receives LOGICAL bits (which match its physical bits if inverted).
+        // Note: Remote Data (0xB0) is strictly for visual feedback on the Arduino LEDs.
+        // It should match the LOGICAL state (what the user sees), NOT the physical bits.
+        // We do NOT apply `getThermostatOverride` here because we want the LED to reflect
+        // the Virtual Switch lever, OR we want it to reflect active state? 
+        // Standard SCADA: Switch light matches lever. Status light matches feedback.
+        // We will send virtualSwitches (User Intent) + Mask.
         udpService.sendRemoteData(virtualBytes(state.virtualSwitches, cachedConfig.switchMask));
 
         if (!controlHandshakeConfirmed) {
@@ -396,7 +400,8 @@ function virtualBytes(switches, mask) {
     const arr = [0, 0, 0];
     for (let i = 0; i < 24; i++) {
         let val = switches[i];
-        if ((mask >> i) & 1) val = val ? 0 : 1; // Invert
+        // Apply Inversion for Remote Display consistency
+        if ((mask >> i) & 1) val = val ? 0 : 1;
         if (val) arr[Math.floor(i / 8)] |= (1 << (i % 8));
     }
     return arr;

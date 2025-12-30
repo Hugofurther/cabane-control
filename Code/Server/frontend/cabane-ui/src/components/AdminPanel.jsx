@@ -58,7 +58,7 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         drain_timer_min: '15',
         shutdown_timer_min: '60',
         switch_logic_mask: '0',
-        led_logic_mask: '0' // ✅ NEW
+        led_logic_mask: '0'
     });
 
     const [locations, setLocations] = useState([]);
@@ -68,8 +68,24 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
     const [citySearch, setCitySearch] = useState('');
     const [cityResults, setCityResults] = useState([]);
 
-    // Specific switches allowed to be inverted
-    const CONFIGURABLE_SWITCHES = [2, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 17, 18, 20];
+    // ✅ FIXED LIST: Exclude Push Buttons (0,1,8,12,13,16,19)
+    // Only Latching Switches and Thermostats allowed for Input Inversion.
+    const CONFIGURABLE_SWITCHES_INPUT = [
+        2, 3, 4, 5, 6, 7,       // ST1/ST0 Switches
+        9, 10, 11,              // ST2 Switches
+        14, 15,                 // ST3 Switches
+        17, 18, 20,             // ST4/5 Switches
+        22, 23                  // Thermostats (Safe to invert input if NO/NC sensor changes)
+    ];
+
+    // ✅ FULL LIST for LED Logic (Visuals don't affect safety logic directly like inputs do)
+    const CONFIGURABLE_SWITCHES_LED = [
+        0, 1, 2, 3, 4, 5, 6, 7,
+        8, 9, 10, 11,
+        12, 13, 14, 15,
+        16, 17, 18, 19, 20,
+        22, 23
+    ];
 
     const timezones = [
         { label: "Montréal, QC (EST)", value: "America/Montreal" },
@@ -122,10 +138,9 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         setDisabledStations(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
     };
 
-    // ✅ Switch Logic Helper
     const toggleSwitchLogic = (idx) => {
         let mask = parseInt(sysSettings.switch_logic_mask || '0');
-        mask ^= (1 << idx); // Flip bit
+        mask ^= (1 << idx);
         setSysSettings(prev => ({ ...prev, switch_logic_mask: mask.toString() }));
     };
 
@@ -133,7 +148,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
         return (parseInt(sysSettings.switch_logic_mask || '0') >> idx) & 1;
     };
 
-    // ✅ Toggle Helper
     const toggleLedLogic = (idx) => {
         let mask = parseInt(sysSettings.led_logic_mask || '0');
         mask ^= (1 << idx);
@@ -313,6 +327,70 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                 {activeTab === 'SYSTEM' && (
                     <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6 pb-20">
 
+                        {/* ✅ SWITCH LOGIC CONFIG */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <ToggleLeft size={20} className="text-orange-500" /> Switch Input Logic
+                            </h3>
+                            <p className="text-xs text-gray-400 mb-2">
+                                Toggle to invert physical switch behavior. <span className="text-orange-400 font-bold">Orange = Inverted Logic</span>.
+                                <br /><span className="text-gray-500 italic">Push buttons excluded to prevent safety lockouts.</span>
+                            </p>
+
+                            <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
+                                {CONFIGURABLE_SWITCHES_INPUT.map(idx => {
+                                    const inverted = isSwitchInverted(idx);
+                                    return (
+                                        <button
+                                            key={idx}
+                                            onClick={() => toggleSwitchLogic(idx)}
+                                            className={`p-2 rounded border flex flex-col items-center justify-center transition-all ${inverted
+                                                ? 'bg-orange-900/30 border-orange-500 text-orange-200'
+                                                : 'bg-gray-900 border-gray-700 text-gray-500'
+                                                }`}
+                                        >
+                                            <span className="text-xs font-mono font-bold">SW {idx}</span>
+                                            <span className="text-[9px] uppercase font-bold mt-1">
+                                                {inverted ? "INVERTED" : "NORMAL"}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
+                        {/* ✅ LED LOGIC CONFIG */}
+                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <ToggleLeft size={20} className="text-green-500" /> LED Feedback Logic
+                            </h3>
+                            <p className="text-xs text-gray-400 mb-2">
+                                Toggle to invert LED colors/logic. <span className="text-green-400 font-bold">Green = Inverted</span>.
+                                <br /><span className="text-gray-500 italic">For Thermostats (22, 23), this also inverts the Override Sensor Logic.</span>
+                            </p>
+
+                            <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
+                                {CONFIGURABLE_SWITCHES_LED.map(idx => {
+                                    const inverted = isLedInverted(idx);
+                                    return (
+                                        <button
+                                            key={idx}
+                                            onClick={() => toggleLedLogic(idx)}
+                                            className={`p-2 rounded border flex flex-col items-center justify-center transition-all ${inverted
+                                                ? 'bg-green-900/30 border-green-500 text-green-200'
+                                                : 'bg-gray-900 border-gray-700 text-gray-500'
+                                                }`}
+                                        >
+                                            <span className="text-xs font-mono font-bold">LED {idx}</span>
+                                            <span className="text-[9px] uppercase font-bold mt-1">
+                                                {inverted ? "INVERTED" : "NORMAL"}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
                         {/* Timezone & Disk */}
                         <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg h-fit space-y-4">
                             <div>
@@ -334,70 +412,6 @@ export const AdminPanel = ({ embedded, isOpen, onClose }) => {
                                     <span>{t('admin.used')}: {formatBytes(diskStats.used)}</span>
                                     <span>{t('admin.free')}: {formatBytes(diskStats.free)}</span>
                                 </div>
-                            </div>
-                        </div>
-
-                        {/* ✅ NEW: SWITCH LOGIC CONFIGURATION */}
-                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                <ToggleLeft size={20} className="text-orange-500" /> Switch Input Logic
-                            </h3>
-                            <p className="text-xs text-gray-400 mb-2">
-                                Toggle to invert physical switch behavior (e.g. if UP registers as OFF).
-                                <br /> <span className="text-orange-400 font-bold">Orange = Inverted Logic</span>.
-                            </p>
-
-                            <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
-                                {CONFIGURABLE_SWITCHES.map(idx => {
-                                    const inverted = (parseInt(sysSettings.switch_logic_mask || '0') >> idx) & 1;
-                                    return (
-                                        <button
-                                            key={idx}
-                                            onClick={() => toggleSwitchLogic(idx)}
-                                            className={`p-2 rounded border flex flex-col items-center justify-center transition-all ${inverted
-                                                ? 'bg-orange-900/30 border-orange-500 text-orange-200'
-                                                : 'bg-gray-900 border-gray-700 text-gray-500'
-                                                }`}
-                                        >
-                                            <span className="text-xs font-mono font-bold">SW {idx}</span>
-                                            <span className="text-[9px] uppercase font-bold mt-1">
-                                                {inverted ? "INVERTED" : "NORMAL"}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* ✅ NEW: LED LOGIC CONFIGURATION */}
-                        <div className="bg-gray-800 p-6 rounded-lg border border-gray-700 shadow-lg md:col-span-2 space-y-4">
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                <ToggleLeft size={20} className="text-green-500" /> LED Feedback Logic
-                            </h3>
-                            <p className="text-xs text-gray-400 mb-2">
-                                Toggle to invert LED colors (Default: <span className="text-green-400">Green=Low/Active</span>, <span className="text-red-400">Red=High/Inactive</span>).
-                                <br /> <span className="text-green-400 font-bold">Green = Inverted Logic</span> (High=Green).
-                            </p>
-
-                            <div className="grid grid-cols-4 md:grid-cols-7 gap-2">
-                                {[2, 3, 4, 5, 6, 7, 9, 10, 11, 14, 15, 17, 18, 20].map(idx => {
-                                    const inverted = isLedInverted(idx);
-                                    return (
-                                        <button
-                                            key={idx}
-                                            onClick={() => toggleLedLogic(idx)}
-                                            className={`p-2 rounded border flex flex-col items-center justify-center transition-all ${inverted
-                                                ? 'bg-green-900/30 border-green-500 text-green-200'
-                                                : 'bg-gray-900 border-gray-700 text-gray-500'
-                                                }`}
-                                        >
-                                            <span className="text-xs font-mono font-bold">LED {idx}</span>
-                                            <span className="text-[9px] uppercase font-bold mt-1">
-                                                {inverted ? "INVERTED" : "NORMAL"}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
                             </div>
                         </div>
 
