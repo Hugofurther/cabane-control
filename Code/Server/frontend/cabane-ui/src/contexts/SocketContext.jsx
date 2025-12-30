@@ -20,7 +20,13 @@ const INPUT_MAP = [
     { idx: 14, st: 3, bit: 2 }, { idx: 15, st: 3, bit: 3 },
     { idx: 16, st: 4, bit: 0 }, { idx: 17, st: 4, bit: 1 },
     { idx: 18, st: 4, bit: 2 },
-    { idx: 19, st: 5, bit: 0 }, { idx: 20, st: 5, bit: 1 }
+    { idx: 19, st: 4, bit: 4 }, { idx: 20, st: 4, bit: 5 } // Corrected Map for ST4
+];
+
+// ✅ THERMOSTAT CONFIG (Mirrors Backend)
+const THERMOSTATS = [
+    { swIdx: 22, feedbackSt: 0, feedbackBit: 3, overrides: [2, 9, 14] },
+    { swIdx: 23, feedbackSt: 4, feedbackBit: 3, overrides: [17] }
 ];
 
 export const SocketProvider = ({ children }) => {
@@ -46,8 +52,7 @@ export const SocketProvider = ({ children }) => {
         timezone: 'UTC'
     });
 
-    // ✅ ADDED: switch_logic_mask to siteSettings default
-    const [siteSettings, setSiteSettings] = useState({ timezone: 'UTC', switch_logic_mask: '0' });
+    const [siteSettings, setSiteSettings] = useState({ timezone: 'UTC', switch_logic_mask: '0', led_logic_mask: '0' });
     const [weatherData, setWeatherData] = useState([]);
 
     const [simMeta, setSimMeta] = useState({ active: false, owner: null });
@@ -114,60 +119,85 @@ export const SocketProvider = ({ children }) => {
         return () => newSocket.close();
     }, []);
 
-    // ✅ DERIVED STATE: APPLY INVERSION MASK
+    // ✅ DERIVED STATE: APPLY INVERSION & OVERRIDES (VISUAL)
     const systemState = useMemo(() => {
         const amISimOwner = user && simMeta.owner === user.username;
         const amIViewer = isSimViewer && simMeta.active;
+        const isSimMode = (amISimOwner || amIViewer) && simRuntime;
 
-        if ((amISimOwner || amIViewer) && simRuntime) {
-            const fakeVirtual = new Array(24).fill(0);
+        // 1. Determine Source
+        let currentVirtual = isSimMode ? new Array(24).fill(0) : [...realState.virtualSwitches];
+        let currentFeedback = isSimMode ? simRuntime.map(s => s.inputMask) : realState.stationFeedback;
+        const onlineState = isSimMode ? simRuntime.map(s => s.connected) : realState.stationOnline;
+        const lastSeen = isSimMode ? simRuntime.map(s => s.connected ? Date.now() : 0) : realState.stationLastSeen;
 
-            // Get Mask
-            const mask = parseInt(siteSettings.switch_logic_mask || '0');
-
-            // Map Standard Stations
+        // 2. Populate Virtual Switches (if Sim Mode)
+        if (isSimMode) {
+            // Standard Switches
             INPUT_MAP.forEach(m => {
                 const stData = simRuntime[m.st];
                 if (stData) {
                     let rawVal = (stData.relayMask >> m.bit) & 1;
-
-                    // ✅ APPLY INVERSION: If bit set in mask, flip raw value
-                    if ((mask >> m.idx) & 1) {
-                        rawVal = rawVal === 1 ? 0 : 1;
-                    }
-
-                    if (rawVal === 1) fakeVirtual[m.idx] = 1;
+                    const mask = parseInt(siteSettings.switch_logic_mask || '0');
+                    // Invert if needed
+                    if ((mask >> m.idx) & 1) rawVal = rawVal === 1 ? 0 : 1;
+                    if (rawVal === 1) currentVirtual[m.idx] = 1;
                 }
             });
-
-            // Map Extra Switches
+            // Extra Switches
+            const mask = parseInt(siteSettings.switch_logic_mask || '0');
             for (let i = 21; i <= 23; i++) {
                 let rawVal = (simExtra >> i) & 1;
-                // ✅ APPLY INVERSION
-                if ((mask >> i) & 1) {
-                    rawVal = rawVal === 1 ? 0 : 1;
-                }
-                if (rawVal === 1) fakeVirtual[i] = 1;
+                if ((mask >> i) & 1) rawVal = rawVal === 1 ? 0 : 1;
+                if (rawVal === 1) currentVirtual[i] = 1;
             }
+        }
 
-            const fakeFeedback = simRuntime.map(s => s.inputMask);
-            const fakeOnline = simRuntime.map(s => s.connected);
-            const fakeLastSeen = simRuntime.map(s => s.connected ? Date.now() : 0);
+        // 3. ✅ APPLY THERMOSTAT VISUAL OVERRIDES
+        // If thermostat active, force vacuum switches to LOOK "ON".
+        const ledMask = parseInt(siteSettings.led_logic_mask || '0');
 
+        THERMOSTATS.forEach(th => {
+            // If Thermostat Switch is ON
+            if (currentVirtual[th.swIdx]) {
+                // Read Feedback
+                let rawBit = (currentFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
+
+                // Apply Sensor Inversion (NO/NC)
+                if ((ledMask >> th.swIdx) & 1) {
+                    rawBit = rawBit === 1 ? 0 : 1;
+                }
+
+                // Logic: 0 = Active/Cold (Call for Heat)
+                if (rawBit === 0) {
+                    th.overrides.forEach(targetIdx => {
+                        currentVirtual[targetIdx] = 1; // Force Visual ON
+                    });
+                }
+            }
+        });
+
+        if (isSimMode) {
             return {
                 ...realState,
                 controller: 'USER',
                 currentUser: user?.username,
-                virtualSwitches: fakeVirtual,
-                stationFeedback: fakeFeedback,
-                stationOnline: fakeOnline,
-                stationLastSeen: fakeLastSeen,
+                virtualSwitches: currentVirtual,
+                stationFeedback: currentFeedback,
+                stationOnline: onlineState,
+                stationLastSeen: lastSeen,
                 mainControllerOnline: true
             };
         }
-        return realState;
-    }, [realState, simMeta, simRuntime, simExtra, user, isSimViewer, siteSettings.switch_logic_mask]); // ✅ Added dep
 
+        return {
+            ...realState,
+            virtualSwitches: currentVirtual
+        };
+
+    }, [realState, simMeta, simRuntime, simExtra, user, isSimViewer, siteSettings.switch_logic_mask, siteSettings.led_logic_mask]);
+
+    // ... (Rest of useEffects and functions same as before) ...
     useEffect(() => {
         const checkSession = async () => {
             try {

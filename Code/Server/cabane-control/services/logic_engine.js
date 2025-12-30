@@ -1,5 +1,5 @@
 // ============================================================
-// 🧠 LOGIC ENGINE - PRODUCTION v28 (Non-Latching Thermostat)
+// 🧠 LOGIC ENGINE - PRODUCTION v29 (Anti-Flicker & Clean Loop)
 // ============================================================
 const udpService = require('./udp_service');
 const sqlite3 = require('sqlite3').verbose();
@@ -37,6 +37,10 @@ let prevChirpCondition = false;
 let overrideAssertCounter = 0;
 let isForcingRelease = false;
 let ioRef = null;
+
+// ✅ NEW: Reclaim Debounce Counter
+let reclaimCounter = 0;
+const RECLAIM_THRESHOLD = 5; // Packets (~250-500ms)
 
 const INPUT_MAP = [
     { idx: 0, st: 1, bit: 0 }, { idx: 1, st: 1, bit: 1 },
@@ -145,18 +149,20 @@ function pushConfigToArduino() {
     udpService.sendConfigPacket(cachedConfig.onSec, cachedConfig.offSec, cachedConfig.remMin, cachedConfig.burgSt, mask);
 }
 
-// ✅ NEW: Non-mutating check. Returns true if ANY thermostat forces 'idx' ON.
+// Helper: Checks if thermostat logic demands an override
 function getThermostatOverride(idx) {
     for (const th of THERMOSTATS) {
+        // If Thermostat Switch is ON
         if (state.virtualSwitches[th.swIdx]) {
+            // Read Raw Feedback
             let rawBit = (state.stationFeedback[th.feedbackSt] >> th.feedbackBit) & 1;
 
-            // Apply LED Inversion (Sensor Logic)
+            // Apply Inversion Logic (Sensor Type)
             if ((cachedConfig.ledMask >> th.swIdx) & 1) {
                 rawBit = rawBit === 1 ? 0 : 1;
             }
 
-            // If Active (0), check overrides
+            // Logic: 0 = Active/Cold (Call for Vacuum)
             if (rawBit === 0) {
                 if (th.overrides.includes(idx)) return true;
             }
@@ -180,6 +186,7 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
         lastReleaseTime = Date.now();
         controlHandshakeConfirmed = false;
         isForcingRelease = true;
+        reclaimCounter = 0; // Reset
         udpService.sendOverrideCommand(0);
         pushUpdate();
         return;
@@ -206,25 +213,32 @@ function updatePhysicalState(switchBytes, isOverrideActive) {
 
     if (state.controller === 'CABANE') {
         state.virtualSwitches = [...state.physicalSwitches];
-        // Note: We don't apply overrides here because Physical Controller handles it internally.
-        // We just mirror what we see.
+        // Note: No thermostat overrides applied here; Physical Controller handles it.
 
         if (isOverrideActive && (Date.now() - lastReleaseTime > 3000)) {
             state.controller = 'SERVER';
             state.currentUser = null;
             controlHandshakeConfirmed = true;
+            reclaimCounter = 0;
         }
     } else {
         if (isOverrideActive) {
             controlHandshakeConfirmed = true;
+            reclaimCounter = 0; // ✅ Reset counter on success
         } else {
-            if (!controlHandshakeConfirmed) udpService.sendOverrideCommand(1);
-            else {
-                console.log("[SYNC] Main Controller reclaimed control manually.");
-                logSystemEvent('CONTROL', "Physical Override Reclaim Detected.");
-                state.controller = 'CABANE';
-                state.currentUser = null;
-                controlHandshakeConfirmed = false;
+            if (!controlHandshakeConfirmed) {
+                udpService.sendOverrideCommand(1);
+            } else {
+                // ✅ DEBOUNCED RECLAIM
+                reclaimCounter++;
+                if (reclaimCounter >= RECLAIM_THRESHOLD) {
+                    console.log("[SYNC] Main Controller reclaimed control manually (Confirmed).");
+                    logSystemEvent('CONTROL', "Physical Override Reclaim Detected.");
+                    state.controller = 'CABANE';
+                    state.currentUser = null;
+                    controlHandshakeConfirmed = false;
+                    reclaimCounter = 0;
+                }
             }
         }
     }
@@ -255,6 +269,7 @@ function takeControl(username) {
     state.currentUser = username;
     lastControlTakeTime = Date.now();
     controlHandshakeConfirmed = false;
+    reclaimCounter = 0; // Reset
     udpService.sendOverrideCommand(1);
     pushUpdate();
 }
@@ -301,8 +316,7 @@ function controlLoop() {
     let stateChanged = false;
     state.buzzerEnabled = !!state.virtualSwitches[21];
 
-    // ✅ NOTE: Removed applyThermostatOverrides() check from here.
-    // We don't want to mutate state, we just want to send the correct command below.
+    // ✅ CLEANED UP: No mutation here. Thermostats are handled in 'getThermostatOverride'
 
     // Vacuum Alarms
     let alarmDetected = false;
@@ -360,7 +374,6 @@ function controlLoop() {
             if (state.disabledStations.includes(m.st)) return;
 
             // ✅ CALCULATE EFFECTIVE COMMAND
-            // Start with Virtual Switch (User Intent)
             let val = state.virtualSwitches[m.idx];
 
             // ✅ APPLY OVERRIDE (Thermostat Logic)
@@ -380,13 +393,6 @@ function controlLoop() {
         simulationService.onCommandReceived(stationBytes);
 
         udpService.sendGlobalBroadcast(stationBytes);
-
-        // Note: Remote Data (0xB0) is strictly for visual feedback on the Arduino LEDs.
-        // It should match the LOGICAL state (what the user sees), NOT the physical bits.
-        // We do NOT apply `getThermostatOverride` here because we want the LED to reflect
-        // the Virtual Switch lever, OR we want it to reflect active state? 
-        // Standard SCADA: Switch light matches lever. Status light matches feedback.
-        // We will send virtualSwitches (User Intent) + Mask.
         udpService.sendRemoteData(virtualBytes(state.virtualSwitches, cachedConfig.switchMask));
 
         if (!controlHandshakeConfirmed) {
@@ -400,7 +406,6 @@ function virtualBytes(switches, mask) {
     const arr = [0, 0, 0];
     for (let i = 0; i < 24; i++) {
         let val = switches[i];
-        // Apply Inversion for Remote Display consistency
         if ((mask >> i) & 1) val = val ? 0 : 1;
         if (val) arr[Math.floor(i / 8)] |= (1 << (i % 8));
     }
