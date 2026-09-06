@@ -1,5 +1,5 @@
 .DS_Store
-.env
+
 #*.jpg
 #*.jpeg
 #*.md
@@ -12,4 +12,10 @@
 
 Server Clones/
 node_modules/
+
+*.db
+*.db-*
+*.env
+!*.env.example
 /Code/Server/Pi Backups/
+dist/
