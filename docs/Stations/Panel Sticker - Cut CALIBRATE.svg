@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Cut_Calibration" data-name="Cut Calibration" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 695.46 839.46">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+        stroke: #231f20;
+        stroke-miterlimit: 10;
+        stroke-width: .5px;
+      }
+    </style>
+  </defs>
+  <path class="cls-1" d="M486.64,131.73h59.09c9.94,0,18,8.06,18,18v57.44"/>
+  <path class="cls-1" d="M131.73,207.17v-57.44c0-9.94,8.06-18,18-18h59.09"/>
+  <path class="cls-1" d="M208.82,707.73h-59.09c-9.94,0-18-8.06-18-18v-57.44"/>
+  <path class="cls-1" d="M563.73,632.3v57.44c0,9.94-8.06,18-18,18h-59.09"/>
+  <rect class="cls-1" x="417.28" y="190.31" width="87.87" height="42.52" rx="2.83" ry="2.83"/>
+</svg>

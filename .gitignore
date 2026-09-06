@@ -1,13 +1,13 @@
 .DS_Store
-
-*.jpg
-*.jpeg
-*.md
-*.svg
-*.ai
-*.webp
+#*.jpg
+#*.jpeg
+#*.md
+#*.svg
+#*.ai
+#*.webp
 
 *.img
 *.dmg
 
+Server Clones/
 node_modules/

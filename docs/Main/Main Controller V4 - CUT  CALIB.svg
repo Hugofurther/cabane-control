@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Calib_-_Cut" data-name="Calib - Cut" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 887 729.5">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+        stroke: #231f20;
+        stroke-miterlimit: 10;
+        stroke-width: .5px;
+      }
+    </style>
+  </defs>
+  <path class="cls-1" d="M276.73,729.25h-63.41c-7.83,0-14.17-6.35-14.17-14.17v-69.3"/>
+  <path class="cls-1" d="M700.44,645.78v69.3c0,7.83-6.35,14.17-14.17,14.17h-87.44"/>
+  <path class="cls-1" d="M598.82.25h87.44c7.83,0,14.17,6.35,14.17,14.17v89.3"/>
+  <path class="cls-1" d="M199.14,103.72V14.42c0-7.83,6.35-14.17,14.17-14.17h63.41"/>
+</svg>

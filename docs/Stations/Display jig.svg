@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Jig" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 695.46 839.46">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+      }
+
+      .cls-1, .cls-2 {
+        stroke: #231f20;
+        stroke-miterlimit: 10;
+        stroke-width: .5px;
+      }
+
+      .cls-2 {
+        fill: #fff;
+      }
+    </style>
+  </defs>
+  <rect class="cls-1" x="336.77" y="131.73" width="205.04" height="159.69" rx="18" ry="18"/>
+  <line class="cls-2" x1="236.07" y1="451.1" x2="264.42" y2="451.1"/>
+  <rect class="cls-1" x="131.73" y="451.1" width="205.04" height="159.69" rx="18" ry="18"/>
+  <rect class="cls-1" x="336.77" y="451.1" width="205.04" height="159.69" rx="18" ry="18"/>
+  <rect class="cls-1" x="336.77" y="291.42" width="205.04" height="159.69" rx="18" ry="18"/>
+  <rect class="cls-1" x="131.73" y="131.73" width="205.04" height="159.69" rx="18" ry="18"/>
+  <rect class="cls-1" x="131.73" y="291.42" width="205.04" height="159.69" rx="18" ry="18"/>
+</svg>

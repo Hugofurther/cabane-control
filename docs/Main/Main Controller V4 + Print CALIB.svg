@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Calib_Print" data-name="Calib Print" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 887 729.5">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: none;
+        stroke-width: .5px;
+      }
+
+      .cls-1, .cls-2 {
+        stroke: #231f20;
+        stroke-miterlimit: 10;
+      }
+
+      .cls-2 {
+        fill: #fff;
+        stroke-width: .25px;
+      }
+    </style>
+  </defs>
+  <g>
+    <line class="cls-2" x1="794.29" y1="102.09" x2="866.29" y2="102.09"/>
+    <line class="cls-2" x1="75.29" y1="593.39" x2="75.29" y2="665.39"/>
+    <line class="cls-2" x1="75.29" y1="112.09" x2="75.29" y2="40.09"/>
+    <line class="cls-2" x1="13.29" y1="102.09" x2="85.29" y2="102.09"/>
+    <line class="cls-2" x1="85.29" y1="603.39" x2="13.29" y2="603.39"/>
+    <line class="cls-2" x1="804.29" y1="593.39" x2="804.29" y2="665.39"/>
+    <line class="cls-2" x1="804.29" y1="112.09" x2="804.29" y2="40.09"/>
+    <line class="cls-2" x1="866.29" y1="603.39" x2="794.29" y2="603.39"/>
+  </g>
+  <path class="cls-1" d="M804.29,525.8v63.41c0,7.83-6.35,14.17-14.17,14.17h-69.3"/>
+  <path class="cls-1" d="M720.82,102.09h69.3c7.83,0,14.17,6.35,14.17,14.17v87.44"/>
+  <path class="cls-1" d="M75.29,203.7v-87.44c0-7.83,6.35-14.17,14.17-14.17h89.3"/>
+  <path class="cls-1" d="M178.76,603.39h-89.3c-7.83,0-14.17-6.35-14.17-14.17v-63.41"/>
+</svg>

@@ -70,3 +70,4 @@
 2. Set array lengths: `NUM_INPUTS = 21`, `NUM_LED_PAIRS = 21`.
 3. Extend loops and frame logic to include Stations 4 and 5.
 4. Keep all Ethernet and Serial pins untouched.
+    
