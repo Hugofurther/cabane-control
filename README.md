@@ -239,25 +239,26 @@ The `docs/` tree also contains enclosure drawings, panel artwork, connector phot
 
 ## Publication checklist
 
-This repository is not ready to make public without a security and history review. In the current Git index, the following local or sensitive-looking artifacts are tracked:
+The current `main` branch excludes the following local or sensitive-looking artifacts, and the repository's ignore rules are configured to keep them out of future commits:
 
 - `Code/Server/cabane-control/.env`;
 - `Code/Server/tests/test.env`;
 - `Code/Server/cabane-control/cabane.db`; and
 - `Code/Server/Pi Backups/pi-backup-2025-12-12.tar.gz` (approximately 934 MB).
 
+These files may still exist in a local working tree for development or deployment, but they must remain untracked. Never force-add them with `git add -f`. The same applies to Raspberry Pi clones under `Server Clones/`, frontend build output, and local dependency directories.
+
 Before publishing to GitHub:
 
-1. Confirm that no live passwords, JWT secrets, email credentials, personal data, user records, or private network information are present in those files.
+1. Confirm that no live passwords, JWT secrets, email credentials, personal data, user records, or private network information are present in any staged file.
 2. Rotate any credential that has ever been stored in a committed file.
-3. Remove sensitive and generated artifacts from the repository history, not only from the working tree.
-4. Add appropriate ignore rules for environment files, SQLite databases, Raspberry Pi backups, build output, and local dependencies.
+3. Review the complete Git history whenever a sensitive or generated artifact has previously been committed.
+4. Keep environment files, SQLite databases, Raspberry Pi backups, build output, and local dependencies ignored.
 5. Reconcile the backend package manifest with the modules imported by the server so a fresh clone can be installed reproducibly.
 6. Reconcile older wiring guides and pin maps with the current `v5.6`/`v5.7` firmware before publishing a “production” wiring reference.
-7. Add a license if this project is intended for reuse; no root license file is currently included.
 
-This README intentionally does not remove or alter any of those files.
+The repository is intended as a personal project record and is not licensed for reuse.
 
 ## License
 
-No license has been selected yet. Until a license is added, all rights remain with the copyright holder.
+No license is included. All rights remain with the copyright holder.
