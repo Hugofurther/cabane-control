@@ -19,3 +19,5 @@ node_modules/
 !*.env.example
 /Code/Server/Pi Backups/
 dist/
+
+note.txt
